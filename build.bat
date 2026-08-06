@@ -1,4 +1,8 @@
 @echo off
+echo L'interface Electron est desactivee pour le moment.
+echo Utilisez : piecemaker open
+exit /b 1
+
 chcp 65001 > nul
 cls
 

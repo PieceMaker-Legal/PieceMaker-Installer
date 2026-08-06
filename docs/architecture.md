@@ -1,5 +1,10 @@
 # PieceMaker Brownfield Architecture Document
 
+> **Current runtime note (August 2026):** the Electron shell described in
+> historical sections below is disabled. The `piecemaker` CLI now manages the
+> local server and the administration UI is served at
+> `https://localhost:43098/admin/`.
+
 ## Introduction
 
 This document captures the **CURRENT STATE** of the PieceMaker Word Assistant codebase, including technical debt, architectural constraints, and real-world patterns. It serves as the primary reference for AI agents and developers working on the project, particularly for the planned architectural reorganization.

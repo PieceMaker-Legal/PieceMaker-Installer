@@ -26,7 +26,8 @@ irm https://raw.githubusercontent.com/PieceMaker-Legal/PieceMaker-Installer/main
 > toutes les étapes demandant une saisie.
 
 Le script vérifie Node.js, clone le dépôt dans `~/PieceMaker`, installe les
-dépendances npm puis ouvre l'installateur interactif. Variables disponibles :
+dépendances npm, rend la commande `piecemaker` disponible puis ouvre
+l'installateur interactif. Variables disponibles :
 `PIECEMAKER_DIR` (dossier cible), `PIECEMAKER_REF` (branche ou tag).
 
 ### Prérequis
@@ -60,9 +61,40 @@ Neuf étapes, exécutables ensemble ou une par une :
 Les secrets Telegram vont dans `~/.claude/channels/` en 0600. Sur macOS, le
 daemon est installé comme service utilisateur dans `~/Library/LaunchAgents/`.
 
-## Utilisation directe
+## Utilisation
 
-Depuis un dépôt déjà cloné :
+Après l’installation, une seule commande donne accès aux opérations courantes
+et au sous-menu d’installation/réparation :
+
+```bash
+piecemaker
+```
+
+L’interface graphique locale permet de modifier les paramètres, les skills et
+les agents Markdown. La commande suivante démarre le serveur si nécessaire et
+ouvre directement cette interface dans le navigateur :
+
+```bash
+piecemaker open
+```
+
+Commandes directes disponibles :
+
+```bash
+piecemaker start          # serveur HTTPS en arrière-plan
+piecemaker stop
+piecemaker status
+piecemaker logs
+piecemaker doctor         # diagnostic sans modification
+piecemaker install        # installation ou réparation
+piecemaker update
+```
+
+Le tableau de bord est servi uniquement en local sur
+`https://localhost:43098/admin/`. Le volet Word reste disponible sur
+`https://localhost:43098/taskpane.html`.
+
+### Depuis un dépôt déjà cloné
 
 ```bash
 npm run install:piecemaker      # menu interactif
@@ -96,9 +128,10 @@ Légifrance. Voir [`piecemaker-plugin/README.md`](./piecemaker-plugin/README.md)
 - `piecemaker-plugin/` — plugin Claude Code : skills, agents, hooks, MCP
 - `orchestrator/` — Assistant Bot Telegram et daemon de surveillance sans LLM
 - `websocket-server/` — serveur HTTPS/WebSocket, API REST et scripts Python
+- `admin/` — interface web locale pour les paramètres, skills et agents
 - `taskpane/` — volet Office du complément Word
 - `mcp-server/` — serveur MCP exposant les outils document
-- `electron/` — enveloppe applicative de bureau
+- `electron/` — ancien client de bureau, conservé comme archive mais désactivé
 
 Les repères d'architecture pour contribuer sont dans [`CLAUDE.md`](./CLAUDE.md).
 

@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PieceMaker — Administration</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">PIECEMAKER</p>
+        <h1>Administration locale</h1>
+      </div>
+      <div id="serverBadge" class="status-pill pending">Connexion…</div>
+    </header>
+
+    <nav class="tabs" aria-label="Sections">
+      <button class="tab active" data-tab="dashboard">Vue d’ensemble</button>
+      <button class="tab" data-tab="settings">Paramètres</button>
+      <button class="tab" data-tab="files">Skills et agents</button>
+    </nav>
+
+    <main>
+      <section id="dashboard" class="panel active">
+        <div class="hero card">
+          <div>
+            <p class="eyebrow">SERVEUR LOCAL</p>
+            <h2>PieceMaker est prêt</h2>
+            <p>Cette page remplace provisoirement l’interface Electron et centralise la configuration locale.</p>
+          </div>
+          <a class="button secondary" href="/taskpane.html">Ouvrir le volet Word</a>
+        </div>
+        <div class="metrics">
+          <article class="card metric"><span>Version</span><strong id="version">—</strong></article>
+          <article class="card metric"><span>Word connecté</span><strong id="wordStatus">—</strong></article>
+          <article class="card metric"><span>Certificats HTTPS</span><strong id="certStatus">—</strong></article>
+          <article class="card metric"><span>Skills / agents</span><strong id="assetCount">—</strong></article>
+        </div>
+        <article class="card">
+          <h2>Emplacement</h2>
+          <code id="repoRoot">—</code>
+          <p class="muted">Pour arrêter ou redémarrer le serveur : <code>piecemaker stop</code> puis <code>piecemaker start</code>.</p>
+        </article>
+      </section>
+
+      <section id="settings" class="panel">
+        <form id="settingsForm">
+          <article class="card form-card">
+            <div class="section-heading">
+              <div><p class="eyebrow">LOCAL</p><h2>Serveur et fichiers</h2></div>
+            </div>
+            <div class="form-grid">
+              <label>Dossier de sortie<input id="outputPath" name="outputPath" required></label>
+              <label>Port local<input id="port" name="port" type="number" min="1024" max="65535" required readonly><small>Le port 43098 est actuellement requis par le complément Word.</small></label>
+              <label class="wide">Interpréteur Python<input id="pythonPath" name="pythonPath" placeholder="python3 ou chemin absolu"></label>
+            </div>
+          </article>
+
+          <article class="card form-card">
+            <div class="section-heading"><div><p class="eyebrow">SERVICES</p><h2>MCP et Légifrance</h2></div></div>
+            <div class="form-grid">
+              <label class="wide">URL MCP distante<input id="mcpRemoteUrl" name="MCP_REMOTE_URL" type="url"></label>
+              <label>Clé API MCP<span class="secret-state" data-secret-state="MCP_API_KEY"></span><input name="MCP_API_KEY" type="password" autocomplete="new-password" placeholder="Laisser vide pour conserver"></label>
+              <label>Environnement PISTE<input id="legifranceEnv" name="LEGIFRANCE_ENV" value="production" readonly><small>PieceMaker utilise l’API Légifrance de production.</small></label>
+              <label>Client ID Légifrance<span class="secret-state" data-secret-state="LEGIFRANCE_CLIENT_ID"></span><input name="LEGIFRANCE_CLIENT_ID" type="password" autocomplete="new-password" placeholder="Laisser vide pour conserver"></label>
+              <label>Secret Légifrance<span class="secret-state" data-secret-state="LEGIFRANCE_CLIENT_SECRET"></span><input name="LEGIFRANCE_CLIENT_SECRET" type="password" autocomplete="new-password" placeholder="Laisser vide pour conserver"></label>
+            </div>
+          </article>
+
+          <div class="actions">
+            <span id="settingsMessage" class="message"></span>
+            <button class="button primary" type="submit">Enregistrer les paramètres</button>
+          </div>
+        </form>
+      </section>
+
+      <section id="files" class="panel">
+        <div class="editor-layout card">
+          <aside class="file-sidebar">
+            <div class="section-heading"><div><p class="eyebrow">MARKDOWN</p><h2>Fichiers</h2></div></div>
+            <div id="fileList" class="file-list"></div>
+          </aside>
+          <div class="editor-pane">
+            <div class="editor-header">
+              <div><strong id="fileTitle">Sélectionnez un fichier</strong><code id="filePath"></code></div>
+              <span id="dirtyBadge" class="dirty-badge" hidden>Non enregistré</span>
+            </div>
+            <textarea id="fileEditor" spellcheck="false" disabled placeholder="Choisissez un skill ou un agent dans la liste."></textarea>
+            <div class="actions">
+              <span id="fileMessage" class="message"></span>
+              <button id="saveFile" class="button primary" type="button" disabled>Enregistrer</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="app.js" defer></script>
+</body>
+</html>

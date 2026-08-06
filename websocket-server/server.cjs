@@ -7,6 +7,26 @@ const JSZip = require('jszip');
 const { WebSocketServer } = require('ws');
 const { Ollama } = require('ollama');
 const { z } = require('zod');
+const { createAdminRouter, isLocalOrigin } = require('./admin-routes.cjs');
+
+const REPO_ROOT = path.resolve(__dirname, '..');
+const PIECEMAKER_HOME = process.env.PIECEMAKER_HOME || path.join(os.homedir(), '.piecemaker');
+const CONFIG_PATH = path.join(PIECEMAKER_HOME, 'config.json');
+const PID_PATH = path.join(PIECEMAKER_HOME, 'server.pid');
+
+require('dotenv').config({ path: path.join(REPO_ROOT, '.env') });
+
+function readUserConfig() {
+  try {
+    return fs.existsSync(CONFIG_PATH) ? JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) : {};
+  } catch (error) {
+    console.warn(`⚠️ Configuration ignorée (${CONFIG_PATH}) : ${error.message}`);
+    return {};
+  }
+}
+
+const userConfig = readUserConfig();
+if (!process.env.PYTHON_PATH && userConfig.pythonPath) process.env.PYTHON_PATH = userConfig.pythonPath;
 
 // Import anonymization module
 const { createAnonymizationRoutes, anonymizationMappings } = require('../taskpane/modules/anonymization-server.cjs');
@@ -17,11 +37,12 @@ console.log('  MCP_API_KEY:', process.env.MCP_API_KEY ? '***' + process.env.MCP_
 console.log('  OUTPUT_PATH:', process.env.OUTPUT_PATH || 'DEFAULT (./output)');
 
 const app = express();
-const PORT = process.env.PORT ||  43098;
+const PORT = Number(process.env.PORT || userConfig.port || 43098);
+const HOST = process.env.PIECEMAKER_HOST || '127.0.0.1';
 
 // Fonction pour obtenir le chemin de sortie configuré
 function getOutputPath() {
-  return process.env.OUTPUT_PATH || path.join(__dirname, '..', 'output');
+  return process.env.OUTPUT_PATH || userConfig.outputPath || path.join(REPO_ROOT, 'output');
 }
 
 // Stockage des clients WebSocket connectés
@@ -58,17 +79,27 @@ app.use(express.urlencoded({ limit: '5000mb', extended: true }));
 
 // CORS pour développement
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  const origin = req.get('Origin');
+  if (origin && isLocalOrigin(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Vary', 'Origin');
+  }
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization, X-Filename, X-Document-Id');
 
   if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
+    return origin && !isLocalOrigin(origin) ? res.sendStatus(403) : res.sendStatus(204);
   }
   next();
 });
 
 // Servir les fichiers statiques
+app.use('/admin', express.static(path.join(REPO_ROOT, 'admin'), { index: 'index.html' }));
+app.use('/api/admin', createAdminRouter({
+  repoRoot: REPO_ROOT,
+  homeDir: PIECEMAKER_HOME,
+  getRuntimeStatus: () => ({ wordClients: wordClients.size, port: PORT, host: HOST }),
+}));
 app.use(express.static(path.join(__dirname, '..', 'taskpane')));
 
 // Logs des requÃªtes
@@ -4344,13 +4375,59 @@ setInterval(() => {
   }
 }, 15 * 60 * 1000); // Vérifier toutes les 15 minutes
 
-server.listen(PORT, () => {
+function writeRuntimePid() {
+  fs.mkdirSync(PIECEMAKER_HOME, { recursive: true });
+  fs.writeFileSync(PID_PATH, `${process.pid}\n`, 'utf8');
+}
+
+function removeRuntimePid() {
+  try {
+    if (Number.parseInt(fs.readFileSync(PID_PATH, 'utf8').trim(), 10) === process.pid) {
+      fs.unlinkSync(PID_PATH);
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') console.warn(`⚠️ PID non nettoyé : ${error.message}`);
+  }
+}
+
+let shuttingDown = false;
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n🛑 Arrêt PieceMaker (${signal})...`);
+  for (const client of wss.clients) client.close(1001, 'Server shutdown');
+  server.close(() => {
+    removeRuntimePid();
+    process.exit(0);
+  });
+  setTimeout(() => {
+    removeRuntimePid();
+    process.exit(1);
+  }, 3000).unref();
+}
+
+process.once('SIGINT', () => shutdown('SIGINT'));
+process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('exit', removeRuntimePid);
+server.once('error', (error) => {
+  removeRuntimePid();
+  console.error(`❌ Impossible de démarrer le serveur HTTPS : ${error.message}`);
+});
+wss.once('error', (error) => {
+  removeRuntimePid();
+  console.error(`❌ Erreur WebSocket : ${error.message}`);
+  process.exit(1);
+});
+
+server.listen(PORT, HOST, () => {
+  writeRuntimePid();
   console.log('');
   console.log('🎉 ========================================');
   console.log('   MCP Proxy Word - Serveur Local HTTPS');
   console.log('========================================');
   console.log('');
-  console.log(`✅ Serveur démarré : https://localhost:${PORT}`);
+  console.log(`✅ Serveur démarré : https://localhost:${PORT} (${HOST})`);
+  console.log(`⚙️  Administration  : https://localhost:${PORT}/admin/`);
   console.log(`🔌 WebSocket prêt : wss://localhost:${PORT}`);
   console.log(`📄 Complément Word : https://localhost:${PORT}/taskpane.html`);
   console.log(`🧪 Page de test    : https://localhost:${PORT}/test.html`);
@@ -4370,8 +4447,8 @@ server.listen(PORT, () => {
   console.log('🔧 Jobs d\'anonymisation : nettoyage auto toutes les 15 min');
   console.log('');
   
-  // Start warmup in background
-  runWarmupAsync();
+  // Start warmup in background (disabled only by isolated smoke tests).
+  if (process.env.PIECEMAKER_SKIP_WARMUP !== '1') runWarmupAsync();
 });
 
 // ============================================================================

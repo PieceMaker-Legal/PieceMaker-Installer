@@ -23,7 +23,7 @@ export const REPO_ROOT = path.resolve(
 );
 
 /** Per-user PieceMaker directory, replacing Electron's userData path. */
-export const HOME_DIR = path.join(os.homedir(), '.piecemaker');
+export const HOME_DIR = process.env.PIECEMAKER_HOME || path.join(os.homedir(), '.piecemaker');
 
 /** npm and npx need the .cmd shim on Windows when spawned without a shell. */
 export function npmBin(name = 'npm') {

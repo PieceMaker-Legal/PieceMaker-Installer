@@ -1,5 +1,9 @@
 #!/bin/bash
 
+echo "L'interface Electron est désactivée pour le moment."
+echo "Utilisez : piecemaker open"
+exit 1
+
 echo "🚀 PieceMaker Word Assistant - Script de build"
 echo "=============================================="
 echo ""

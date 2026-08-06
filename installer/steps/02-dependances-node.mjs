@@ -1,11 +1,9 @@
 /**
  * Step 02 — Node.js dependencies.
  *
- * Runs `npm install` at the repo root and in mcp-server/. The root
- * package.json still has "postinstall": "electron-builder install-app-deps"
- * (Electron is being dropped from this project) — running that script would
- * try to download Electron's native prebuilt binaries for nothing, so we
- * detect it and pass --ignore-scripts, with a warning explaining why.
+ * Runs `npm install` at the repo root and in mcp-server/. Electron is no
+ * longer part of the active dependency graph, so package lifecycle scripts
+ * can run normally (notably the native node-pty installation).
  */
 
 import fs from 'node:fs';
@@ -35,11 +33,6 @@ function readPackageJson(dir) {
   }
 }
 
-function hasElectronPostinstall(pkg) {
-  const post = pkg?.scripts?.postinstall || '';
-  return /electron-builder/.test(post);
-}
-
 async function npmInstall(dir, label, ctx) {
   const pkg = readPackageJson(dir);
   if (!pkg) {
@@ -47,21 +40,12 @@ async function npmInstall(dir, label, ctx) {
     return { code: 0, skipped: true };
   }
 
-  const ignoreScripts = hasElectronPostinstall(pkg);
-  if (ignoreScripts) {
-    log.warn(
-      `${label} : "postinstall" appelle electron-builder alors qu'Electron est en cours de retrait du projet.`
-    );
-    log.detail('npm install sera lancé avec --ignore-scripts pour éviter le téléchargement des binaires Electron.');
-  }
-
   if (ctx.dryRun) {
-    log.info(`[simulation] npm install${ignoreScripts ? ' --ignore-scripts' : ''} dans ${dir}`);
+    log.info(`[simulation] npm install dans ${dir}`);
     return { code: 0, skipped: true };
   }
 
   const args = ['install'];
-  if (ignoreScripts) args.push('--ignore-scripts');
 
   const spin = spinner(`${label} : npm install...`);
   const code = await run(npmBin('npm'), args, {

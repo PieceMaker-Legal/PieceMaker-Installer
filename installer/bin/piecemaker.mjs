@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PieceMaker — installateur terminal.
+ * PieceMaker — commande principale et installateur terminal.
  *
  * Steps are discovered from installer/steps/*.mjs and run in filename order.
  * Each step module exports { meta, install(ctx), check(ctx) } and returns
@@ -8,6 +8,12 @@
  *
  * Usage:
  *   piecemaker                 menu interactif
+ *   piecemaker open            démarre le serveur et ouvre l'interface web
+ *   piecemaker start|stop      gère le serveur local
+ *   piecemaker status|logs     affiche l'état ou les journaux
+ *   piecemaker install         ouvre le menu des composants
+ *   piecemaker doctor          diagnostic seul
+ *   piecemaker update          met à jour le dépôt et les dépendances
  *   piecemaker --all           installe tout sans menu
  *   piecemaker --check         diagnostic seul, n'installe rien
  *   piecemaker --step <id>     rejoue une étape
@@ -19,12 +25,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { banner, title, log, write, blank, rule, summary, badge, c } from '../lib/ui.mjs';
+import { banner, title, log, write, blank, summary, badge, c } from '../lib/ui.mjs';
 import { select, confirm, multiSelect, pause, nonInteractive } from '../lib/prompt.mjs';
-import { findPython, REPO_ROOT } from '../lib/platform.mjs';
+import { findPython } from '../lib/platform.mjs';
 import { loadConfig, readEnv, markStep, loadState, CONFIG_FILE } from '../lib/state.mjs';
+import {
+  getServerStatus,
+  openAdmin,
+  readLogs,
+  startServer,
+  stopServer,
+  updateRepository,
+} from '../lib/service.mjs';
 
 const STEPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'steps');
+const COMMANDS = new Set(['open', 'start', 'stop', 'status', 'logs', 'install', 'doctor', 'check', 'update']);
 
 const STATUS_BADGE = {
   done: badge.done,
@@ -34,15 +49,17 @@ const STATUS_BADGE = {
 };
 
 function parseArgs(argv) {
-  const flags = { all: false, check: false, dryRun: false, step: null, yes: false };
+  const flags = { command: null, all: false, check: false, dryRun: false, step: null, yes: false, unknown: [] };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === '--all') flags.all = true;
+    if (!arg.startsWith('-') && !flags.command && COMMANDS.has(arg)) flags.command = arg;
+    else if (arg === '--all') flags.all = true;
     else if (arg === '--check') flags.check = true;
     else if (arg === '--dry-run') flags.dryRun = true;
     else if (arg === '--yes' || arg === '-y') flags.yes = true;
     else if (arg === '--step') flags.step = argv[++i];
     else if (arg === '--help' || arg === '-h') flags.help = true;
+    else flags.unknown.push(arg);
   }
   return flags;
 }
@@ -151,8 +168,8 @@ function printSummary(results) {
     log.ok('Installation complète.');
     blank();
     write(`  ${c.bold('Pour démarrer :')}`);
-    write(`    node websocket-server/server.cjs`);
-    write(`  ${c.gray('puis, dans Word, chargez le complément (voir README).')}`);
+    write(`    piecemaker open`);
+    write(`  ${c.gray('Le serveur local démarrera et l’interface web s’ouvrira automatiquement.')}`);
   } else {
     if (partial.length) log.warn(`${partial.length} étape(s) partielle(s) — relancez avec --step <id> après correction.`);
     if (failed.length) log.error(`${failed.length} étape(s) en échec.`);
@@ -187,7 +204,16 @@ async function runCheck(steps, ctx) {
 }
 
 function printHelp() {
-  write(`  ${c.bold('piecemaker')} — installateur PieceMaker`);
+  write(`  ${c.bold('piecemaker')} — PieceMaker local`);
+  blank();
+  write('  open            démarre le serveur et ouvre l’interface web');
+  write('  start           démarre le serveur local en arrière-plan');
+  write('  stop            arrête le serveur local');
+  write('  status          affiche l’état du serveur');
+  write('  logs            affiche les dernières lignes du journal');
+  write('  install         ouvre le menu d’installation/réparation');
+  write('  doctor, check   diagnostic seul, n’installe rien');
+  write('  update          met à jour PieceMaker');
   blank();
   write('  --all           installe tout sans menu');
   write('  --check         diagnostic seul, n\'installe rien');
@@ -198,16 +224,17 @@ function printHelp() {
   blank();
 }
 
-async function menu(steps, ctx) {
+async function installerMenu(steps, ctx, { allowBack = false } = {}) {
   for (;;) {
-    const choice = await select('Que voulez-vous faire ?', [
+    const choices = [
       { value: 'all', label: 'Tout installer', hint: 'recommandé au premier lancement' },
       { value: 'pick', label: 'Choisir les composants' },
       { value: 'check', label: 'Diagnostic', hint: 'vérifie sans rien modifier' },
-      { value: 'quit', label: 'Quitter' },
-    ]);
+      { value: allowBack ? 'back' : 'quit', label: allowBack ? 'Retour' : 'Quitter' },
+    ];
+    const choice = await select('Installation et réparation', choices);
 
-    if (choice === 'quit') return;
+    if (choice === 'quit' || choice === 'back') return;
 
     if (choice === 'check') {
       await runCheck(steps, ctx);
@@ -231,7 +258,102 @@ async function menu(steps, ctx) {
 
     const results = await runAll(steps, ctx, selectedIds);
     printSummary(results);
-    return;
+    if (!allowBack) return;
+    await pause();
+  }
+}
+
+function printServerStatus(status) {
+  title('État local');
+  summary([
+    ['Serveur HTTPS', status.running ? badge.done : badge.todo, status.running ? `PID ${status.pid || 'externe'}` : 'arrêté'],
+    ['Interface web', status.running ? badge.done : badge.todo, status.url],
+    ['Journal', badge.todo, status.logFile],
+  ]);
+  blank();
+}
+
+async function runOperationalCommand(command) {
+  if (command === 'open') {
+    const status = await openAdmin();
+    log.ok(`Interface ouverte : ${status.url}`);
+    return 0;
+  }
+  if (command === 'start') {
+    const status = await startServer();
+    log.ok(status.started ? `Serveur démarré : ${status.url}` : `Serveur déjà actif : ${status.url}`);
+    return 0;
+  }
+  if (command === 'stop') {
+    const status = await stopServer();
+    if (status.alreadyStopped) log.info('Le serveur est déjà arrêté.');
+    else log.ok('Serveur arrêté.');
+    return 0;
+  }
+  if (command === 'status') {
+    printServerStatus(await getServerStatus());
+    return 0;
+  }
+  if (command === 'logs') {
+    title('Journal du serveur');
+    const content = readLogs();
+    write(content || '  Aucun journal disponible.');
+    blank();
+    return 0;
+  }
+  if (command === 'update') {
+    const previous = await getServerStatus();
+    if (previous.running && previous.managed) await stopServer();
+    try {
+      const result = updateRepository();
+      log.ok(`PieceMaker mis à jour (${result.ref}).`);
+    } finally {
+      if (previous.running && previous.managed) {
+        const restarted = await startServer();
+        log.ok(`Serveur redémarré : ${restarted.url}`);
+      } else if (previous.running) {
+        log.warn('Le serveur actif n’est pas géré par PieceMaker ; redémarrez-le manuellement.');
+      }
+    }
+    return 0;
+  }
+  return null;
+}
+
+async function mainMenu(steps, ctx) {
+  for (;;) {
+    const status = await getServerStatus();
+    printServerStatus(status);
+    const choice = await select('Que voulez-vous faire ?', [
+      { value: 'open', label: 'Ouvrir l’interface graphique', hint: 'paramètres, skills et agents' },
+      { value: status.running ? 'stop' : 'start', label: status.running ? 'Arrêter le serveur local' : 'Démarrer le serveur local' },
+      { value: 'status', label: 'Actualiser l’état' },
+      { value: 'install', label: 'Installer ou réparer des composants' },
+      { value: 'check', label: 'Diagnostic complet' },
+      { value: 'update', label: 'Mettre à jour PieceMaker' },
+      { value: 'logs', label: 'Afficher les journaux' },
+      { value: 'quit', label: 'Quitter' },
+    ]);
+
+    if (choice === 'quit') return;
+    if (choice === 'install') {
+      await installerMenu(steps, ctx, { allowBack: true });
+      continue;
+    }
+    if (choice === 'check') {
+      await runCheck(steps, ctx);
+      await pause();
+      continue;
+    }
+    if (choice === 'update' && !(await confirm('Télécharger et appliquer la dernière version ?', true))) continue;
+
+    try {
+      await runOperationalCommand(choice);
+    } catch (error) {
+      log.error(error.message);
+    }
+    if (choice === 'open') return;
+    await pause();
   }
 }
 
@@ -245,7 +367,18 @@ async function main() {
     return 0;
   }
 
+  if (flags.unknown.length) {
+    banner();
+    log.error(`Option ou commande inconnue : ${flags.unknown.join(' ')}`);
+    printHelp();
+    return 1;
+  }
+
   banner();
+
+  if (flags.command && !['install', 'doctor', 'check'].includes(flags.command)) {
+    return runOperationalCommand(flags.command);
+  }
 
   const steps = await loadSteps();
   const broken = steps.filter((s) => s.broken);
@@ -264,7 +397,7 @@ async function main() {
     blank();
   }
 
-  if (flags.check) {
+  if (flags.check || flags.command === 'doctor' || flags.command === 'check') {
     await runCheck(steps, ctx);
     return 0;
   }
@@ -287,7 +420,8 @@ async function main() {
     return results.some(([, r]) => r.status === 'failed') ? 1 : 0;
   }
 
-  await menu(steps, ctx);
+  if (flags.command === 'install') await installerMenu(steps, ctx);
+  else await mainMenu(steps, ctx);
   return 0;
 }
 

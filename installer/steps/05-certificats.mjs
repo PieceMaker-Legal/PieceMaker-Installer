@@ -3,10 +3,9 @@
  *
  * IMPORTANT — a note on file selection:
  * create-certificate.sh / create-certificate-windows.ps1 generate a CODE
- * SIGNING certificate ("PieceMaker Developer Certificate") used only by
- * electron-builder (npm run build:mac / build:win). They do not touch
- * localhost.crt/localhost.key and are unrelated to Electron being dropped
- * from this project (see step 02). The certificate Word's taskpane actually
+ * SIGNING certificate ("PieceMaker Developer Certificate") from the legacy
+ * Electron packaging flow. They do not touch localhost.crt/localhost.key.
+ * The certificate Word's taskpane actually
  * needs — a CA + a localhost server cert, read directly by server.cjs at
  * websocket-server/localhost.{crt,key} — is produced by
  * websocket-server/generate-ca-certificates.cjs. That is what this step

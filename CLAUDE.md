@@ -1,15 +1,17 @@
 # PieceMaker — CLAUDE.md
 
-PieceMaker is an Electron desktop app that ships a Microsoft Word task-pane
-add-in for French legal professionals: document anonymisation (GDPR),
+PieceMaker is a local HTTPS service with a browser administration interface
+and a Microsoft Word task-pane add-in for French legal professionals: document anonymisation (GDPR),
 AI-assisted legal research/drafting, case-file (pièces) management, and
 exhibit stamping (bordereau de pièces). This file orients an agent working in
 this repo — read it before touching `websocket-server/` or `taskpane/`.
 
 ## What actually runs
 
-- **`electron/`** — Electron main process. Spawns the HTTPS/WebSocket server
-  and manages the app window/updates.
+- **`admin/`** — local browser administration UI for settings, skills and
+  agent Markdown files, served at `/admin/`.
+- **`electron/`** — legacy desktop shell, retained as source history but
+  disabled in `package.json`; do not add new functionality to it.
 - **`websocket-server/server.cjs`** (4449 lines) — single Express server that
   is simultaneously: the REST API, the static file host for the task pane,
   and the WebSocket endpoint. Everything the add-in does goes through this
@@ -38,6 +40,7 @@ as a map of current file paths — trust the paths in this file instead.
 ```
 Word (task pane)  ──wss://localhost:43098──►  server.cjs (WebSocket)
 Word (task pane)  ──https://localhost:43098──► server.cjs (REST, same server)
+Browser (admin)   ──https://localhost:43098/admin/──► admin API + allowlisted Markdown files
 Claude Desktop (MCP client) ──stdio──► mcp-server/ ──HTTPS──► server.cjs ──WS──► task pane ──Office.js──► Word doc
 ```
 
@@ -215,10 +218,15 @@ Python-bridge script (see `PYTHON_SCRIPTS` above).
 
 ```bash
 npm install
-npm start                 # Electron app: spawns server.cjs + opens the window
-npm run build              # electron-builder, current platform
-npm run build:win / build:mac
+npm link                  # exposes the `piecemaker` command
+piecemaker                 # interactive operations + installer menu
+piecemaker open            # starts server + opens the local web UI
+piecemaker start / stop / status / logs
+npm test
 ```
+
+Electron build commands are intentionally disabled. `npm start` is an alias
+for `piecemaker open`.
 
 There is no separate task-pane dev server — Word loads it straight off
 `server.cjs`'s static file mount. To sideload manually into Word for

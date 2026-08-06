@@ -15,6 +15,7 @@ $Ref       = if ($env:PIECEMAKER_REF)  { $env:PIECEMAKER_REF }  else { 'main' }
 
 function Write-Info { param($m) Write-Host "  > $m" -ForegroundColor Cyan }
 function Write-Ok   { param($m) Write-Host "  v $m" -ForegroundColor Green }
+function Write-Warn { param($m) Write-Host "  ! $m" -ForegroundColor Yellow }
 function Write-Fail { param($m) Write-Host "  x $m" -ForegroundColor Red; exit 1 }
 
 Write-Host ''
@@ -57,11 +58,20 @@ else {
 
 Set-Location $TargetDir
 
-# --ignore-scripts : le postinstall lance electron-builder, inutile ici.
 Write-Info 'Installation des dependances Node'
-npm install --no-audit --no-fund --ignore-scripts
+npm install --no-audit --no-fund
 if ($LASTEXITCODE -ne 0) { Write-Fail 'npm install a echoue.' }
 Write-Ok 'Dependances installees'
+
+Write-Info 'Installation de la commande piecemaker'
+npm link --ignore-scripts | Out-Null
+if ($LASTEXITCODE -eq 0) {
+  Write-Ok 'Commande piecemaker disponible'
+}
+else {
+  Write-Warn 'Impossible d ajouter piecemaker au PATH automatiquement.'
+  Write-Warn "Vous pourrez utiliser : node $TargetDir\installer\bin\piecemaker.mjs"
+}
 
 Write-Host ''
 node installer/bin/piecemaker.mjs @args

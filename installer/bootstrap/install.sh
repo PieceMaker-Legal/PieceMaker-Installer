@@ -19,6 +19,7 @@ REF="${PIECEMAKER_REF:-main}"
 
 info()  { printf '  \033[36m▸\033[0m %s\n' "$1"; }
 ok()    { printf '  \033[32m✓\033[0m %s\n' "$1"; }
+warn()  { printf '  \033[33m!\033[0m %s\n' "$1"; }
 fail()  { printf '  \033[31m✗\033[0m %s\n' "$1" >&2; exit 1; }
 
 printf '\n  \033[36mPieceMaker — amorçage\033[0m\n\n'
@@ -49,11 +50,17 @@ fi
 
 cd "$TARGET_DIR"
 
-# --ignore-scripts: postinstall still runs electron-builder, which is not
-# needed for the terminal install path.
 info "Installation des dépendances Node"
-npm install --no-audit --no-fund --ignore-scripts
+npm install --no-audit --no-fund
 ok "Dépendances installées"
+
+info "Installation de la commande piecemaker"
+if npm link --ignore-scripts >/dev/null 2>&1; then
+  ok "Commande piecemaker disponible"
+else
+  warn "Impossible d'ajouter piecemaker au PATH automatiquement."
+  warn "Vous pourrez utiliser : node $TARGET_DIR/installer/bin/piecemaker.mjs"
+fi
 
 printf '\n'
 exec node installer/bin/piecemaker.mjs "$@"
