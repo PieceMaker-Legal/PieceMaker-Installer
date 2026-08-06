@@ -726,7 +726,6 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 
 // Démarrer le serveur avec stdio transport
 async function main() {
-  await loadMcpConfig();
   loadPrompts(); // Charger les prompts au démarrage
 
   const transport = new StdioServerTransport();

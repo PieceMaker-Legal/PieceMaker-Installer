@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { ask } from '../lib/prompt.mjs';
 import { ensureDir } from '../lib/platform.mjs';
@@ -19,6 +20,27 @@ export const meta = {
   label: 'Dossier racine PieceMaker',
   description: 'Choisit la racine contenant les dossiers juridiques indépendants',
 };
+
+const WORKSPACE_CLAUDE_MD = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'templates',
+  'workspace-CLAUDE.md'
+);
+
+/**
+ * CLAUDE.md at the workspace root — Claude Code walks up from the current
+ * directory, so a single file here orients every session opened in a legal
+ * matter (each one is an immediate child of this root). A file already in
+ * place is never overwritten: it may carry the firm's own instructions.
+ */
+function ensureWorkspaceClaudeMd(workspace) {
+  const target = path.join(workspace, 'CLAUDE.md');
+  if (fs.existsSync(target)) return 'present';
+  if (!fs.existsSync(WORKSPACE_CLAUDE_MD)) return 'missing-template';
+  fs.copyFileSync(WORKSPACE_CLAUDE_MD, target);
+  return 'created';
+}
 
 function readJson(file) {
   try {
@@ -79,6 +101,12 @@ export async function install(ctx) {
   });
   log.ok(`Racine PieceMaker : ${selected}`);
   log.detail('Toutes les productions seront intégrées au dossier juridique actif sous cette racine.');
+
+  const claudeMd = ensureWorkspaceClaudeMd(selected);
+  if (claudeMd === 'created') log.ok('CLAUDE.md installé à la racine — lu par toute session ouverte dans un dossier juridique.');
+  else if (claudeMd === 'present') log.detail('CLAUDE.md déjà présent à la racine — conservé tel quel.');
+  else log.warn('Modèle installer/templates/workspace-CLAUDE.md introuvable — CLAUDE.md non installé.');
+
   return { status: 'done', note: selected };
 }
 
@@ -89,6 +117,9 @@ export async function check(ctx) {
   }
   if (!fs.existsSync(selected) || !fs.statSync(selected).isDirectory()) {
     return { status: 'partial', note: `Dossier introuvable : ${selected}` };
+  }
+  if (!fs.existsSync(path.join(selected, 'CLAUDE.md'))) {
+    return { status: 'partial', note: `CLAUDE.md absent de ${selected} — relancez cette étape.` };
   }
   return { status: 'done', note: selected };
 }

@@ -47,3 +47,30 @@ test('un document est toujours ramené à son dossier juridique sous workspacePa
   assert.equal(resolveLegalCaseFolder(workspace, nested), fs.realpathSync(legalCase));
   assert.throws(() => resolveLegalCaseFolder(workspace, outside), /racine PieceMaker/);
 });
+
+test('la racine reçoit un CLAUDE.md, jamais écrasé au second passage', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-workspace-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const workspace = path.join(root, 'dossiers');
+  process.env.PIECEMAKER_HOME = path.join(root, 'home');
+  process.env.PIECEMAKER_WORKSPACE_PATH = workspace;
+  t.after(() => {
+    delete process.env.PIECEMAKER_HOME;
+    delete process.env.PIECEMAKER_WORKSPACE_PATH;
+  });
+
+  const step = await import('../installer/steps/00-workspace.mjs');
+  const claudeMd = path.join(workspace, 'CLAUDE.md');
+
+  await step.install({ config: {} });
+  assert.equal(fs.existsSync(claudeMd), true);
+  assert.match(fs.readFileSync(claudeMd, 'utf8'), /Commits automatiques/);
+  assert.equal((await step.check({ config: { workspacePath: workspace } })).status, 'done');
+
+  fs.writeFileSync(claudeMd, '# Consignes du cabinet\n');
+  await step.install({ config: {} });
+  assert.equal(fs.readFileSync(claudeMd, 'utf8'), '# Consignes du cabinet\n');
+
+  fs.rmSync(claudeMd);
+  assert.equal((await step.check({ config: { workspacePath: workspace } })).status, 'partial');
+});
