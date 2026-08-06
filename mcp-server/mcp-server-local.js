@@ -358,7 +358,8 @@ PLACEHOLDER MANAGEMENT (for the currently active template):
 Give the list of IDs in their stamping order.
 Exemple :
 { "pieces": ["0001", "0003", "0002"] }
-→ Crée : "Pièce n°1" (ID 0001), "Pièce n°2" (ID 0003), "Pièce n°3" (ID 0002)`,
+→ Crée : "Pièce n°1" (ID 0001), "Pièce n°2" (ID 0003), "Pièce n°3" (ID 0002)
+Les fichiers sont écrits dans le sous-dossier "Pièces" du dossier de travail (dossier du document Word).`,
 
     inputSchema: {
         type: "object",

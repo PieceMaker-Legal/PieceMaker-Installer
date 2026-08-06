@@ -13,6 +13,9 @@ agents et hooks de garde-fou pour travailler sur des dossiers juridiques
     (`smart_converter.py`, markitdown/MinerU).
   - `redaction-juridique` — rédaction/relecture de documents juridiques
     français, citations sourcées via legifrance (MCP).
+  - `tamponnage` — tampon du cabinet et tamponnage numéroté des pièces d'un
+    bordereau : conversion de l'original en PDF (LibreOffice pour Excel/Word,
+    `pdf-lib` pour images et texte), tampon puis renommage « Pièce n°N ».
 - **Agents** (`agents/`) :
   - `verificateur-anonymisation` — audit lecture seule avant sortie de
     cabinet, confirme l'absence de PII résiduelle.
@@ -49,6 +52,33 @@ Dans une session Claude Code :
 
 L'installeur terminal de PieceMaker (`installer/steps/09-claude-assets.mjs`)
 automatise ces deux commandes.
+
+## Skills et agents créés localement
+
+Le plugin installé depuis le marketplace est une **copie figée** du dépôt
+publié : un skill ou un agent créé depuis l'administration web (`/admin/`,
+onglet Markdown) n'en fait pas partie tant qu'il n'a pas été publié puis
+`claude plugin update`.
+
+Pour qu'il soit utilisable tout de suite, PieceMaker l'enregistre aussi dans
+les deux emplacements que Claude Code découvre à chaque session :
+
+- `~/.claude/agents/<slug>.md`
+- `~/.claude/skills/<slug>/SKILL.md`
+
+Ce sont des **liens symboliques** vers `piecemaker-plugin/` : toute
+modification du Markdown (administration ou éditeur) est prise en compte à la
+session suivante, sans réinstallation. L'enregistrement a lieu :
+
+- à la création d'un skill ou d'un agent dans l'administration ;
+- à chaque enregistrement d'un fichier ;
+- au démarrage du serveur et à l'étape `09-claude-assets` de l'installeur ;
+- à la demande, via le bouton « ⟳ Claude Code » de l'administration.
+
+Un fichier personnel homonyme déjà présent dans `~/.claude` n'est jamais
+écrasé : l'administration affiche alors le badge « Conflit ». Les liens
+devenus orphelins (skill supprimé du dépôt) sont nettoyés automatiquement.
+Implémentation : `websocket-server/claude-assets.cjs`.
 
 ## Mises à jour
 

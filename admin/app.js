@@ -26,6 +26,9 @@ let historyItems = [];
 let selectedFolder = '';
 let historyView = 'commits';
 let selectedRevision = null;
+let tamponImage = null;          // data URL du tampon courant (cf. anonymization.js)
+let dossiers = [];
+let selectedPieces = [];         // IDs dans l'ordre du bordereau
 
 function toast(message) {
   const element = byId('toast');
@@ -45,10 +48,226 @@ function setActiveTab(name) {
   document.querySelectorAll('.panel').forEach((panel) => panel.classList.toggle('active', panel.id === name));
   if (name === 'settings') loadSettings();
   if (name === 'history' && !historyLoaded) loadRepositoryHistory();
+  if (name === 'pieces') loadPieces();
   if (name === 'telegram') loadTelegram();
   if (name === 'files' && !filesLoaded) {
     loadFiles({ selectPath: new URLSearchParams(location.search).get('file') });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Tampon et tamponnage des pièces
+// Reprend les endpoints déjà servis par server.cjs (/api/tampon/*, /api/stamping)
+// et la logique du volet Word (taskpane/modules/anonymization.js).
+// ---------------------------------------------------------------------------
+
+function showTampon(dataUrl) {
+  tamponImage = dataUrl;
+  const image = byId('tamponPreviewImage');
+  image.src = dataUrl || '';
+  image.hidden = !dataUrl;
+  byId('tamponEmpty').hidden = Boolean(dataUrl);
+  byId('saveTamponBtn').disabled = !dataUrl;
+  const state = byId('tamponState');
+  state.textContent = dataUrl ? '● Tampon prêt' : 'Aucun tampon';
+  state.className = `status-pill ${dataUrl ? 'ok' : 'pending'}`;
+}
+
+async function loadTampon() {
+  try {
+    const response = await fetch('/api/tampon/load');
+    if (!response.ok) return showTampon(null);
+    const result = await response.json();
+    showTampon(result.tamponImage || null);
+    byId('saveTamponBtn').disabled = true;
+  } catch (error) {
+    showTampon(null);
+  }
+}
+
+function handleTamponImageUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  if (!file.type.match(/^image\/(png|jpeg|jpg)$/)) {
+    setMessage(byId('tamponMessage'), 'Format d’image non supporté. Utilisez PNG ou JPEG.', 'error');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = (loaded) => {
+    showTampon(loaded.target.result);
+    setMessage(byId('tamponMessage'), `Image chargée : ${file.name} — pensez à enregistrer.`);
+  };
+  reader.readAsDataURL(file);
+}
+
+/** Dessine un tampon à partir des champs du formulaire (PNG 300×300). */
+function buildTampon() {
+  const size = 300;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext('2d');
+  const color = byId('tamponColor').value;
+  context.strokeStyle = color;
+  context.fillStyle = color;
+  context.lineWidth = 10;
+
+  if (byId('tamponShape').value === 'circle') {
+    context.beginPath();
+    context.arc(size / 2, size / 2, size / 2 - 14, 0, Math.PI * 2);
+    context.stroke();
+  } else {
+    context.strokeRect(14, 14, size - 28, size - 28);
+  }
+
+  context.textAlign = 'center';
+  context.font = 'bold 34px Helvetica, Arial, sans-serif';
+  context.fillText(byId('tamponTop').value.slice(0, 24), size / 2, size / 2 - 46);
+  context.font = 'bold 26px Helvetica, Arial, sans-serif';
+  context.fillText(byId('tamponBottom').value.slice(0, 24), size / 2, size / 2 + 86);
+
+  showTampon(canvas.toDataURL('image/png'));
+  setMessage(byId('tamponMessage'), 'Tampon généré — le numéro de pièce s’imprimera au centre.');
+}
+
+async function saveTampon() {
+  if (!tamponImage) return;
+  try {
+    await api('/api/tampon/save', { method: 'POST', body: JSON.stringify({ tamponImage }) });
+    byId('saveTamponBtn').disabled = true;
+    setMessage(byId('tamponMessage'), 'Tampon enregistré.', 'success');
+    toast('Tampon enregistré');
+    loadDossiers();
+  } catch (error) {
+    setMessage(byId('tamponMessage'), error.message, 'error');
+  }
+}
+
+async function clearTampon() {
+  try {
+    await api('/api/tampon/delete', { method: 'DELETE' });
+    byId('tamponImageInput').value = '';
+    showTampon(null);
+    setMessage(byId('tamponMessage'), 'Tampon supprimé.');
+  } catch (error) {
+    setMessage(byId('tamponMessage'), error.message, 'error');
+  }
+}
+
+function currentDossier() {
+  return dossiers.find((dossier) => dossier.documentId === byId('dossierSelect').value) || null;
+}
+
+function renderPieces() {
+  const dossier = currentDossier();
+  const list = byId('piecesList');
+  const folderInput = byId('workingFolder');
+  list.innerHTML = '';
+  if (dossier && !folderInput.value) folderInput.value = dossier.folder || '';
+  byId('stampedDir').textContent = folderInput.value
+    ? `${folderInput.value}/Pièces`
+    : 'dossier de travail à renseigner';
+
+  if (!dossier) {
+    list.innerHTML = '<p class="muted">Aucun dossier chargé. Chargez des pièces depuis le volet Word.</p>';
+    byId('stampPiecesBtn').disabled = true;
+    return;
+  }
+
+  for (const piece of dossier.documents) {
+    const rank = selectedPieces.indexOf(String(piece.id));
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = `piece-row${rank >= 0 ? ' selected' : ''}`;
+    row.innerHTML = `<span class="piece-rank">${rank >= 0 ? `n°${rank + 1}` : ''}</span>`
+      + `<span class="piece-name"></span>`
+      + `<span class="muted">${[piece.type_document, piece.date_document].filter(Boolean).join(' · ')}</span>`;
+    row.querySelector('.piece-name').textContent = piece.filename || `Pièce ${piece.id}`;
+    row.addEventListener('click', () => togglePiece(String(piece.id)));
+    list.appendChild(row);
+  }
+
+  byId('stampPiecesBtn').disabled = selectedPieces.length === 0 || !tamponImage;
+}
+
+function togglePiece(id) {
+  const index = selectedPieces.indexOf(id);
+  if (index >= 0) selectedPieces.splice(index, 1);
+  else selectedPieces.push(id);
+  renderPieces();
+}
+
+async function loadDossiers() {
+  try {
+    const result = await api('/api/admin/dossiers');
+    dossiers = result.dossiers || [];
+    const select = byId('dossierSelect');
+    const previous = select.value;
+    select.innerHTML = '';
+    for (const dossier of dossiers) {
+      const option = document.createElement('option');
+      option.value = dossier.documentId;
+      const label = dossier.informations?.intitule || dossier.informations?.nom || dossier.documentId;
+      option.textContent = `${label} — ${dossier.documents.length} pièce(s)`;
+      select.appendChild(option);
+    }
+    if (previous && dossiers.some((dossier) => dossier.documentId === previous)) select.value = previous;
+    else selectedPieces = [];
+    renderPieces();
+  } catch (error) {
+    setMessage(byId('piecesMessage'), error.message, 'error');
+  }
+}
+
+function loadPieces() {
+  loadTampon();
+  loadDossiers();
+}
+
+async function stampPieces() {
+  const dossier = currentDossier();
+  if (!dossier || selectedPieces.length === 0) return;
+  const button = byId('stampPiecesBtn');
+  button.disabled = true;
+  setMessage(byId('piecesMessage'), 'Tamponnage en cours…');
+  try {
+    const result = await api('/api/stamping', {
+      method: 'POST',
+      body: JSON.stringify({
+        pieces: selectedPieces,
+        documentId: dossier.documentId,
+        folder: byId('workingFolder').value.trim(),
+      }),
+    });
+    renderStampResults(result);
+    setMessage(byId('piecesMessage'), result.message, result.summary.failure ? 'error' : 'success');
+    toast(result.message);
+  } catch (error) {
+    setMessage(byId('piecesMessage'), error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function renderStampResults(result) {
+  const container = byId('stampResults');
+  container.hidden = false;
+  container.innerHTML = '';
+  const target = document.createElement('p');
+  target.className = 'muted';
+  target.textContent = `Sortie : ${result.tamponnedDir}`;
+  container.appendChild(target);
+  const list = document.createElement('div');
+  list.className = 'pieces-list';
+  for (const item of result.results) {
+    const row = document.createElement('div');
+    row.className = `piece-row ${item.success ? 'ok' : 'ko'}`;
+    row.innerHTML = `<span class="piece-rank">n°${item.pieceNumber}</span><span class="piece-name"></span><span class="muted"></span>`;
+    row.querySelector('.piece-name').textContent = item.outputFileName || item.filename || item.id;
+    row.querySelector('.muted').textContent = item.success ? 'tamponnée' : item.error;
+    list.appendChild(row);
+  }
+  container.appendChild(list);
 }
 
 async function loadStatus() {
@@ -60,7 +279,15 @@ async function loadStatus() {
     byId('version').textContent = status.version;
     byId('wordStatus').textContent = status.wordClients > 0 ? `Oui (${status.wordClients})` : 'Non';
     byId('certStatus').textContent = status.certificatesReady ? 'Prêts' : 'À installer';
-    byId('assetCount').textContent = `${status.files.skills} / ${status.files.agents}`;
+    const total = status.files.skills + status.files.agents;
+    const assetCount = byId('assetCount');
+    assetCount.textContent = `${status.files.skills} / ${status.files.agents}`;
+    assetCount.title = `${status.files.registered ?? 0} sur ${total} enregistré(s) dans Claude Code`;
+    byId('assetRegistered').textContent = `${status.files.registered ?? 0}/${total} dans Claude Code`;
+    const office = byId('officeState');
+    office.hidden = status.libreOffice !== false;
+    office.textContent = 'LibreOffice introuvable : les pièces Excel et Word ne pourront pas être converties en PDF. '
+      + 'Installez LibreOffice (ou renseignez SOFFICE_PATH) puis redémarrez le serveur.';
     byId('repoRoot').textContent = status.repoRoot;
   } catch (error) {
     badge.textContent = 'Serveur indisponible';
@@ -328,6 +555,46 @@ async function controlTelegram(role, action, button) {
   }
 }
 
+// Un skill / agent n'est utilisable dans Claude Code que s'il est enregistré
+// dans ~/.claude (voir websocket-server/claude-assets.cjs) : l'état est
+// affiché à côté du fichier pour que l'absence se voie tout de suite.
+const CLAUDE_ASSET_BADGES = {
+  linked: { text: 'Claude Code', className: 'ok', title: 'Enregistré dans Claude Code (lien vers le dépôt).' },
+  copied: { text: 'Claude Code', className: 'ok', title: 'Enregistré dans Claude Code (copie synchronisée à chaque enregistrement).' },
+  conflict: { text: 'Conflit', className: 'warn', title: 'Un fichier personnel du même nom existe déjà dans ~/.claude — il n’a pas été remplacé.' },
+  missing: { text: 'Non enregistré', className: 'warn', title: 'Pas encore visible par Claude Code — utilisez « ⟳ Claude Code ».' },
+};
+
+function claudeAssetBadge(file) {
+  const state = file.claudeCode?.state;
+  if (!state || !file.exists) return null;
+  const badge = CLAUDE_ASSET_BADGES[state];
+  if (!badge) return null;
+  const element = makeElement('span', `asset-badge ${badge.className}`, badge.text);
+  element.title = badge.title;
+  return element;
+}
+
+async function syncClaudeAssets() {
+  const button = byId('syncClaudeAssets');
+  const message = byId('claudeAssetsMessage');
+  button.disabled = true;
+  setMessage(message, 'Enregistrement auprès de Claude Code…');
+  try {
+    const result = await api('/api/admin/files/sync', { method: 'POST', body: '{}' });
+    await loadFiles({ selectPath: selectedFile?.path || null });
+    const conflicts = result.conflicts?.length
+      ? ` — ${result.conflicts.length} conflit(s) de nom dans ~/.claude`
+      : '';
+    setMessage(message, `${result.registered} skill(s)/agent(s) enregistré(s)${conflicts}.`, conflicts ? 'error' : 'success');
+    toast('Skills et agents synchronisés avec Claude Code');
+  } catch (error) {
+    setMessage(message, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function fileGroupLabel(kind) {
   return { instructions: 'Instructions', skill: 'Skills', agent: 'Agents', billing: 'Facturation — aperçus' }[kind] || kind;
 }
@@ -349,8 +616,10 @@ async function loadFiles({ selectPath = null } = {}) {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = `file-button${file.exists ? '' : ' missing'}`;
-        button.textContent = file.exists ? file.name : `${file.name} — créer`;
         button.dataset.path = file.path;
+        button.append(makeElement('span', 'file-button-label', file.exists ? file.name : `${file.name} — créer`));
+        const registration = claudeAssetBadge(file);
+        if (registration) button.append(registration);
         button.addEventListener('click', () => selectFile(file, button));
         list.append(button);
       }
@@ -369,12 +638,15 @@ async function loadFiles({ selectPath = null } = {}) {
   }
 }
 
+// `model` et `tools` sont du front matter d'agent : un skill n'en a pas, on
+// laisse alors ces clés intactes (undefined = non modifié).
 function metadataValues() {
+  const isAgent = selectedFile?.kind === 'agent';
   return {
     name: byId('metadataName').value,
     description: byId('metadataDescription').value,
-    model: byId('metadataModel').value,
-    tools: byId('metadataTools').value,
+    model: isAgent ? byId('metadataModel').value : undefined,
+    tools: isAgent ? byId('metadataTools').value : undefined,
   };
 }
 
@@ -407,8 +679,19 @@ async function selectFile(file, button) {
     byId('metadataEditor').hidden = !documentParts.frontMatter || data.readonly;
     byId('metadataName').value = documentParts.metadata.name || '';
     byId('metadataDescription').value = documentParts.metadata.description || '';
-    byId('metadataModel').value = documentParts.metadata.model || '';
-    byId('metadataTools').value = documentParts.metadata.tools || '';
+    const isAgent = data.kind === 'agent';
+    byId('metadataModelField').hidden = !isAgent;
+    byId('metadataToolsField').hidden = !isAgent;
+    // Un modèle inconnu du menu (valeur épinglée à la main) doit être conservé.
+    const model = isAgent ? documentParts.metadata.model || '' : '';
+    const modelSelect = byId('metadataModel');
+    if (model && !Array.from(modelSelect.options).some((option) => option.value === model)) {
+      const option = makeElement('option', '', model);
+      option.value = model;
+      modelSelect.append(option);
+    }
+    modelSelect.value = model;
+    byId('metadataTools').value = isAgent ? documentParts.metadata.tools || '' : '';
     byId('fileTitle').textContent = file.name;
     byId('filePath').textContent = file.path;
     byId('dirtyBadge').hidden = true;
@@ -810,11 +1093,25 @@ function applyEditorCommand(button) {
   markEditorDirty();
 }
 
+// Un agent se règle autrement qu'un skill : il déclare le modèle qui
+// l'exécute et les outils auxquels il a droit, et sa description sert à
+// décider quand le déléguer.
 function openCreateDialog(kind) {
   const dialog = byId('createFileDialog');
+  const isAgent = kind === 'agent';
   byId('createFileForm').reset();
   byId('createFileKind').value = kind;
-  byId('createFileTitle').textContent = kind === 'skill' ? 'Créer un skill' : 'Créer un agent';
+  byId('createFileTitle').textContent = isAgent ? 'Créer un agent' : 'Créer un skill';
+  byId('createAgentFields').hidden = !isAgent;
+  byId('createFileTools').disabled = !isAgent;
+  byId('createFileModel').disabled = !isAgent;
+  byId('createFileSlug').placeholder = isAgent ? 'analyste-piece' : 'analyse-contrat';
+  byId('createFileDescription').placeholder = isAgent
+    ? 'Quand déléguer cette tâche à l’agent, et ce qu’il doit renvoyer.'
+    : 'Quand et pourquoi Claude doit utiliser ce skill.';
+  byId('createFileHint').textContent = isAgent
+    ? 'L’agent sera enregistré dans Claude Code et lançable comme sous-agent.'
+    : 'Le skill sera enregistré dans Claude Code et déclenché selon sa description.';
   setMessage(byId('createFileMessage'));
   dialog.showModal();
 }
@@ -832,7 +1129,10 @@ async function createFile(event) {
     });
     byId('createFileDialog').close();
     await loadFiles({ selectPath: result.file.path });
-    toast(`${form.get('kind') === 'skill' ? 'Skill' : 'Agent'} créé`);
+    const label = form.get('kind') === 'skill' ? 'Skill' : 'Agent';
+    toast(['linked', 'copied'].includes(result.file.claudeCode?.state)
+      ? `${label} créé et enregistré dans Claude Code`
+      : `${label} créé — enregistrement Claude Code à vérifier`);
   } catch (error) {
     setMessage(byId('createFileMessage'), error.message, 'error');
   } finally {
@@ -845,6 +1145,18 @@ document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click',
   history.replaceState(null, '', `#${tab.dataset.tab}`);
 }));
 byId('settingsForm').addEventListener('submit', saveSettings);
+byId('tamponImageInput').addEventListener('change', handleTamponImageUpload);
+byId('buildTamponBtn').addEventListener('click', buildTampon);
+byId('saveTamponBtn').addEventListener('click', saveTampon);
+byId('clearTamponBtn').addEventListener('click', clearTampon);
+byId('refreshDossiers').addEventListener('click', loadDossiers);
+byId('dossierSelect').addEventListener('change', () => {
+  selectedPieces = [];
+  byId('workingFolder').value = currentDossier()?.folder || '';
+  renderPieces();
+});
+byId('workingFolder').addEventListener('input', renderPieces);
+byId('stampPiecesBtn').addEventListener('click', stampPieces);
 byId('telegramForm').addEventListener('submit', saveTelegram);
 byId('refreshTelegram').addEventListener('click', () => loadTelegram());
 byId('startAssistant').addEventListener('click', (event) => controlTelegram('assistant', 'start', event.currentTarget));
@@ -865,13 +1177,14 @@ byId('blockFormat').addEventListener('change', (event) => {
 });
 document.querySelectorAll('[data-create-kind]').forEach((button) => button.addEventListener('click', () => openCreateDialog(button.dataset.createKind)));
 byId('createFileForm').addEventListener('submit', createFile);
+byId('syncClaudeAssets').addEventListener('click', syncClaudeAssets);
 byId('cancelCreateFile').addEventListener('click', () => byId('createFileDialog').close());
 window.addEventListener('beforeunload', (event) => {
   if (selectedFile && editorTouched) event.preventDefault();
 });
 
 const requestedTab = location.hash.slice(1);
-setActiveTab(['history', 'settings', 'telegram', 'files'].includes(requestedTab) ? requestedTab : 'history');
+setActiveTab(['history', 'settings', 'pieces', 'telegram', 'files'].includes(requestedTab) ? requestedTab : 'history');
 loadStatus();
 
 setInterval(() => {

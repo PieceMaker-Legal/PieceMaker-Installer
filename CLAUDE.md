@@ -14,6 +14,8 @@ this repo — read it before touching `websocket-server/` or `taskpane/`.
   previews, served at `/admin/`.
   Original-document contents must never be read by this UI; original filenames
   are returned only after mapping substitution, with a generic fallback.
+  Skills and agents created here are registered with Claude Code immediately —
+  see "Claude Code registration" below.
 - **`electron/`** — legacy desktop shell, retained as source history but
   disabled in `package.json`; do not add new functionality to it.
 - **`websocket-server/server.cjs`** (4449 lines) — single Express server that
@@ -206,6 +208,28 @@ Python-bridge script (see `PYTHON_SCRIPTS` above).
 5. `readDoc()` passes extracted text through `deps.anonymizeText(text,
    'anonymize')` if an anonymisation mapping is active for the document,
    then returns Markdown back over WebSocket → HTTPS → stdio.
+
+## Claude Code registration (skills and agents)
+
+`websocket-server/claude-assets.cjs` links every
+`piecemaker-plugin/agents/<slug>.md` and `piecemaker-plugin/skills/<slug>/`
+into `~/.claude/agents/` and `~/.claude/skills/`, which Claude Code
+auto-discovers at session start. This is what makes a skill or agent created
+from `/admin/` usable without publishing the repo and re-running
+`claude plugin update` (the installed plugin is a frozen marketplace copy).
+
+- Symlinks, so later edits to the Markdown apply with no reinstall; a copy is
+  the fallback where symlinks are unavailable, refreshed on every save.
+- `registerClaudeAsset()` runs on create (`POST /api/admin/files`) and on save
+  (`PUT /api/admin/file`); `syncClaudeAssets()` runs at server startup, in
+  installer step `09-claude-assets`, and from `POST /api/admin/files/sync`.
+- A pre-existing user file with the same slug is never overwritten — the
+  state comes back as `conflict` and is surfaced as a badge in the admin file
+  list (`linked` / `copied` / `conflict` / `missing`).
+- Agent front matter is not skill front matter: agents are created with
+  `tools:` and `model:` (validated by `normalizeAgentTools` /
+  `normalizeAgentModel` in `admin-routes.cjs`), skills only carry
+  `name:` + `description:`.
 
 ## Environment variables
 

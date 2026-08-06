@@ -11,6 +11,11 @@ const {
   worktreeDetails,
 } = require('../piecemaker-plugin/scripts/lib/commits.cjs');
 const {
+  claudeAssetStatus,
+  registerClaudeAsset,
+  syncClaudeAssets,
+} = require('./claude-assets.cjs');
+const {
   controlDossierBot,
   controlTelegram,
   getTelegramState,
@@ -162,7 +167,7 @@ function managedAbsolutePath(repoRoot, relativePath, homeDir = path.join(os.home
   return { normalized, absolute };
 }
 
-function listManagedFiles(repoRoot, homeDir = path.join(os.homedir(), '.piecemaker')) {
+function listManagedFiles(repoRoot, homeDir = path.join(os.homedir(), '.piecemaker'), userHome = os.homedir()) {
   const candidates = ['AGENTS.md', 'CLAUDE.md'];
   const agentsDir = path.join(repoRoot, 'piecemaker-plugin', 'agents');
   if (fs.existsSync(agentsDir)) {
@@ -214,6 +219,9 @@ function listManagedFiles(repoRoot, homeDir = path.join(os.homedir(), '.piecemak
       kind,
       exists: fs.existsSync(absolute),
       readonly: kind === 'billing',
+      // Visibilité côté Claude Code (voir claude-assets.cjs) — null pour les
+      // fichiers qui ne sont pas des composants de plugin.
+      claudeCode: claudeAssetStatus(repoRoot, userHome, normalized),
     };
   });
 }
@@ -281,24 +289,94 @@ function saveManagedFile(repoRoot, homeDir, relativePath, content) {
   return { path: normalized, backup, savedAt: new Date().toISOString() };
 }
 
-function createManagedFile(repoRoot, homeDir, { kind, slug, name, description } = {}) {
+// Modèles acceptés dans le front matter d'un agent Claude Code. « inherit »
+// reprend le modèle de la session appelante.
+const AGENT_MODELS = ['inherit', 'haiku', 'sonnet', 'opus'];
+const DEFAULT_AGENT_TOOLS = 'Read, Grep, Glob';
+
+/**
+ * Un agent n'a pas le même front matter qu'un skill : il déclare en plus les
+ * outils auxquels il a droit et le modèle qui l'exécute. On valide donc ces
+ * deux champs ici plutôt que de recopier le gabarit d'un skill.
+ * Une liste d'outils vide signifie « hérite de tous les outils » : la clé est
+ * alors omise, ce que Claude Code interprète ainsi.
+ */
+function normalizeAgentTools(value) {
+  if (value === undefined || value === null) return DEFAULT_AGENT_TOOLS;
+  const tools = String(value)
+    .split(',')
+    .map((tool) => tool.trim())
+    .filter(Boolean);
+  const seen = [];
+  for (const tool of tools) {
+    // « Bash(git status:*) » : nom d'outil, éventuellement suivi d'un motif.
+    if (!/^[A-Za-z][A-Za-z0-9_-]*(\([^()\n]*\))?$/.test(tool)) {
+      throw new Error(`Outil invalide : « ${tool} ». Utilisez des noms comme Read, Grep, Glob ou Bash(git *).`);
+    }
+    if (!seen.includes(tool)) seen.push(tool);
+  }
+  if (seen.length > 30) throw new Error('Trop d\u2019outils déclarés pour un agent (30 maximum).');
+  return seen.join(', ');
+}
+
+function normalizeAgentModel(value) {
+  const model = String(value ?? 'sonnet').trim().toLowerCase() || 'sonnet';
+  if (!AGENT_MODELS.includes(model)) {
+    throw new Error(`Modèle inconnu : « ${model} ». Choisissez ${AGENT_MODELS.join(', ')}.`);
+  }
+  return model;
+}
+
+function agentTemplate(slug, title, summary, tools, model) {
+  const metadata = [
+    `name: ${slug}`,
+    `description: ${JSON.stringify(summary)}`,
+    ...(tools ? [`tools: ${tools}`] : []),
+    `model: ${model}`,
+  ].join('\n');
+  const toolLine = tools
+    ? `Outils autorisés : ${tools}.`
+    : 'Aucune restriction d\u2019outils : l\u2019agent hérite de ceux de la session.';
+  return `---\n${metadata}\n---\n\n# ${title}\n\n`
+    + `Vous êtes un sous-agent PieceMaker lancé pour une tâche précise, dans sa\n`
+    + `propre fenêtre de contexte. Décrivez ci-dessous votre rôle et vos règles.\n\n`
+    + `## Mission\n\n${summary}\n\n`
+    + `## Déroulé attendu\n\n`
+    + `1. Rassemblez le contexte nécessaire (documents, mapping, dossier).\n`
+    + `2. Effectuez l\u2019analyse ou la production demandée.\n`
+    + `3. Renvoyez un rapport final autonome : l\u2019agent appelant ne voit pas vos étapes intermédiaires.\n\n`
+    + `## Contraintes\n\n`
+    + `- ${toolLine}\n`
+    + `- Ne levez jamais une anonymisation existante : travaillez sur les codes tels quels.\n`
+    + `- Ne citez aucun texte de loi ni jurisprudence de mémoire.\n`;
+}
+
+function skillTemplate(slug, title, summary) {
+  const metadata = `name: ${slug}\ndescription: ${JSON.stringify(summary)}`;
+  return `---\n${metadata}\n---\n\n# ${title}\n\n`
+    + `${summary}\n\n`
+    + `## Quand utiliser ce skill\n\nDécrivez les situations qui doivent déclencher ce skill.\n\n`
+    + `## Déroulé\n\n1. Première étape.\n2. Deuxième étape.\n\n`
+    + `## Points de vigilance\n\n- Ce qu\u2019il ne faut jamais faire.\n`;
+}
+
+function createManagedFile(repoRoot, homeDir, { kind, slug, name, description, tools, model } = {}) {
   if (!['skill', 'agent'].includes(kind)) throw new Error('Choisissez « skill » ou « agent ».');
   const safeSlug = String(slug || '').trim().toLowerCase();
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(safeSlug)) {
-    throw new Error('L’identifiant doit contenir uniquement des minuscules, chiffres et tirets.');
+    throw new Error('L\u2019identifiant doit contenir uniquement des minuscules, chiffres et tirets.');
   }
   const title = String(name || safeSlug).replace(/[\r\n]+/g, ' ').trim().slice(0, 80) || safeSlug;
   const summary = String(description || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 1000);
-  if (!summary) throw new Error('Une description est requise pour que l’agent sache quand utiliser ce fichier.');
+  if (!summary) throw new Error('Une description est requise pour que l\u2019agent sache quand utiliser ce fichier.');
   const relativePath = kind === 'skill'
     ? `piecemaker-plugin/skills/${safeSlug}/SKILL.md`
     : `piecemaker-plugin/agents/${safeSlug}.md`;
   const { absolute } = managedAbsolutePath(repoRoot, relativePath, homeDir);
   if (fs.existsSync(absolute)) throw new Error('Un fichier portant cet identifiant existe déjà.');
-  const metadata = kind === 'skill'
-    ? `name: ${safeSlug}\ndescription: ${JSON.stringify(summary)}`
-    : `name: ${safeSlug}\ndescription: ${JSON.stringify(summary)}\ntools: Read, Grep, Glob\nmodel: sonnet`;
-  const content = `---\n${metadata}\n---\n\n# ${title}\n\nDécrivez ici le rôle, les règles et le déroulement attendu.\n`;
+  const content = kind === 'skill'
+    ? skillTemplate(safeSlug, title, summary)
+    : agentTemplate(safeSlug, title, summary, normalizeAgentTools(tools), normalizeAgentModel(model));
   saveManagedFile(repoRoot, homeDir, relativePath, content);
   return readManagedFile(repoRoot, relativePath, homeDir);
 }
@@ -311,6 +389,47 @@ function isLocalOrigin(origin) {
   } catch {
     return false;
   }
+}
+
+function legalWorkspaceDirectory(repoRoot, homeDir) {
+  return configuredWorkspacePath(homeDir);
+}
+
+/**
+ * Dossiers tamponnables : un par `compilation_dossier_<documentId>.json` écrit
+ * dans le dossier de sortie (voir server.cjs). `folder` est le dossier de
+ * travail (celui du document Word), où les pièces tamponnées sont écrites dans
+ * le sous-dossier « Pièces ». Seules les métadonnées utiles au bordereau sont
+ * renvoyées — jamais `texte_integral`, qui contient les pièces en clair.
+ */
+function listDossiers(repoRoot, homeDir) {
+  const workspace = legalWorkspaceDirectory(repoRoot, homeDir);
+  if (!fs.existsSync(workspace)) return [];
+  const legalCases = fs.readdirSync(workspace, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink() && !entry.name.startsWith('.'));
+  return legalCases.flatMap((entry) => {
+    const legalCase = path.join(workspace, entry.name);
+    return fs.readdirSync(legalCase)
+      .filter((file) => /^compilation_dossier_.+\.json$/.test(file))
+      .map((file) => {
+      const documentId = file.slice('compilation_dossier_'.length, -'.json'.length);
+      const raw = readJson(path.join(legalCase, file), null);
+      const documents = Array.isArray(raw) ? raw : raw?.documents || [];
+      return {
+        documentId,
+        informations: Array.isArray(raw) ? {} : raw?.informations_dossier || {},
+        folder: legalCase,
+        stampedDir: path.join(legalCase, 'Pièces'),
+        documents: documents.map((doc) => ({
+          id: doc?.id,
+          filename: doc?.filename || '',
+          type_document: doc?.type_document || '',
+          date_document: doc?.date_document || '',
+        })),
+      };
+      });
+    })
+    .filter((dossier) => dossier.documents.length > 0);
 }
 
 function createAdminRouter({
@@ -337,7 +456,7 @@ function createAdminRouter({
 
   router.get('/status', (req, res) => {
     const pkg = readJson(path.join(repoRoot, 'package.json'), {});
-    const files = listManagedFiles(repoRoot, homeDir);
+    const files = listManagedFiles(repoRoot, homeDir, userHome);
     res.json({
       ok: true,
       version: pkg.version || 'inconnue',
@@ -348,6 +467,7 @@ function createAdminRouter({
       files: {
         skills: files.filter((file) => file.kind === 'skill').length,
         agents: files.filter((file) => file.kind === 'agent').length,
+        registered: files.filter((file) => ['linked', 'copied'].includes(file.claudeCode?.state)).length,
       },
       ...getRuntimeStatus(),
     });
@@ -396,14 +516,26 @@ function createAdminRouter({
   });
 
   router.get('/files', (req, res) => {
-    res.json({ files: listManagedFiles(repoRoot, homeDir) });
+    res.json({ files: listManagedFiles(repoRoot, homeDir, userHome) });
   });
 
   router.post('/files', (req, res) => {
     try {
-      res.status(201).json({ ok: true, file: createManagedFile(repoRoot, homeDir, req.body) });
+      const file = createManagedFile(repoRoot, homeDir, req.body);
+      // Enregistrement immédiat auprès de Claude Code : sans cela le skill ou
+      // l'agent n'apparaîtrait qu'après publication et « claude plugin update ».
+      const claudeCode = registerClaudeAsset(repoRoot, userHome, file.path);
+      res.status(201).json({ ok: true, file: { ...file, claudeCode } });
     } catch (error) {
       res.status(400).json({ error: error.message });
+    }
+  });
+
+  router.post('/files/sync', (req, res) => {
+    try {
+      res.json({ ok: true, ...syncClaudeAssets(repoRoot, userHome) });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
     }
   });
 
@@ -417,9 +549,21 @@ function createAdminRouter({
 
   router.put('/file', (req, res) => {
     try {
-      res.json({ ok: true, ...saveManagedFile(repoRoot, homeDir, req.body?.path, req.body?.content) });
+      const saved = saveManagedFile(repoRoot, homeDir, req.body?.path, req.body?.content);
+      res.json({ ok: true, ...saved, claudeCode: registerClaudeAsset(repoRoot, userHome, saved.path) });
     } catch (error) {
       res.status(400).json({ error: error.message });
+    }
+  });
+
+  router.get('/dossiers', (req, res) => {
+    try {
+      res.json({
+        dossiers: listDossiers(repoRoot, homeDir),
+        tamponConfigured: fs.existsSync(path.join(legalWorkspaceDirectory(repoRoot, homeDir), '.piecemaker', 'tampon.png')),
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
     }
   });
 
@@ -530,8 +674,12 @@ module.exports = {
   createAdminRouter,
   createManagedFile,
   isLocalOrigin,
+  legalWorkspaceDirectory,
+  listDossiers,
   listManagedFiles,
   managedFileKind,
+  normalizeAgentModel,
+  normalizeAgentTools,
   readManagedFile,
   saveManagedFile,
   updateEnvFile,

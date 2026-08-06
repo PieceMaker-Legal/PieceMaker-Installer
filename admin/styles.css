@@ -39,6 +39,7 @@ h2 { margin-bottom: 8px; font-size: 1.15rem; }
 .metric { padding: 20px; }
 .metric span { display: block; margin-bottom: 8px; color: var(--muted); font-size: .8rem; }
 .metric strong { font-size: 1.15rem; }
+.metric small { display: block; margin-top: 5px; color: var(--muted); font-size: .72rem; }
 .location-card { margin-bottom: 14px; padding: 22px; }
 code { border-radius: 5px; background: #edf1ef; padding: 2px 5px; color: #27423d; overflow-wrap: anywhere; }
 .form-card { margin-bottom: 14px; padding: 24px; }
@@ -105,6 +106,13 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); outline:
 .file-button { border: 0; border-radius: 8px; padding: 9px 10px; background: transparent; color: var(--ink); cursor: pointer; text-align: left; }
 .file-button:hover, .file-button.active { background: var(--accent); color: var(--brand-dark); }
 .file-button.missing { color: var(--muted); font-style: italic; }
+.file-button { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.file-button-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.asset-badge { flex: none; border-radius: 999px; background: #edf1ef; padding: 3px 7px; color: var(--muted); font-size: .62rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.asset-badge.ok { background: var(--accent); color: var(--brand-dark); }
+.asset-badge.warn { background: #fff0cc; color: var(--warn); }
+.agent-fields { display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 10px; background: #f8faf9; padding: 12px; }
+.hint { margin: 0; color: var(--muted); font-size: .74rem; }
 .editor-pane { display: flex; min-width: 0; flex-direction: column; padding: 22px; }
 .editor-header { display: flex; min-height: 55px; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .editor-header code { display: block; margin-top: 6px; background: transparent; padding: 0; color: var(--muted); font-size: .75rem; }
@@ -245,4 +253,28 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
   .tab { white-space: nowrap; }
   .metrics, .form-grid, .metadata-editor { grid-template-columns: 1fr; }
   .form-grid .wide, .metadata-editor .wide { grid-column: auto; }
+  .repository-toolbar, .desktop-workspace, .revision-content { grid-template-columns: 1fr; }
+  .repository-identity, .branch-identity, .folder-column, .history-column { border-right: 0; border-bottom: 1px solid #d8dee4; }
+  .toolbar-actions { align-items: stretch; flex-direction: column; }
+  .revision-column { grid-column: auto; }
 }
+
+/* Tampon et pièces */
+.tampon-layout { display: grid; grid-template-columns: minmax(0, 1fr) 240px; gap: 22px; margin-bottom: 18px; }
+.tampon-controls { display: grid; gap: 16px; align-content: start; }
+.tampon-controls small { display: block; margin-top: 5px; color: var(--muted); font-size: .76rem; }
+.tampon-builder { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px 16px; }
+.tampon-builder legend { padding: 0 6px; color: var(--muted); font-size: .78rem; font-weight: 700; }
+.tampon-builder .form-grid { margin-bottom: 14px; }
+.tampon-preview { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; border: 1px dashed #c7ced4; border-radius: 12px; padding: 16px; background: #f7f9f8; text-align: center; }
+.tampon-preview img { max-width: 190px; max-height: 190px; }
+.pieces-list { display: grid; gap: 4px; margin: 14px 0; }
+.piece-row { display: grid; width: 100%; grid-template-columns: 54px minmax(0, 1fr) auto; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 9px; padding: 9px 12px; background: #fff; color: var(--ink); cursor: pointer; font-size: .85rem; text-align: left; }
+.piece-row:hover { background: #f3f6f5; }
+.piece-row.selected { border-color: var(--brand); background: var(--accent); color: var(--brand-dark); }
+.piece-row.ok, .piece-row.ko { cursor: default; }
+.piece-row.ko { border-color: #cf4545; color: var(--danger); }
+.piece-rank { color: var(--brand); font-size: .78rem; font-weight: 800; }
+.piece-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stamp-results { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
+@media (max-width: 900px) { .tampon-layout { grid-template-columns: minmax(0, 1fr); } }

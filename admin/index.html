@@ -18,6 +18,7 @@
     <nav class="tabs" aria-label="Sections">
       <button class="tab active" data-tab="history">Dossiers</button>
       <button class="tab" data-tab="settings">Paramètres</button>
+      <button class="tab" data-tab="pieces">Tampon et pièces</button>
       <button class="tab" data-tab="telegram">Telegram</button>
       <button class="tab" data-tab="files">Skills et agents</button>
     </nav>
@@ -110,7 +111,7 @@
           <article class="card metric"><span>Version</span><strong id="version">—</strong></article>
           <article class="card metric"><span>Word connecté</span><strong id="wordStatus">—</strong></article>
           <article class="card metric"><span>Certificats HTTPS</span><strong id="certStatus">—</strong></article>
-          <article class="card metric"><span>Skills / agents</span><strong id="assetCount">—</strong></article>
+          <article class="card metric"><span>Skills / agents</span><strong id="assetCount">—</strong><small id="assetRegistered"></small></article>
         </div>
         <article class="card location-card">
           <h2>Emplacement</h2>
@@ -144,6 +145,67 @@
             <button class="button primary" type="submit">Enregistrer les paramètres</button>
           </div>
         </form>
+      </section>
+
+      <section id="pieces" class="panel">
+        <article class="card form-card">
+          <div class="section-heading">
+            <div><p class="eyebrow">BORDEREAU</p><h2>Tampon</h2></div>
+            <span id="tamponState" class="status-pill pending">Chargement…</span>
+          </div>
+          <div class="tampon-layout">
+            <div class="tampon-controls">
+              <label class="wide">Image du tampon (PNG recommandé)
+                <input type="file" id="tamponImageInput" accept="image/png,image/jpeg,image/jpg">
+                <small>Le numéro de pièce est ajouté automatiquement au centre du tampon lors du tamponnage.</small>
+              </label>
+              <fieldset class="tampon-builder">
+                <legend>… ou créer un tampon</legend>
+                <div class="form-grid">
+                  <label>Ligne du haut<input id="tamponTop" value="PIÈCE N°" maxlength="24"></label>
+                  <label>Ligne du bas<input id="tamponBottom" placeholder="Cabinet / Maître" maxlength="24"></label>
+                  <label>Forme
+                    <select id="tamponShape">
+                      <option value="circle">Cercle</option>
+                      <option value="rect">Rectangle</option>
+                    </select>
+                  </label>
+                  <label>Couleur<input id="tamponColor" type="color" value="#1f4f45"></label>
+                </div>
+                <button id="buildTamponBtn" class="button ghost" type="button">Générer le tampon</button>
+              </fieldset>
+            </div>
+            <div class="tampon-preview">
+              <span class="toolbar-caption">Aperçu</span>
+              <img id="tamponPreviewImage" alt="Aperçu du tampon" hidden>
+              <p id="tamponEmpty" class="muted">Aucun tampon configuré.</p>
+            </div>
+          </div>
+          <div class="actions">
+            <span id="tamponMessage" class="message"></span>
+            <button id="clearTamponBtn" class="button danger-outline" type="button">Supprimer le tampon</button>
+            <button id="saveTamponBtn" class="button primary" type="button" disabled>Enregistrer le tampon</button>
+          </div>
+        </article>
+
+        <article class="card form-card">
+          <div class="section-heading">
+            <div><p class="eyebrow">PIÈCES</p><h2>Tamponnage du dossier</h2></div>
+            <button id="refreshDossiers" class="button ghost" type="button">Actualiser</button>
+          </div>
+          <p id="officeState" class="muted" hidden></p>
+          <div class="form-grid">
+            <label>Dossier<select id="dossierSelect"></select></label>
+            <label>Dossier de travail<input id="workingFolder" placeholder="Dossier du document Word"><small>Les pièces sont écrites dans son sous-dossier « Pièces ».</small></label>
+          </div>
+          <p class="muted">Cliquez les pièces dans l’ordre du bordereau : le rang de sélection donne le numéro de tampon. Les fichiers originaux (et non les <code>.md</code> de conversion) sont tamponnés puis renommés « Pièce n°1 », « Pièce n°2 »… dans <code id="stampedDir">—</code>.</p>
+          <div id="piecesList" class="pieces-list"></div>
+          <div class="actions">
+            <span id="piecesMessage" class="message"></span>
+            <button id="stampPiecesBtn" class="button primary" type="button" disabled>Tamponner les pièces sélectionnées</button>
+          </div>
+          <div id="stampResults" class="stamp-results" hidden></div>
+        </article>
       </section>
 
       <section id="telegram" class="panel">
@@ -217,8 +279,10 @@
             <div class="new-file-actions">
               <button class="button secondary compact" type="button" data-create-kind="skill">+ Skill</button>
               <button class="button secondary compact" type="button" data-create-kind="agent">+ Agent</button>
+              <button id="syncClaudeAssets" class="button secondary compact" type="button" title="Réenregistrer tous les skills et agents auprès de Claude Code">⟳ Claude Code</button>
             </div>
             <div id="fileList" class="file-list"></div>
+            <p id="claudeAssetsMessage" class="message"></p>
           </aside>
           <div class="editor-pane">
             <div class="editor-header">
@@ -228,8 +292,14 @@
             <div id="metadataEditor" class="metadata-editor" hidden>
               <label>Nom<input id="metadataName" maxlength="100"></label>
               <label class="wide">Description<input id="metadataDescription" maxlength="1000"></label>
-              <label>Modèle<input id="metadataModel" placeholder="sonnet"></label>
-              <label>Outils<input id="metadataTools" placeholder="Read, Grep, Glob"></label>
+              <label id="metadataModelField">Modèle<select id="metadataModel">
+                <option value="">Non précisé</option>
+                <option value="sonnet">Sonnet — équilibré</option>
+                <option value="haiku">Haiku — rapide</option>
+                <option value="opus">Opus — raisonnement approfondi</option>
+                <option value="inherit">Hérité de la session</option>
+              </select></label>
+              <label id="metadataToolsField">Outils<input id="metadataTools" placeholder="Read, Grep, Glob"><small>Vide = tous les outils de la session.</small></label>
             </div>
             <div id="editorToolbar" class="editor-toolbar" hidden aria-label="Mise en forme">
               <select id="blockFormat" aria-label="Style du paragraphe">
@@ -263,7 +333,17 @@
       <input id="createFileKind" name="kind" type="hidden">
       <label>Identifiant<input id="createFileSlug" name="slug" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" placeholder="analyse-contrat" required><small>Minuscules, chiffres et tirets.</small></label>
       <label>Nom affiché<input name="name" placeholder="Analyse de contrat" required></label>
-      <label>Description<textarea name="description" rows="4" required placeholder="Quand et pourquoi l’agent doit utiliser ce fichier."></textarea></label>
+      <label>Description<textarea id="createFileDescription" name="description" rows="4" required placeholder="Quand et pourquoi l’agent doit utiliser ce fichier."></textarea></label>
+      <div id="createAgentFields" class="agent-fields" hidden>
+        <label>Modèle<select id="createFileModel" name="model">
+          <option value="sonnet">Sonnet — équilibré</option>
+          <option value="haiku">Haiku — rapide, tâches simples</option>
+          <option value="opus">Opus — raisonnement approfondi</option>
+          <option value="inherit">Hérité de la session appelante</option>
+        </select></label>
+        <label>Outils autorisés<input id="createFileTools" name="tools" value="Read, Grep, Glob" placeholder="Read, Grep, Glob"><small>Séparés par des virgules. Vide = tous les outils de la session. Motifs acceptés : Bash(git *).</small></label>
+      </div>
+      <p id="createFileHint" class="hint"></p>
       <span id="createFileMessage" class="message error"></span>
       <div class="actions">
         <button id="cancelCreateFile" class="button secondary" type="button">Annuler</button>

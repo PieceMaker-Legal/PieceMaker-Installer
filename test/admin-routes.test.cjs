@@ -7,8 +7,11 @@ const test = require('node:test');
 const {
   createManagedFile,
   isLocalOrigin,
+  listDossiers,
   listManagedFiles,
   managedFileKind,
+  normalizeAgentModel,
+  normalizeAgentTools,
   readManagedFile,
   saveManagedFile,
   updateEnvFile,
@@ -87,6 +90,39 @@ test('un nouveau skill reçoit un front matter et reste dans le dossier autoris�
   }), /identifiant/);
 });
 
+test('un nouvel agent reçoit ses propres réglages : outils et modèle', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const created = createManagedFile(data.repo, data.home, {
+    kind: 'agent',
+    slug: 'analyste-bail',
+    name: 'Analyste de bail',
+    description: 'Analyser un bail commercial.',
+    tools: 'Read, Grep, Bash(git log:*)',
+    model: 'opus',
+  });
+  assert.equal(created.path, 'piecemaker-plugin/agents/analyste-bail.md');
+  assert.match(created.content, /^---\nname: analyste-bail\n/);
+  assert.match(created.content, /^tools: Read, Grep, Bash\(git log:\*\)$/m);
+  assert.match(created.content, /^model: opus$/m);
+
+  // Un skill n'a ni outils ni modèle : son gabarit reste minimal.
+  const skill = createManagedFile(data.repo, data.home, {
+    kind: 'skill', slug: 'bail', name: 'Bail', description: 'Résumer un bail.',
+  });
+  assert.doesNotMatch(skill.content, /^(tools|model):/m);
+
+  assert.equal(normalizeAgentTools(''), '');
+  assert.equal(normalizeAgentTools(undefined), 'Read, Grep, Glob');
+  assert.equal(normalizeAgentTools('Read, Read, Glob'), 'Read, Glob');
+  assert.throws(() => normalizeAgentTools('rm -rf /'), /Outil invalide/);
+  assert.equal(normalizeAgentModel('SONNET'), 'sonnet');
+  assert.throws(() => normalizeAgentModel('gpt'), /Modèle inconnu/);
+  assert.throws(() => createManagedFile(data.repo, data.home, {
+    kind: 'agent', slug: 'x-y', name: 'x', description: 'x', model: 'inconnu',
+  }), /Modèle inconnu/);
+});
+
 test('un enregistrement crée une sauvegarde et refuse la traversée de dossiers', (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
@@ -115,4 +151,29 @@ test('l’administration refuse les origines web non locales', () => {
   assert.equal(isLocalOrigin('https://localhost:43098'), true);
   assert.equal(isLocalOrigin('https://127.0.0.1:43098'), true);
   assert.equal(isLocalOrigin('https://example.com'), false);
+});
+
+test('les dossiers tamponnables sont listés par dossier juridique, sans le texte des pièces', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const workspace = path.join(data.root, 'dossiers-juridiques');
+  const legalCase = path.join(workspace, 'Dupont c-Martin');
+  fs.mkdirSync(legalCase, { recursive: true });
+  fs.mkdirSync(data.home, { recursive: true });
+  fs.writeFileSync(path.join(data.home, 'config.json'), JSON.stringify({ workspacePath: workspace }));
+  fs.writeFileSync(path.join(legalCase, 'compilation_dossier_ABC.json'), JSON.stringify({
+    informations_dossier: { intitule: 'Dupont c/ Martin' },
+    documents: [{ id: '0001', filename: 'contrat.pdf', type_document: 'Contrat', texte_integral: 'SECRET' }],
+  }));
+  fs.writeFileSync(path.join(legalCase, 'compilation_dossier_VIDE.json'), JSON.stringify({ documents: [] }));
+
+  const dossiers = listDossiers(data.repo, data.home);
+  assert.equal(dossiers.length, 1);
+  assert.equal(dossiers[0].documentId, 'ABC');
+  assert.equal(dossiers[0].informations.intitule, 'Dupont c/ Martin');
+  assert.equal(dossiers[0].folder, legalCase);
+  assert.equal(dossiers[0].stampedDir, path.join(legalCase, 'Pièces'));
+  assert.deepEqual(dossiers[0].documents, [
+    { id: '0001', filename: 'contrat.pdf', type_document: 'Contrat', date_document: '' },
+  ]);
 });

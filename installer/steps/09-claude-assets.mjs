@@ -30,10 +30,15 @@
  */
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { log, spinner } from '../lib/ui.mjs';
 import { confirm } from '../lib/prompt.mjs';
 import { REPO_ROOT, commandExists, run, runCapture } from '../lib/platform.mjs';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const { claudeAssetStatus, repositoryAssets, syncClaudeAssets } = require('../../websocket-server/claude-assets.cjs');
 
 export const meta = {
   id: '09-claude-assets',
@@ -178,6 +183,7 @@ export async function install(ctx) {
   if (ctx.dryRun) {
     log.info(`[simulation] claude plugin marketplace add ${REPO_SLUG} (repli local : ${REPO_ROOT})`);
     log.info(`[simulation] claude plugin install ${PLUGIN_SPEC}`);
+    log.info('[simulation] enregistrement des skills/agents locaux dans ~/.claude');
     log.info('[simulation] vérification de CLAUDE.md (racine)');
     return { status: 'skipped', note: 'Mode simulation — aucune modification effectuée.' };
   }
@@ -188,6 +194,15 @@ export async function install(ctx) {
   }
 
   const pluginOk = await ensurePlugin();
+  // Le plugin installé est une copie figée du marketplace : les skills et
+  // agents créés localement (administration web) ne s'y trouvent pas. On les
+  // enregistre donc aussi dans ~/.claude/{agents,skills}, que Claude Code
+  // découvre à chaque session (voir websocket-server/claude-assets.cjs).
+  const assets = syncClaudeAssets(REPO_ROOT);
+  log.detail(`${assets.registered} skill(s)/agent(s) local(aux) enregistré(s) dans ~/.claude.`);
+  for (const conflict of assets.conflicts) {
+    log.warn(`« ${conflict.slug} » existe déjà dans ~/.claude et n'a pas été remplacé.`);
+  }
   const claudeMdResult = await reconcileClaudeMd();
 
   if (!pluginOk) {
@@ -212,7 +227,15 @@ export async function check(ctx) {
   const plugins = listPlugins();
   const pluginInstalled = isPluginInstalled(plugins);
   const claudeMdOk = fs.existsSync(CLAUDE_MD);
+  const unregistered = repositoryAssets(REPO_ROOT)
+    .filter((asset) => !['linked', 'copied'].includes(claudeAssetStatus(REPO_ROOT, os.homedir(), asset)?.state));
 
+  if (pluginInstalled && claudeMdOk && unregistered.length) {
+    return {
+      status: 'partial',
+      note: `${unregistered.length} skill(s)/agent(s) local(aux) non enregistré(s) dans ~/.claude — relancez cette étape.`,
+    };
+  }
   if (pluginInstalled && claudeMdOk) return { status: 'done', note: '' };
   if (!pluginInstalled && !claudeMdOk) return { status: 'failed', note: 'Plugin non installé et CLAUDE.md absent.' };
   return {

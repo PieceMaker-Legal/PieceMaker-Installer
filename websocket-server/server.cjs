@@ -8,6 +8,8 @@ const { WebSocketServer } = require('ws');
 const { Ollama } = require('ollama');
 const { z } = require('zod');
 const { createAdminRouter, isLocalOrigin } = require('./admin-routes.cjs');
+const { syncClaudeAssets } = require('./claude-assets.cjs');
+const { convertToPdf, findSoffice } = require('./lib/office-to-pdf.cjs');
 const { resolveLegalCaseFolder } = require('./workspace-paths.cjs');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -148,8 +150,32 @@ app.use('/admin', express.static(path.join(REPO_ROOT, 'admin'), { index: 'index.
 app.use('/api/admin', createAdminRouter({
   repoRoot: REPO_ROOT,
   homeDir: PIECEMAKER_HOME,
-  getRuntimeStatus: () => ({ wordClients: wordClients.size, port: PORT, host: HOST }),
+  getRuntimeStatus: () => ({
+    wordClients: wordClients.size,
+    port: PORT,
+    host: HOST,
+    libreOffice: libreOfficeAvailable(),
+  }),
 }));
+
+// Les skills et agents du dépôt sont republiés dans ~/.claude au démarrage :
+// Claude Code les découvre à l'ouverture d'une session, sans attendre une
+// publication du marketplace (voir claude-assets.cjs).
+try {
+  const sync = syncClaudeAssets(REPO_ROOT);
+  console.log(`Claude Code : ${sync.registered} skill(s)/agent(s) enregistré(s)`
+    + (sync.conflicts.length ? `, ${sync.conflicts.length} conflit(s) de nom dans ~/.claude` : ''));
+} catch (error) {
+  console.warn('Enregistrement des skills/agents auprès de Claude Code impossible :', error.message);
+}
+
+// LibreOffice sert à convertir les pièces Excel/Word en PDF avant tamponnage.
+// La détection lance un processus : on ne la fait qu'une fois.
+let sofficeAvailable;
+function libreOfficeAvailable() {
+  if (sofficeAvailable === undefined) sofficeAvailable = Boolean(findSoffice());
+  return sofficeAvailable;
+}
 app.use(express.static(path.join(__dirname, '..', 'taskpane')));
 
 // Logs des requÃªtes
@@ -2975,6 +3001,9 @@ app.post('/api/stamping', async (req, res) => {
     const { PDFDocument, rgb } = require('pdf-lib');
     const results = [];
 
+    // Dossier temporaire des PDF intermédiaires (Excel, Word, images, texte).
+    const conversionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-conversion-'));
+
     // Traiter chaque pièce dans l'ordre donné
     for (let i = 0; i < pieces.length; i++) {
       const pieceId = pieces[i];
@@ -3011,26 +3040,10 @@ app.post('/api/stamping', async (req, res) => {
         const outputFileName = `Pièce n°${pieceNumber}.pdf`;
         const outputPath = path.join(tamponnedDir, outputFileName);
 
-        // Déterminer l'extension du fichier
-        const ext = path.extname(filePath).toLowerCase();
-
-        let pdfBytes;
-
-        if (ext === '.pdf') {
-          // Charger le PDF existant
-          pdfBytes = fs.readFileSync(filePath);
-        } else {
-          // Pour l'instant, on ne supporte que les PDF
-          // TODO: Ajouter conversion DOCX -> PDF avec mammoth + pdfkit
-          results.push({
-            pieceNumber,
-            id: pieceId,
-            filename: document.filename,
-            success: false,
-            error: `Type de fichier non supporté pour tamponnage : ${ext}. Seuls les PDF sont supportés actuellement.`
-          });
-          continue;
-        }
+        // Passage en PDF de l'original (Excel/Word via LibreOffice, images et
+        // texte via pdf-lib, PDF laissé tel quel).
+        const conversion = await convertToPdf(filePath, conversionDir);
+        const pdfBytes = fs.readFileSync(conversion.pdfPath);
 
         // Charger le PDF avec pdf-lib
         const pdfDoc = await PDFDocument.load(pdfBytes);
@@ -3114,6 +3127,8 @@ app.post('/api/stamping', async (req, res) => {
           filename: document.filename,
           outputFileName: outputFileName,
           outputPath: outputPath,
+          converted: conversion.converted,
+          conversionEngine: conversion.engine,
           success: true
         });
 
@@ -3126,6 +3141,12 @@ app.post('/api/stamping', async (req, res) => {
           error: error.message
         });
       }
+    }
+
+    try {
+      fs.rmSync(conversionDir, { recursive: true, force: true });
+    } catch (cleanupError) {
+      console.warn('⚠️ Nettoyage des PDF intermédiaires impossible:', cleanupError.message);
     }
 
     const successCount = results.filter(r => r.success).length;
