@@ -65,7 +65,7 @@ async function main() {
   if (anonCfg.enabled === false) return null;
 
   const extensions = anonCfg.documentExtensions || DEFAULT_EXTENSIONS;
-  const roots = anonCfg.watchPaths || (config.outputPath ? [config.outputPath] : []);
+  const roots = anonCfg.watchPaths?.length ? anonCfg.watchPaths : (config.workspacePath ? [config.workspacePath] : []);
 
   const inScope = hasDocumentExtension(filePath, extensions) && (roots.length === 0 || isUnderAnyRoot(filePath, roots));
   if (!inScope) return null;

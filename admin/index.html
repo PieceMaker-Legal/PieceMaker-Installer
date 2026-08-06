@@ -56,12 +56,12 @@
             </div>
             <div class="branch-identity">
               <span class="toolbar-caption">Historique indépendant</span>
-              <strong id="repositoryBranch">Checkpoints</strong>
+              <strong id="repositoryBranch">Commits</strong>
               <span id="repositoryHead" class="sha">—</span>
             </div>
             <div class="toolbar-actions">
               <button id="refreshHistory" class="button ghost" type="button">Actualiser</button>
-              <button id="createCheckpoint" class="button primary" type="button">Créer un checkpoint</button>
+              <button id="createCommit" class="button primary" type="button">Enregistrer un commit</button>
             </div>
           </header>
 
@@ -116,7 +116,7 @@
                     <strong id="diffFile">Aucun fichier sélectionné</strong>
                     <span id="diffStats" class="diff-stats"></span>
                   </div>
-                  <div id="diffContent" class="diff-content empty-state">Sélectionnez un commit ou un checkpoint dans l’historique.</div>
+                  <div id="diffContent" class="diff-content empty-state">Sélectionnez un commit dans l’historique.</div>
                 </div>
               </div>
             </section>
@@ -131,7 +131,7 @@
               <div><p class="eyebrow">LOCAL</p><h2>Serveur et fichiers</h2></div>
             </div>
             <div class="form-grid">
-              <label>Dossier de sortie<input id="outputPath" name="outputPath" required></label>
+              <label>Dossier racine PieceMaker<input id="workspacePath" name="workspacePath" required><small>Chaque sous-dossier immédiat est un dossier juridique indépendant ; toutes les productions restent dans le dossier actif.</small></label>
               <label>Port local<input id="port" name="port" type="number" min="1024" max="65535" required readonly><small>Le port 43098 est actuellement requis par le complément Word.</small></label>
               <label class="wide">Interpréteur Python<input id="pythonPath" name="pythonPath" placeholder="python3 ou chemin absolu"></label>
             </div>

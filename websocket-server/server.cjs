@@ -8,6 +8,7 @@ const { WebSocketServer } = require('ws');
 const { Ollama } = require('ollama');
 const { z } = require('zod');
 const { createAdminRouter, isLocalOrigin } = require('./admin-routes.cjs');
+const { resolveLegalCaseFolder } = require('./workspace-paths.cjs');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const PIECEMAKER_HOME = process.env.PIECEMAKER_HOME || path.join(os.homedir(), '.piecemaker');
@@ -34,15 +35,19 @@ const { createAnonymizationRoutes, anonymizationMappings } = require('../taskpan
 console.log('🔍 [SERVER.JS] Variables d\'environnement au démarrage:');
 console.log('  MCP_URL:', process.env.MCP_URL);
 console.log('  MCP_API_KEY:', process.env.MCP_API_KEY ? '***' + process.env.MCP_API_KEY.slice(-4) : 'UNDEFINED');
-console.log('  OUTPUT_PATH:', process.env.OUTPUT_PATH || 'DEFAULT (./output)');
+console.log('  PIECEMAKER_WORKSPACE_PATH:', process.env.PIECEMAKER_WORKSPACE_PATH || userConfig.workspacePath || 'NON CONFIGURÉ');
 
 const app = express();
 const PORT = Number(process.env.PORT || userConfig.port || 43098);
 const HOST = process.env.PIECEMAKER_HOST || '127.0.0.1';
 
-// Fonction pour obtenir le chemin de sortie configuré
-function getOutputPath() {
-  return process.env.OUTPUT_PATH || userConfig.outputPath || path.join(REPO_ROOT, 'output');
+function getWorkspacePath() {
+  const configured = process.env.PIECEMAKER_WORKSPACE_PATH
+    || userConfig.workspacePath
+    || process.env.OUTPUT_PATH
+    || userConfig.outputPath;
+  if (!configured) throw new Error('Le dossier racine PieceMaker n’est pas configuré.');
+  return path.resolve(configured);
 }
 
 // Stockage des clients WebSocket connectés
@@ -70,6 +75,51 @@ function stripBOM(content) {
 function readFileStripBOM(filePath, encoding = 'utf8') {
   const content = fs.readFileSync(filePath, encoding);
   return stripBOM(content);
+}
+
+// Chaque document Word est rattaché à l'unique dossier juridique qui le
+// contient. Tous ses fichiers (Markdown, mappings, compilations, conversions,
+// brouillons et pièces tamponnées) sont ensuite écrits dans ce même dossier.
+const PIECES_SUBFOLDER = 'Pièces';
+const DOSSIER_FOLDERS_FILE = 'dossier_folders.json';
+
+function getSystemDataPath(...segments) {
+  return path.join(getWorkspacePath(), '.piecemaker', ...segments);
+}
+
+function readDossierFolders() {
+  try {
+    const file = getSystemDataPath(DOSSIER_FOLDERS_FILE);
+    return fs.existsSync(file) ? JSON.parse(readFileStripBOM(file, 'utf8')) : {};
+  } catch (error) {
+    console.warn('⚠️ Registre des dossiers de travail illisible:', error.message);
+    return {};
+  }
+}
+
+function rememberDossierFolder(documentId, folder) {
+  if (!documentId || !folder) throw new Error('documentId et dossier de travail requis.');
+  const legalCase = resolveLegalCaseFolder(getWorkspacePath(), folder);
+  const registry = readDossierFolders();
+  if (registry[documentId] === legalCase) return legalCase;
+  registry[documentId] = legalCase;
+  const registryFile = getSystemDataPath(DOSSIER_FOLDERS_FILE);
+  fs.mkdirSync(path.dirname(registryFile), { recursive: true });
+  fs.writeFileSync(registryFile, JSON.stringify(registry, null, 2), 'utf8');
+  return legalCase;
+}
+
+function getDossierFolder(documentId) {
+  return readDossierFolders()[documentId] || null;
+}
+
+function getOutputPath(documentId = null) {
+  if (!documentId) return getWorkspacePath();
+  const legalCase = getDossierFolder(documentId);
+  if (!legalCase) {
+    throw new Error(`Aucun dossier juridique actif pour ${documentId}. Enregistrez le document Word dans la racine PieceMaker.`);
+  }
+  return resolveLegalCaseFolder(getWorkspacePath(), legalCase);
 }
 
 // Middleware pour parser le JSON
@@ -542,12 +592,22 @@ app.post('/api/word/search-case', async (req, res) => {
   }
 });
 
+app.post('/api/workspace/register', (req, res) => {
+  try {
+    const { documentId, folder } = req.body || {};
+    const legalCase = rememberDossierFolder(documentId, folder);
+    res.json({ success: true, workspacePath: getWorkspacePath(), folder: legalCase });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 // ✨ NEW: Write extracted Markdown files to disk (used by the extraction task).
 // The taskpane cannot write to the filesystem, so it POSTs the resolved folder
 // (derived from the open Word document) + the markdown payloads here.
 app.post('/api/extract/write-md', (req, res) => {
   try {
-    const { folder, files } = req.body;
+    const { folder, files, documentId } = req.body;
 
     if (!folder || typeof folder !== 'string') {
       return res.status(400).json({ error: 'Paramètre "folder" manquant' });
@@ -555,8 +615,11 @@ app.post('/api/extract/write-md', (req, res) => {
     if (!Array.isArray(files) || files.length === 0) {
       return res.status(400).json({ error: 'Paramètre "files" manquant ou vide' });
     }
-    if (!fs.existsSync(folder) || !fs.statSync(folder).isDirectory()) {
-      return res.status(400).json({ error: `Dossier introuvable: ${folder}` });
+    let legalCase;
+    try {
+      legalCase = rememberDossierFolder(documentId, folder);
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
     }
 
     const written = [];
@@ -566,13 +629,13 @@ app.post('/api/extract/write-md', (req, res) => {
       // et forcer l'extension .md
       const base = path.basename(String(f.name)).replace(/\.[^.]+$/, '');
       const mdName = `${base}.md`;
-      const target = path.join(folder, mdName);
+      const target = path.join(legalCase, mdName);
       fs.writeFileSync(target, String(f.markdown || ''), 'utf8');
       written.push(mdName);
       console.log(`📝 Markdown écrit: ${target}`);
     }
 
-    res.json({ success: true, folder, written });
+    res.json({ success: true, folder: legalCase, written });
   } catch (error) {
     console.error('Erreur /api/extract/write-md:', error);
     res.status(500).json({ error: error.message });
@@ -681,17 +744,17 @@ app.post('/api/anonymize/process', async (req, res) => {
       console.log(`✨ Nouveau format détecté : ${extractedTexts.length} texte(s) extrait(s) côté client`);
 
       // ✅ SOLUTION 1 : SAUVEGARDER L'EXTRACTION AVANT L'ANONYMISATION
-      const outputDir = getOutputPath();
+      const outputDir = getOutputPath(documentId);
       fs.mkdirSync(outputDir, { recursive: true });
 
       // ✅ SAUVEGARDER LES FICHIERS SOURCES
-      const filesSourceDir = path.join(outputDir, `fichiers_sources_${documentId}`);
+      const filesSourceDir = path.join(outputDir, 'pièces originales');
       fs.mkdirSync(filesSourceDir, { recursive: true });
 
       if (filesData && Array.isArray(filesData)) {
         console.log(`💾 Sauvegarde de ${filesData.length} fichier(s) source(s)...`);
         filesData.forEach(fileData => {
-          const filePath = path.join(filesSourceDir, fileData.name);
+          const filePath = path.join(filesSourceDir, path.basename(String(fileData.name || 'piece')));
           const base64Data = fileData.data.replace(/^data:[^;]+;base64,/, '');
           const buffer = Buffer.from(base64Data, 'base64');
           fs.writeFileSync(filePath, buffer);
@@ -1084,7 +1147,7 @@ app.post('/api/anonymize/process', async (req, res) => {
 
           // Sauvegarder les fichiers JSON
           try {
-            const outputDir = getOutputPath();
+            const outputDir = getOutputPath(documentId);
             if (!fs.existsSync(outputDir)) {
               fs.mkdirSync(outputDir, { recursive: true });
             }
@@ -1263,8 +1326,8 @@ app.post('/api/anonymize/callback/:jobId', async (req, res) => {
     // Mettre à jour le job selon le statut
     if (status === 'completed' && result) {
       // Job terminé avec succès
-      const outputDir = getOutputPath();
       const documentId = job.documentId;
+      const outputDir = getOutputPath(documentId);
 
       // Récupérer compilation_documents et dossierInfo depuis l'extraction sauvegardée
       const extractionPath = path.join(outputDir, `extraction_${documentId}.json`);
@@ -1446,7 +1509,7 @@ function anonymizeJsonContent(jsonString, mappingData) {
 app.get('/api/anonymize/compilation/:documentId', (req, res) => {
   try {
     const { documentId } = req.params;
-    const outputDir = getOutputPath();
+    const outputDir = getOutputPath(documentId);
 
     const compilationPath = path.join(outputDir, `compilation_dossier_${documentId}.json`);
     const mappingPath = path.join(outputDir, `mapping_${documentId}.json`);
@@ -1511,7 +1574,7 @@ app.post('/api/anonymize/search/:documentId', (req, res) => {
       edit
     } = req.body;
     
-    const outputDir = getOutputPath();
+    const outputDir = getOutputPath(documentId);
     const compilationPath = path.join(outputDir, `compilation_dossier_${documentId}.json`);
     const mappingPath = path.join(outputDir, `mapping_${documentId}.json`);
 
@@ -1843,7 +1906,7 @@ app.get('/api/anonymize/document/:documentId/:itemId', (req, res) => {
   try {
     const { documentId, itemId } = req.params;
 
-    const outputDir = getOutputPath();
+    const outputDir = getOutputPath(documentId);
     const compilationPath = path.join(outputDir, `compilation_dossier_${documentId}.json`);
     const mappingPath = path.join(outputDir, `mapping_${documentId}.json`);
 
@@ -1903,7 +1966,7 @@ app.get('/api/anonymize/document/:documentId/:itemId', (req, res) => {
 app.get('/api/anonymize/compilation/:documentId', (req, res) => {
   try {
     const { documentId } = req.params;
-    const outputDir = getOutputPath();
+    const outputDir = getOutputPath(documentId);
 
     const compilationPath = path.join(outputDir, `compilation_dossier_${documentId}.json`);
     const mappingPath = path.join(outputDir, `mapping_${documentId}.json`);
@@ -1966,7 +2029,7 @@ app.post('/api/save-compilation', (req, res) => {
       return res.status(400).json({ error: 'documentId requis' });
     }
 
-    const outputDir = getOutputPath();
+    const outputDir = getOutputPath(documentId);
     fs.mkdirSync(outputDir, { recursive: true });
 
     const compilationPath = path.join(outputDir, `compilation_dossier_${documentId}.json`);
@@ -2766,8 +2829,8 @@ app.post('/api/tampon/save', (req, res) => {
       return res.status(400).json({ error: 'Image du tampon requise' });
     }
 
-    const outputDir = getOutputPath();
-    const tamponPath = path.join(outputDir, 'tampon.png');
+    const tamponPath = getSystemDataPath('tampon.png');
+    fs.mkdirSync(path.dirname(tamponPath), { recursive: true });
 
     // Décoder le base64 et sauvegarder
     const base64Data = tamponImage.replace(/^data:image\/\w+;base64,/, '');
@@ -2792,8 +2855,7 @@ app.post('/api/tampon/save', (req, res) => {
 // Charger le fichier tampon
 app.get('/api/tampon/load', (req, res) => {
   try {
-    const outputDir = getOutputPath();
-    const tamponPath = path.join(outputDir, 'tampon.png');
+    const tamponPath = getSystemDataPath('tampon.png');
 
     if (!fs.existsSync(tamponPath)) {
       return res.status(404).json({ error: 'Aucun tampon configuré' });
@@ -2819,8 +2881,7 @@ app.get('/api/tampon/load', (req, res) => {
 // Supprimer le fichier tampon
 app.delete('/api/tampon/delete', (req, res) => {
   try {
-    const outputDir = getOutputPath();
-    const tamponPath = path.join(outputDir, 'tampon.png');
+    const tamponPath = getSystemDataPath('tampon.png');
 
     if (fs.existsSync(tamponPath)) {
       fs.unlinkSync(tamponPath);
@@ -2840,7 +2901,7 @@ app.delete('/api/tampon/delete', (req, res) => {
 // ========================================
 app.post('/api/stamping', async (req, res) => {
   try {
-    const { pieces, documentId } = req.body;
+    const { pieces, documentId, folder } = req.body;
 
     if (!pieces || !Array.isArray(pieces) || pieces.length === 0) {
       return res.status(400).json({ error: 'Liste de pièces requise (array d\'IDs)' });
@@ -2850,10 +2911,10 @@ app.post('/api/stamping', async (req, res) => {
       return res.status(400).json({ error: 'ID du document requis' });
     }
 
-    const outputDir = getOutputPath();
+    const outputDir = getOutputPath(documentId);
 
     // Charger le tampon depuis le fichier sauvegardé
-    const tamponPath = path.join(outputDir, 'tampon.png');
+    const tamponPath = getSystemDataPath('tampon.png');
     if (!fs.existsSync(tamponPath)) {
       return res.status(400).json({
         error: 'Aucun tampon configuré. Veuillez d\'abord configurer un tampon via le menu "🖼️ Configurer le tampon".'
@@ -2886,8 +2947,29 @@ app.post('/api/stamping', async (req, res) => {
       });
     }
 
-    // Créer un dossier pour les pièces tamponnées
-    const tamponnedDir = path.join(outputDir, `pieces_tamponees_${documentId}`);
+    // Les pièces tamponnées vont TOUJOURS dans le dossier de travail (celui du
+    // document Word ouvert), sous-dossier « Pièces ».
+    const requestedFolder = String(folder || '').trim() || getDossierFolder(documentId);
+
+    if (!requestedFolder) {
+      return res.status(400).json({
+        error: 'Dossier de travail inconnu. Enregistrez le document Word puis rechargez les pièces, ou indiquez le dossier de travail (paramètre "folder").'
+      });
+    }
+
+    if (!fs.existsSync(requestedFolder) || !fs.statSync(requestedFolder).isDirectory()) {
+      return res.status(400).json({ error: `Dossier de travail introuvable : ${requestedFolder}` });
+    }
+
+    // resolveLegalCaseFolder refuse tout dossier hors de la racine PieceMaker.
+    let workingFolder;
+    try {
+      workingFolder = rememberDossierFolder(documentId, requestedFolder);
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    const tamponnedDir = path.join(workingFolder, PIECES_SUBFOLDER);
     fs.mkdirSync(tamponnedDir, { recursive: true });
 
     const { PDFDocument, rgb } = require('pdf-lib');
@@ -3051,6 +3133,7 @@ app.post('/api/stamping', async (req, res) => {
 
     res.json({
       success: true,
+      folder: workingFolder,
       tamponnedDir,
       results,
       summary: {
@@ -3305,7 +3388,7 @@ app.post('/api/word/call-ollama', async (req, res) => {
 // Liste des ressources disponibles
 app.get('/api/resources', (req, res) => {
   try {
-    const resourcesDir = path.join(getOutputPath(), 'ressources');
+    const resourcesDir = getSystemDataPath('ressources');
     
     // Créer le dossier s'il n'existe pas
     if (!fs.existsSync(resourcesDir)) {
@@ -3349,7 +3432,7 @@ app.get('/api/resources/:filename', async (req, res) => {
     const filename = decodeURIComponent(req.params.filename);
     const { format } = req.query;
 
-    const resourcesDir = path.join(getOutputPath(), 'ressources');
+    const resourcesDir = getSystemDataPath('ressources');
     const filepath = path.join(resourcesDir, filename);
 
     console.log('[GET /api/resources/:filename] Fichier demandé:', filename);
@@ -3431,7 +3514,7 @@ app.put('/api/resources/:filename', (req, res) => {
       return res.status(400).json({ error: 'Contenu requis' });
     }
 
-    const resourcesDir = path.join(getOutputPath(), 'ressources');
+    const resourcesDir = getSystemDataPath('ressources');
     if (!fs.existsSync(resourcesDir)) {
       fs.mkdirSync(resourcesDir, { recursive: true });
     }
@@ -3495,7 +3578,7 @@ app.patch('/api/resources/:filename', (req, res) => {
       return res.status(400).json({ error: 'new_filename requis' });
     }
 
-    const resourcesDir = path.join(getOutputPath(), 'ressources');
+    const resourcesDir = getSystemDataPath('ressources');
     const oldPath = path.join(resourcesDir, filename);
     const newPath = path.join(resourcesDir, new_filename);
 
@@ -3532,7 +3615,7 @@ app.delete('/api/resources/:filename', (req, res) => {
   try {
     const { filename } = req.params;
     
-    const resourcesDir = path.join(getOutputPath(), 'ressources');
+    const resourcesDir = getSystemDataPath('ressources');
     const filepath = path.join(resourcesDir, filename);
 
     // Sécurité
@@ -3575,7 +3658,7 @@ app.post('/api/resources/copy', (req, res) => {
       return res.status(400).json({ error: 'Le fichier source et destination doivent être différents' });
     }
 
-    const resourcesDir = path.join(getOutputPath(), 'ressources');
+    const resourcesDir = getSystemDataPath('ressources');
     const sourcePath = path.join(resourcesDir, filename);
     const destPath = path.join(resourcesDir, new_filename);
 
@@ -3798,9 +3881,7 @@ function createPtyTerminal(ws, cols = 80, rows = 24, documentId = null) {
 
     let cwd = os.homedir();
     if (documentId) {
-      const docDir = path.join(getOutputPath(), documentId);
-      fs.mkdirSync(docDir, { recursive: true });
-      cwd = docDir;
+      cwd = getOutputPath(documentId);
     }
 
     const ptyProcess = pty.spawn(userInfo.shell, [], {
@@ -3906,12 +3987,6 @@ const PYTHON_SCRIPTS = {
 // Active Python processes — Map<jobId, { process: ChildProcess, ws: WebSocket }>
 const pythonProcesses = new Map();
 
-// Upload directory shared by all Python bridge jobs
-const PYTHON_UPLOAD_DIR = path.join(getOutputPath(), '_python_uploads');
-if (!fs.existsSync(PYTHON_UPLOAD_DIR)) {
-  fs.mkdirSync(PYTHON_UPLOAD_DIR, { recursive: true });
-}
-
 // ── Validate documentId format to prevent directory traversal ──────────────
 function sanitizeDocumentId(docId) {
   if (!docId || typeof docId !== 'string') return null;
@@ -3926,11 +4001,9 @@ app.post('/api/python/upload', express.raw({ type: 'application/octet-stream', l
     const safeName = path.basename(raw); // prevent directory-traversal
     const documentId = sanitizeDocumentId(req.headers['x-document-id']);
 
-    let destDir = PYTHON_UPLOAD_DIR;
-    if (documentId) {
-      destDir = path.join(getOutputPath(), documentId, '_uploads');
-      fs.mkdirSync(destDir, { recursive: true });
-    }
+    if (!documentId) return res.status(400).json({ error: 'X-Document-Id requis pour rattacher le fichier à un dossier juridique.' });
+    const destDir = path.join(getOutputPath(documentId), 'pièces originales');
+    fs.mkdirSync(destDir, { recursive: true });
 
     const dest = path.join(destDir, safeName);
     fs.writeFileSync(dest, req.body);
@@ -4004,7 +4077,11 @@ async function executePythonScript(ws, jobId, scriptId, filePath, options = {}, 
     return;
   }
 
-  const outputDir = path.join(getOutputPath(), documentId || 'default');
+  if (!documentId) {
+    ws.send(JSON.stringify({ type: 'python-error', jobId, error: 'Document sans dossier juridique actif.' }));
+    return;
+  }
+  const outputDir = getOutputPath(documentId);
   fs.mkdirSync(outputDir, { recursive: true });
 
   // ── Build args — add scriptId-specific mappings here when new scripts arrive
@@ -4252,7 +4329,11 @@ wss.on('connection', (ws) => {
                   return;
                 }
 
-                const outputDir = path.join(getOutputPath(), batchDocId || 'default');
+                if (!batchDocId) {
+                  resolve(1);
+                  return;
+                }
+                const outputDir = getOutputPath(batchDocId);
                 fs.mkdirSync(outputDir, { recursive: true });
                 lastOutputDir = outputDir;
 
@@ -4264,7 +4345,7 @@ wss.on('connection', (ws) => {
                 }
                 if (batchScriptId === 'convert-scan' && batchDocId) {
                   args.push('--document-id', batchDocId);
-                  args.push('--mapping-dir', getOutputPath());
+                  args.push('--mapping-dir', outputDir);
                 }
 
                 const child = spawn(scriptDef.python, args, {
@@ -4288,7 +4369,7 @@ wss.on('connection', (ws) => {
 
             // Load mapping into memory so GET /api/anonymize/mapping/:documentId works immediately
             if (batchScriptId === 'convert-scan' && batchDocId && successCount > 0) {
-              const mappingPath = path.join(getOutputPath(), `mapping_${batchDocId}.json`);
+              const mappingPath = path.join(getOutputPath(batchDocId), `mapping_${batchDocId}.json`);
               if (fs.existsSync(mappingPath)) {
                 try {
                   const data = JSON.parse(fs.readFileSync(mappingPath, 'utf8'));
@@ -4461,7 +4542,7 @@ app.post('/api/draft-state/:docId', (req, res) => {
     const { docId } = req.params;
     const state = req.body;
 
-    const stateDir = path.join(getOutputPath(), 'draft_states');
+    const stateDir = path.join(getOutputPath(docId), '.piecemaker', 'draft_states');
 
     // Créer le dossier s'il n'existe pas
     if (!fs.existsSync(stateDir)) {
@@ -4483,7 +4564,7 @@ app.post('/api/draft-state/:docId', (req, res) => {
 app.get('/api/draft-state/:docId', (req, res) => {
   try {
     const { docId } = req.params;
-    const stateDir = path.join(getOutputPath(), 'draft_states');
+    const stateDir = path.join(getOutputPath(docId), '.piecemaker', 'draft_states');
     const stateFile = path.join(stateDir, `${docId}.json`);
 
     if (!fs.existsSync(stateFile)) {
@@ -4503,7 +4584,7 @@ app.get('/api/draft-state/:docId', (req, res) => {
 app.delete('/api/draft-state/:docId', (req, res) => {
   try {
     const { docId } = req.params;
-    const stateDir = path.join(getOutputPath(), 'draft_states');
+    const stateDir = path.join(getOutputPath(docId), '.piecemaker', 'draft_states');
     const stateFile = path.join(stateDir, `${docId}.json`);
 
     if (fs.existsSync(stateFile)) {

@@ -31,12 +31,14 @@ function writeJson(file, data) {
 }
 
 export function loadConfig() {
-  return readJson(CONFIG_FILE, {
-    outputPath: path.join(REPO_ROOT, 'output'),
+  const defaults = {
+    workspacePath: null,
+    outputPath: null,
     port: 43098,
     pythonPath: null,
     venvPath: path.join(HOME_DIR, 'venv'),
-  });
+  };
+  return { ...defaults, ...readJson(CONFIG_FILE, {}) };
 }
 
 export function saveConfig(config) {

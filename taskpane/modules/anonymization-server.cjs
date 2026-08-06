@@ -229,7 +229,7 @@ function createAnonymizationRoutes(getOutputPath) {
             });
 
             // Save to disk
-            const outputDir = getOutputPath();
+            const outputDir = getOutputPath(documentId);
             if (!fs.existsSync(outputDir)) {
                 fs.mkdirSync(outputDir, { recursive: true });
             }
@@ -277,7 +277,7 @@ function createAnonymizationRoutes(getOutputPath) {
     router.get('/files/:documentId', (req, res) => {
         try {
             const { documentId } = req.params;
-            const outputDir = getOutputPath();
+            const outputDir = getOutputPath(documentId);
 
             const compilationPath = path.join(outputDir, `compilation_dossier_${documentId}.json`);
             const mappingPath = path.join(outputDir, `mapping_${documentId}.json`);
@@ -338,7 +338,7 @@ function createAnonymizationRoutes(getOutputPath) {
     router.delete('/files/:documentId', (req, res) => {
         try {
             const { documentId } = req.params;
-            const outputDir = getOutputPath();
+            const outputDir = getOutputPath(documentId);
 
             const compilationPath = path.join(outputDir, `compilation_dossier_${documentId}.json`);
             const mappingPath = path.join(outputDir, `mapping_${documentId}.json`);
@@ -394,7 +394,7 @@ function createAnonymizationRoutes(getOutputPath) {
             if (!mappingData) {
                 console.log(`📂 Mapping absent en mémoire, chargement depuis le disque...`);
 
-                const outputDir = getOutputPath();
+                const outputDir = getOutputPath(documentId);
                 const mappingPath = path.join(outputDir, `mapping_${documentId}.json`);
 
                 if (!fs.existsSync(mappingPath)) {

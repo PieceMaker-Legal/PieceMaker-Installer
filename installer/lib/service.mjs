@@ -106,7 +106,8 @@ function serverEnvironment(config) {
     ...process.env,
     ...savedEnv,
     PORT: String(Number(config.port) || 43098),
-    OUTPUT_PATH: config.outputPath || savedEnv.OUTPUT_PATH || path.join(REPO_ROOT, 'output'),
+    PIECEMAKER_WORKSPACE_PATH: config.workspacePath || '',
+    OUTPUT_PATH: config.workspacePath || config.outputPath || savedEnv.OUTPUT_PATH || '',
     PYTHON_PATH: config.pythonPath || savedEnv.PYTHON_PATH || '',
     PIECEMAKER_HOST: '127.0.0.1',
   };

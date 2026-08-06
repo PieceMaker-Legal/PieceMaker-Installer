@@ -21,8 +21,8 @@ import { updateConfig } from '../lib/state.mjs';
 
 export const meta = {
   id: '06-hooks',
-  label: 'Hooks Claude Code (anonymisation, checkpoints & facturation)',
-  description: 'Configure les garde-fous, les checkpoints PostToolUse et le suivi de facturation',
+  label: 'Hooks Claude Code (anonymisation, commits & facturation)',
+  description: 'Configure les garde-fous, les commits PostToolUse et le suivi de facturation',
 };
 
 const PLUGIN_ROOT = path.join(REPO_ROOT, 'piecemaker-plugin');
@@ -38,7 +38,7 @@ const HOOK_SCRIPTS = {
   protect: path.join(SCRIPTS_DIR, 'protect-originals.mjs'),
   pre: path.join(SCRIPTS_DIR, 'pre-anonymize.mjs'),
   post: path.join(SCRIPTS_DIR, 'post-anonymize.mjs'),
-  checkpoint: path.join(SCRIPTS_DIR, 'checkpoint-track.mjs'),
+  commit: path.join(SCRIPTS_DIR, 'commit-track.mjs'),
   billing: path.join(SCRIPTS_DIR, 'billing-track.mjs'),
 };
 
@@ -71,7 +71,7 @@ function runHookSelfTest(label, scriptPath, payload) {
 }
 
 export async function install(ctx) {
-  const outputPath = ctx.config?.outputPath;
+  const workspacePath = ctx.config?.workspacePath;
 
   log.step('Répertoires de facturation...');
   if (!ctx.dryRun) {
@@ -94,7 +94,7 @@ export async function install(ctx) {
     blockOnPII,
     timeoutMs: 5000,
     postScanTimeoutMs: 45000,
-    watchPaths: outputPath ? [outputPath] : [],
+    watchPaths: workspacePath ? [workspacePath] : [],
     documentExtensions: DOCUMENT_EXTENSIONS,
     glinerScriptPath: GLINER_SCRIPT,
   };
@@ -104,10 +104,10 @@ export async function install(ctx) {
   } else {
     updateConfig({
       anonymization: anonymizationConfig,
-      checkpoints: { enabled: true, timeoutMs: 8000 },
+      commits: { enabled: true, timeoutMs: 8000 },
       billing: { enabled: true },
     });
-    log.ok('Configuration écrite dans ~/.piecemaker/config.json (anonymization, checkpoints, billing)');
+    log.ok('Configuration écrite dans ~/.piecemaker/config.json (anonymization, commits, billing)');
   }
 
   if (ctx.dryRun) {
@@ -119,7 +119,7 @@ export async function install(ctx) {
   let testDir = null;
 
   try {
-    testDir = path.join(outputPath || REPO_ROOT, '.piecemaker-hook-selftest');
+    testDir = path.join(workspacePath || REPO_ROOT, '.piecemaker-hook-selftest');
     ensureDir(testDir);
 
     // 1. protect-originals.mjs — explicit protected path, proving that the
@@ -173,9 +173,9 @@ export async function install(ctx) {
     });
     testResults.push(postResult);
 
-    // 4. checkpoint-track.mjs — failed tool response: exercises the hook I/O
-    //    contract without creating a real checkpoint during installation.
-    const checkpointResult = runHookSelfTest('checkpoint-track.mjs', HOOK_SCRIPTS.checkpoint, {
+    // 4. commit-track.mjs — failed tool response: exercises the hook I/O
+    //    contract without creating a real commit during installation.
+    const commitResult = runHookSelfTest('commit-track.mjs', HOOK_SCRIPTS.commit, {
       hook_event_name: 'PostToolUse',
       session_id: 'installer-selftest',
       cwd: REPO_ROOT,
@@ -184,9 +184,9 @@ export async function install(ctx) {
       tool_name: 'Edit',
       tool_input: { file_path: path.join(REPO_ROOT, 'README.md') },
       tool_response: { success: false },
-      tool_use_id: 'toolu_installer_checkpoint_selftest',
+      tool_use_id: 'toolu_installer_commit_selftest',
     });
-    testResults.push(checkpointResult);
+    testResults.push(commitResult);
 
     // 5. billing-track.mjs — a real Stop payload; this appends a genuine
     //    (clearly-labelled) line to the current month's billing ledger and
@@ -233,7 +233,7 @@ export async function check(ctx) {
   const hooksJsonExists = fs.existsSync(HOOKS_JSON);
   const dirsExist = fs.existsSync(BILLING_DIR) && fs.existsSync(SYNTHESE_DIR);
   const cfg = ctx.config || {};
-  const configOk = Boolean(cfg.anonymization && cfg.checkpoints && cfg.billing);
+  const configOk = Boolean(cfg.anonymization && cfg.commits && cfg.billing);
 
   if (!scriptsExist || !hooksJsonExists) {
     return { status: 'failed', note: 'Fichiers du plugin manquants (scripts ou hooks.json) — réinstallez piecemaker-plugin/.' };

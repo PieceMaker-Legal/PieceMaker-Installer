@@ -1,3 +1,4 @@
+/** Full-state Git commit history for independent PieceMaker legal matters. */
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -8,9 +9,9 @@ const MAX_GIT_BUFFER = 16 * 1024 * 1024;
 const MAX_PATCH_BYTES = 768 * 1024;
 const MAX_SAFE_FILES = 10_000;
 const MAX_SAFE_BYTES = 250 * 1024 * 1024;
-const HISTORY_REF = 'refs/heads/checkpoints';
+const HISTORY_REF = 'refs/heads/main';
+const LEGACY_HISTORY_REF = 'refs/heads/checkpoints';
 const SAFE_EXTENSIONS = new Set(['.md', '.json']);
-const CHECKPOINT_TRAILER = 'PieceMaker-Checkpoint: true';
 
 function runGit(cwd, args, { gitDir, workTree, env = {}, input, allowFailure = false, encoding = 'utf8' } = {}) {
   const command = [
@@ -127,8 +128,8 @@ function safeCaseFiles(caseRoot) {
       const size = fs.statSync(absolute).size;
       bytes += size;
       files.push(relative);
-      if (files.length > MAX_SAFE_FILES) throw new Error('Ce dossier contient trop de fichiers Markdown/JSON pour un checkpoint sûr.');
-      if (bytes > MAX_SAFE_BYTES) throw new Error('Les fichiers accessibles à l’IA dépassent 250 Mo ; checkpoint annulé.');
+      if (files.length > MAX_SAFE_FILES) throw new Error('Ce dossier contient trop de fichiers Markdown/JSON pour un commit sûr.');
+      if (bytes > MAX_SAFE_BYTES) throw new Error('Les fichiers accessibles à l’IA dépassent 250 Mo ; commit annulé.');
     }
   }
 
@@ -212,6 +213,11 @@ function ensureHistoryRepo(homeDir, legalCase) {
     fs.mkdirSync(path.dirname(gitDir), { recursive: true });
     runGit(legalCase.root, ['init', '--bare', gitDir]);
   }
+  const main = runGit(legalCase.root, ['rev-parse', '--verify', HISTORY_REF], { gitDir, allowFailure: true });
+  if (main.code !== 0) {
+    const legacy = runGit(legalCase.root, ['rev-parse', '--verify', LEGACY_HISTORY_REF], { gitDir, allowFailure: true });
+    if (legacy.code === 0) runGit(legalCase.root, ['update-ref', HISTORY_REF, legacy.stdout], { gitDir });
+  }
   return gitDir;
 }
 
@@ -294,16 +300,16 @@ function workingState(casesRoot, homeDir, caseName) {
   return { legalCase, gitDir, latest, current, base, changes: diffTrees(legalCase, gitDir, base, current.tree) };
 }
 
-function createCheckpoint({
+function createCommit({
   casesRoot,
   caseName,
   homeDir = path.join(os.homedir(), '.piecemaker'),
-  label = 'Checkpoint PieceMaker',
+  label = 'Commit PieceMaker',
   sessionId = null,
   event = 'manual',
 } = {}) {
   const legalCase = resolveCase(casesRoot, caseName);
-  const safeLabel = String(label || 'Checkpoint PieceMaker').replace(/[\r\n]+/g, ' ').trim().slice(0, 140);
+  const safeLabel = String(label || 'Commit PieceMaker').replace(/[\r\n]+/g, ' ').trim().slice(0, 140);
   return withCaseLock(homeDir, legalCase, () => {
     const gitDir = ensureHistoryRepo(homeDir, legalCase);
     const parent = latestCommit(legalCase, gitDir);
@@ -316,12 +322,12 @@ function createCheckpoint({
     }
 
     const timestamp = new Date().toISOString();
-    const message = `${safeLabel || 'Checkpoint PieceMaker'}\n\n${CHECKPOINT_TRAILER}\nPieceMaker-Session: ${String(sessionId || 'manual').slice(0, 100)}\nPieceMaker-Event: ${String(event).slice(0, 100)}\n`;
+    const message = `${safeLabel || 'Commit PieceMaker'}\n`;
     const identity = {
       GIT_AUTHOR_NAME: 'PieceMaker',
-      GIT_AUTHOR_EMAIL: 'checkpoint@piecemaker.local',
+      GIT_AUTHOR_EMAIL: 'commits@piecemaker.local',
       GIT_COMMITTER_NAME: 'PieceMaker',
-      GIT_COMMITTER_EMAIL: 'checkpoint@piecemaker.local',
+      GIT_COMMITTER_EMAIL: 'commits@piecemaker.local',
       GIT_AUTHOR_DATE: timestamp,
       GIT_COMMITTER_DATE: timestamp,
     };
@@ -334,7 +340,7 @@ function createCheckpoint({
       commit,
       parent: parent || null,
       timestamp,
-      label: safeLabel || 'Checkpoint PieceMaker',
+      label: safeLabel || 'Commit PieceMaker',
       sessionId,
       event,
       caseName: legalCase.name,
@@ -353,7 +359,7 @@ function parseLog(raw) {
       author,
       timestamp,
       subject: subject.join(' '),
-      kind: 'checkpoint',
+      kind: 'commit',
       files: lines,
       filesCount: lines.length,
     };
@@ -418,7 +424,7 @@ function revisionDetails(casesRoot, homeDir, caseName, hash, filePath = '') {
   const patchRaw = runGit(legalCase.root, args, { gitDir }).stdout;
   return {
     ...meta,
-    kind: 'checkpoint',
+    kind: 'commit',
     files,
     selectedPath,
     patch: patchRaw.slice(0, MAX_PATCH_BYTES),
@@ -441,7 +447,7 @@ function worktreeDetails(casesRoot, homeDir, caseName, filePath = '') {
     shortHash: '',
     author: 'Modifications locales',
     timestamp: new Date().toISOString(),
-    subject: 'Modifications depuis le dernier checkpoint',
+    subject: 'Modifications depuis le dernier commit',
     kind: 'worktree',
     files: state.changes,
     selectedPath,
@@ -491,14 +497,14 @@ function restoreRevision({ casesRoot, caseName, homeDir = path.join(os.homedir()
   const legalCase = resolveCase(casesRoot, caseName);
   const gitDir = ensureHistoryRepo(homeDir, legalCase);
   const meta = revisionMetadata(legalCase, gitDir, hash);
-  const safety = createCheckpoint({
+  const safety = createCommit({
     casesRoot: legalCase.casesRoot,
     caseName: legalCase.name,
     homeDir,
     label: `Sauvegarde avant restauration de ${meta.shortHash}`,
     event: 'before-restore',
   });
-  if (safety.skipped === 'busy') throw new Error('Un checkpoint est déjà en cours. Réessayez dans quelques secondes.');
+  if (safety.skipped === 'busy') throw new Error('Un commit est déjà en cours. Réessayez dans quelques secondes.');
 
   const targetFiles = runGit(legalCase.root, ['ls-tree', '-r', '--name-only', meta.commit], { gitDir }).stdout.split(/\r?\n/).filter(Boolean);
   const targetSet = new Set(targetFiles);
@@ -514,7 +520,7 @@ function restoreRevision({ casesRoot, caseName, homeDir = path.join(os.homedir()
     fs.renameSync(temporary, destination.absolute);
   }
 
-  const restoredState = createCheckpoint({
+  const restoredState = createCommit({
     casesRoot: legalCase.casesRoot,
     caseName: legalCase.name,
     homeDir,
@@ -524,17 +530,16 @@ function restoreRevision({ casesRoot, caseName, homeDir = path.join(os.homedir()
   return {
     restored: true,
     revision: meta.commit,
-    safetyCheckpoint: safety.commit || null,
-    restorationCheckpoint: restoredState.commit || null,
+    safetyCommit: safety.commit || null,
+    restorationCommit: restoredState.commit || null,
     changes: workingState(legalCase.casesRoot, homeDir, legalCase.name).changes,
     originalsPreserved: true,
   };
 }
 
 module.exports = {
-  CHECKPOINT_TRAILER,
   SAFE_EXTENSIONS,
-  createCheckpoint,
+  createCommit,
   historyRepo,
   isOriginalDirectoryName,
   isProtectedOriginalPath,

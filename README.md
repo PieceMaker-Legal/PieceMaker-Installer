@@ -44,10 +44,11 @@ environnement virtuel Python et modèles GLiNER2 + spaCy.
 
 ## Ce que fait l'installateur
 
-Neuf étapes, exécutables ensemble ou une par une :
+Dix étapes, exécutables ensemble ou une par une :
 
 | # | Étape | Contenu |
 | --- | --- | --- |
+| 00 | Dossier racine PieceMaker | choix de la racine contenant un sous-dossier par dossier juridique |
 | 01 | Prérequis système | Node, Python, git, outils de build |
 | 02 | Dépendances Node.js | `npm install` racine et `mcp-server/` |
 | 03 | Python, GLiNER & anonymisation | venv, `requirements.txt`, modèles GLiNER2 et spaCy |
@@ -72,8 +73,8 @@ piecemaker
 
 L’interface graphique locale permet de modifier les paramètres, les skills et
 les agents Markdown, mais aussi d’inspecter chaque dossier juridique indépendant,
-ses pièces originales et leur état de protection GLiNER, ainsi que ses commits et
-checkpoints automatiques. La commande suivante démarre le serveur si nécessaire et
+ses pièces originales et leur état de protection GLiNER, ainsi que ses commits
+automatiques représentant chacun l’état complet du dossier. La commande suivante démarre le serveur si nécessaire et
 ouvre directement cette interface dans le navigateur :
 
 ```bash

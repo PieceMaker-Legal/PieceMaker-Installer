@@ -12,7 +12,7 @@ import { createRequire } from 'node:module';
 import { loadPieceMakerConfig, readHookPayload, runHook, noop } from './lib/hook-io.mjs';
 
 const require = createRequire(import.meta.url);
-const { isOriginalDirectoryName, isProtectedOriginalPath } = require('./lib/checkpoints.cjs');
+const { isOriginalDirectoryName, isProtectedOriginalPath } = require('./lib/commits.cjs');
 
 function deny(reason) {
   return {
@@ -53,7 +53,7 @@ async function main() {
   const payload = await readHookPayload(2000);
   if (!payload) return null;
   const config = loadPieceMakerConfig();
-  const casesRoot = config.outputPath;
+  const casesRoot = config.workspacePath;
   if (!casesRoot) return null;
   const reason = '[PieceMaker] Accès refusé : les pièces originales sont isolées et interdites à l’IA. Utilisez uniquement le Markdown converti hors de ce dossier.';
 

@@ -722,13 +722,14 @@ const draftConclusionsState = {
 };
 // Fonction pour obtenir le documentId
 async function getDocumentId() {
+    let docId;
     try {
-        return await Word.run(async (context) => {
+        docId = await Word.run(async (context) => {
             const docProperties = context.document.properties;
             docProperties.load('customProperties');
             await context.sync();
             // Essayer de récupérer l'ID existant
-            let docId = null;
+            let storedDocId = null;
             try {
                 const customProps = docProperties.customProperties;
                 customProps.load('items');
@@ -741,26 +742,39 @@ async function getDocumentId() {
 
                 const idProp = customProps.items.find(p => p.key === 'PieceMakerDocId');
                 if (idProp) {
-                    docId = idProp.value;
+                    storedDocId = idProp.value;
                 }
             } catch (e) {
                 console.log('[draft] Pas de custom property existante');
             }
 
             // Si pas d'ID, en créer un
-            if (!docId) {
-                docId = `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-                docProperties.customProperties.add('PieceMakerDocId', docId);
+            if (!storedDocId) {
+                storedDocId = `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                docProperties.customProperties.add('PieceMakerDocId', storedDocId);
                 await context.sync();
             }
 
-            return docId;
+            return storedDocId;
         });
     } catch (error) {
         console.error('[draft] Erreur récupération documentId:', error);
         // Fallback: utiliser un ID basé sur le temps
-        return `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        docId = `doc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     }
+
+    const folder = await getCurrentDocFolder();
+    if (!folder) throw new Error('Enregistrez d’abord le document Word dans un dossier juridique PieceMaker.');
+    const response = await fetch('https://localhost:43098/api/workspace/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ documentId: docId, folder })
+    });
+    if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        throw new Error(detail.error || 'Le document Word est hors de la racine PieceMaker.');
+    }
+    return docId;
 }
 
 // Fonction pour sauvegarder l'état du draft
@@ -5793,37 +5807,28 @@ async function proceedWithFileSelection() {
                 documents: compilation_documents
             };
 
-            // Sauvegarder le JSON de compilation sur le serveur
+            // Enregistrer d'abord le dossier juridique actif et y écrire les
+            // Markdown. Aucun autre fichier ne doit être produit ailleurs.
+            const mdResult = await writeExtractedMarkdown(validFiles);
+            if (!mdResult.written?.length) {
+                throw new Error(mdResult.error || 'Aucun Markdown n’a été écrit dans le dossier juridique actif.');
+            }
+            addMessage('system', `📝 ${mdResult.written.length} fichier(s) Markdown écrit(s) dans : ${mdResult.folder}`);
+
+            // La compilation est maintenant routée vers ce même dossier grâce
+            // à l'association documentId → dossier enregistrée ci-dessus.
             const response = await fetch('https://localhost:43098/api/save-compilation', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    documentId: documentId,
-                    compilation_data: compilationData
-                })
+                body: JSON.stringify({ documentId, compilation_data: compilationData })
             });
-
             if (!response.ok) {
-                throw new Error('Erreur sauvegarde compilation');
+                const detail = await response.json().catch(() => ({}));
+                throw new Error(detail.error || 'Erreur sauvegarde compilation');
             }
 
-            console.log('✅ Compilation sauvegardée');
-
+            console.log('✅ Compilation sauvegardée dans le dossier juridique actif');
             addMessage('system', `✅ ${validFiles.length} fichier(s) extrait(s) avec succès !`);
-
-            // ✍️ EXTRACTION → écrire un .md par document dans le dossier du Word ouvert
-            let mdResult = { written: [], folder: null };
-            try {
-                mdResult = await writeExtractedMarkdown(validFiles);
-                if (mdResult.written && mdResult.written.length > 0) {
-                    addMessage('system', `📝 ${mdResult.written.length} fichier(s) Markdown écrit(s) dans : ${mdResult.folder}`);
-                } else if (mdResult.error) {
-                    addMessage('system', `⚠️ Markdown non écrit : ${mdResult.error}`);
-                }
-            } catch (mdError) {
-                console.warn('[proceedWithFileSelection] Écriture Markdown échouée:', mdError);
-                addMessage('system', `⚠️ Écriture Markdown échouée : ${mdError.message}`);
-            }
 
             // Afficher les boutons d'anonymisation dans le chat
             addMessage('system', '📊 Choisissez une méthode d\'anonymisation:', {
@@ -5897,7 +5902,7 @@ async function writeExtractedMarkdown(validFiles) {
     const response = await fetch('https://localhost:43098/api/extract/write-md', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folder, files })
+        body: JSON.stringify({ folder, files, documentId: anonymization.documentId })
     });
 
     if (!response.ok) {

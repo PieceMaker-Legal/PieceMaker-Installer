@@ -1,14 +1,15 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { configuredWorkspacePath } = require('./workspace-paths.cjs');
 const {
-  createCheckpoint,
+  createCommit,
   listHistory,
   repositoryOverview,
   restoreRevision,
   revisionDetails,
   worktreeDetails,
-} = require('../piecemaker-plugin/scripts/lib/checkpoints.cjs');
+} = require('../piecemaker-plugin/scripts/lib/commits.cjs');
 
 const MAX_MARKDOWN_BYTES = 1024 * 1024;
 const SECRET_KEYS = new Set([
@@ -29,7 +30,8 @@ const ENV_KEYS = new Set([
 
 function defaultConfig(repoRoot, homeDir = path.join(os.homedir(), '.piecemaker')) {
   return {
-    outputPath: path.join(repoRoot, 'output'),
+    workspacePath: null,
+    outputPath: null,
     port: 43098,
     pythonPath: null,
     venvPath: path.join(homeDir, 'venv'),
@@ -227,7 +229,7 @@ function createAdminRouter({
   const router = express.Router();
   const configFile = path.join(homeDir, 'config.json');
   const envFile = path.join(repoRoot, '.env');
-  const casesRoot = () => ({ ...defaultConfig(repoRoot, homeDir), ...readJson(configFile, {}) }).outputPath;
+  const casesRoot = () => configuredWorkspacePath(homeDir);
 
   router.use((req, res, next) => {
     res.set('Cache-Control', 'no-store');
@@ -273,10 +275,14 @@ function createAdminRouter({
       const patch = req.body?.config || {};
       const next = { ...current };
 
-      if (patch.outputPath !== undefined) {
-        const outputPath = String(patch.outputPath).trim();
-        if (!outputPath || !path.isAbsolute(outputPath)) throw new Error('Le dossier de sortie doit être un chemin absolu.');
-        next.outputPath = outputPath;
+      if (patch.workspacePath !== undefined) {
+        const workspacePath = String(patch.workspacePath).trim();
+        if (!workspacePath || !path.isAbsolute(workspacePath)) throw new Error('Le dossier racine PieceMaker doit être un chemin absolu.');
+        next.workspacePath = workspacePath;
+        next.outputPath = workspacePath;
+        if (next.anonymization) {
+          next.anonymization = { ...next.anonymization, watchPaths: [workspacePath] };
+        }
       }
       if (patch.port !== undefined) {
         const port = Number(patch.port);
@@ -345,10 +351,10 @@ function createAdminRouter({
     }
   });
 
-  router.post('/checkpoints', (req, res) => {
+  router.post('/commits', (req, res) => {
     try {
-      const label = String(req.body?.label || 'Checkpoint manuel').trim().slice(0, 140);
-      const result = createCheckpoint({
+      const label = String(req.body?.label || 'Commit manuel').trim().slice(0, 140);
+      const result = createCommit({
         casesRoot: casesRoot(),
         caseName: String(req.body?.case || '').trim(),
         homeDir,

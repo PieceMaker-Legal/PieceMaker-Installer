@@ -63,7 +63,7 @@ async function loadSettings() {
   setMessage(message, 'Chargement…');
   try {
     const data = await api('/api/admin/settings');
-    byId('outputPath').value = data.config.outputPath || '';
+    byId('workspacePath').value = data.config.workspacePath || '';
     byId('port').value = data.config.port || 43098;
     byId('pythonPath').value = data.config.pythonPath || data.env.PYTHON_PATH || '';
     byId('mcpRemoteUrl').value = data.env.MCP_REMOTE_URL || data.env.MCP_URL || '';
@@ -98,7 +98,7 @@ async function saveSettings(event) {
       method: 'PUT',
       body: JSON.stringify({
         config: {
-          outputPath: form.get('outputPath'),
+          workspacePath: form.get('workspacePath'),
           port: Number(form.get('port')),
           pythonPath: form.get('pythonPath'),
         },
@@ -299,7 +299,7 @@ function renderHistoryItems() {
     byId('historyTitle').textContent = 'Modifications';
     byId('historyCount').textContent = `${changes.length} fichier${changes.length > 1 ? 's' : ''}`;
     if (!changes.length) {
-      list.append(createHistoryEmpty('Aucune modification', 'Le dossier correspond au dernier checkpoint.'));
+      list.append(createHistoryEmpty('Aucune modification', 'Le dossier correspond au dernier commit.'));
       showRevisionPlaceholder('Aucune modification locale');
       return;
     }
@@ -327,7 +327,7 @@ function renderHistoryItems() {
   byId('historyTitle').textContent = selectedFolder ? `Historique · ${selectedFolder}` : 'Historique';
   byId('historyCount').textContent = `${historyItems.length} élément${historyItems.length > 1 ? 's' : ''}`;
   if (!historyItems.length) {
-    list.append(createHistoryEmpty('Aucun historique', 'Les checkpoints créés par le posthook apparaîtront ici.'));
+    list.append(createHistoryEmpty('Aucun historique', 'Les commits créés par le posthook apparaîtront ici.'));
     showRevisionPlaceholder('Aucune révision disponible');
     return;
   }
@@ -348,7 +348,7 @@ function renderHistoryItems() {
     button.dataset.hash = item.hash;
     const marker = document.createElement('span');
     marker.className = `commit-marker ${item.kind}`;
-    marker.textContent = item.kind === 'checkpoint' ? '◆' : '●';
+    marker.textContent = '●';
     const body = document.createElement('span');
     body.className = 'commit-body';
     const subject = document.createElement('strong');
@@ -381,7 +381,7 @@ function showRevisionPlaceholder(title) {
   byId('diffFile').textContent = 'Aucun fichier sélectionné';
   byId('diffStats').textContent = '';
   byId('diffContent').className = 'diff-content empty-state';
-  byId('diffContent').textContent = 'Sélectionnez un commit ou un checkpoint dans l’historique.';
+  byId('diffContent').textContent = 'Sélectionnez un commit dans l’historique.';
   byId('restoreRevision').hidden = true;
 }
 
@@ -418,7 +418,7 @@ async function loadRevision(hash, filePath = '') {
     document.querySelectorAll('.commit-row').forEach((row) => row.classList.toggle('active', row.dataset.hash === hash));
     document.querySelectorAll('.change-row').forEach((row) => row.classList.toggle('active', hash === 'WORKTREE' && row.querySelector('.change-path')?.textContent === revision.selectedPath));
 
-    byId('revisionKind').textContent = revision.kind === 'checkpoint' ? 'Checkpoint' : revision.kind === 'worktree' ? 'Modifications locales' : 'Commit';
+    byId('revisionKind').textContent = revision.kind === 'worktree' ? 'Modifications locales' : 'Commit';
     byId('revisionSha').textContent = revision.shortHash || '';
     byId('revisionTitle').textContent = revision.subject;
     byId('revisionMeta').textContent = revision.kind === 'worktree'
@@ -501,10 +501,10 @@ async function selectHistoryFolder(folder) {
 function updateCaseToolbar() {
   const legalCase = currentCase();
   byId('repositoryName').textContent = legalCase?.name || 'Aucun dossier';
-  byId('repositoryPath').textContent = legalCase ? `${repositoryData.root}/${legalCase.path}` : repositoryData?.root || '—';
-  byId('repositoryBranch').textContent = 'Checkpoints du dossier';
+  byId('repositoryPath').textContent = repositoryData?.root || '—';
+  byId('repositoryBranch').textContent = 'Commits du dossier';
   byId('repositoryHead').textContent = legalCase?.shortHead || 'Aucun';
-  byId('createCheckpoint').disabled = !legalCase;
+  byId('createCommit').disabled = !legalCase;
 }
 
 async function setHistoryView(view) {
@@ -514,15 +514,15 @@ async function setHistoryView(view) {
   await loadRepositoryHistory({ quiet: true });
 }
 
-async function createManualCheckpoint() {
+async function createManualCommit() {
   if (!selectedFolder) return;
-  const label = prompt('Nom du checkpoint', `Checkpoint manuel · ${new Date().toLocaleString('fr-FR')}`);
+  const label = prompt('Message du commit', `Sauvegarde · ${new Date().toLocaleString('fr-FR')}`);
   if (label === null) return;
-  const button = byId('createCheckpoint');
+  const button = byId('createCommit');
   button.disabled = true;
   try {
-    const result = await api('/api/admin/checkpoints', { method: 'POST', body: JSON.stringify({ label, case: selectedFolder }) });
-    toast(result.created ? 'Checkpoint créé' : 'Aucune nouvelle modification à capturer');
+    const result = await api('/api/admin/commits', { method: 'POST', body: JSON.stringify({ label, case: selectedFolder }) });
+    toast(result.created ? 'Commit enregistré' : 'Aucune nouvelle modification à enregistrer');
     await loadRepositoryHistory({ quiet: true });
   } catch (error) {
     toast(error.message);
@@ -534,7 +534,7 @@ async function createManualCheckpoint() {
 async function restoreSelectedRevision() {
   if (!selectedRevision || selectedRevision.hash === 'WORKTREE') return;
   const title = byId('revisionTitle').textContent;
-  const confirmed = confirm(`Restaurer l’état « ${title} » du dossier « ${selectedFolder} » ?\n\nPieceMaker créera d’abord un checkpoint de sécurité. Les pièces originales ne seront jamais modifiées.`);
+  const confirmed = confirm(`Restaurer le commit « ${title} » du dossier « ${selectedFolder} » ?\n\nPieceMaker enregistrera d’abord l’état actuel dans un commit de sécurité. Les pièces originales ne seront jamais modifiées.`);
   if (!confirmed) return;
   const button = byId('restoreRevision');
   button.disabled = true;
@@ -544,7 +544,7 @@ async function restoreSelectedRevision() {
       method: 'POST',
       body: JSON.stringify({ hash: selectedRevision.hash, case: selectedFolder, confirm: true }),
     });
-    toast(result.safetyCheckpoint ? 'État restauré — checkpoint de sécurité créé' : 'État restauré');
+    toast(result.safetyCommit ? 'Commit restauré — état précédent enregistré' : 'Commit restauré');
     historyView = 'changes';
     document.querySelectorAll('[data-history-view]').forEach((item) => item.classList.toggle('active', item.dataset.historyView === 'changes'));
     selectedRevision = null;
@@ -560,7 +560,7 @@ async function restoreSelectedRevision() {
 document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => setActiveTab(tab.dataset.tab)));
 document.querySelectorAll('[data-history-view]').forEach((button) => button.addEventListener('click', () => setHistoryView(button.dataset.historyView)));
 byId('refreshHistory').addEventListener('click', () => loadRepositoryHistory());
-byId('createCheckpoint').addEventListener('click', createManualCheckpoint);
+byId('createCommit').addEventListener('click', createManualCommit);
 byId('restoreRevision').addEventListener('click', restoreSelectedRevision);
 byId('settingsForm').addEventListener('submit', saveSettings);
 byId('saveFile').addEventListener('click', saveFile);

@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
- * PostToolUse hook — records Write/Edit results as per-case Git checkpoints.
+ * PostToolUse hook — records every successful Write/Edit as a per-case commit.
  *
- * Each immediate child of config.outputPath is an independent legal case.
+ * Each immediate child of config.workspacePath is an independent legal case.
  * Its Markdown and mapping JSON history lives outside client data under
  * ~/.piecemaker/case-history/. Original pieces are never opened or indexed.
  */
 
-import path from 'node:path';
 import { createRequire } from 'node:module';
+import path from 'node:path';
 import {
   HOME_DIR,
   loadPieceMakerConfig,
@@ -18,7 +18,7 @@ import {
 } from './lib/hook-io.mjs';
 
 const require = createRequire(import.meta.url);
-const { createCheckpoint, locateCaseFile } = require('./lib/checkpoints.cjs');
+const { createCommit, locateCaseFile } = require('./lib/commits.cjs');
 
 async function main() {
   const payload = await readHookPayload(2000);
@@ -26,10 +26,11 @@ async function main() {
   if (payload.tool_response?.success === false) return null;
 
   const config = loadPieceMakerConfig();
-  if (config.checkpoints?.enabled === false) return null;
+  if (config.commits?.enabled === false) return null;
 
   const cwd = payload.cwd || process.cwd();
-  const casesRoot = config.outputPath || path.join(cwd, 'output');
+  const casesRoot = config.workspacePath;
+  if (!casesRoot) return null;
   const filePath = payload.tool_input?.file_path;
   if (!filePath) return null;
   const absolute = path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
@@ -41,7 +42,7 @@ async function main() {
   }
   if (!located?.safe || located.protected) return null;
 
-  createCheckpoint({
+  createCommit({
     casesRoot,
     caseName: located.name,
     homeDir: HOME_DIR,
@@ -52,5 +53,5 @@ async function main() {
   return null;
 }
 
-const timeoutMs = loadPieceMakerConfig().checkpoints?.timeoutMs ?? 8000;
+const timeoutMs = loadPieceMakerConfig().commits?.timeoutMs ?? 8000;
 runHook(main, { timeoutMs }).catch(() => noop());

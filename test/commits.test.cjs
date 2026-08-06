@@ -6,7 +6,7 @@ const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 
 const {
-  createCheckpoint,
+  createCommit,
   historyRepo,
   listHistory,
   repositoryOverview,
@@ -15,9 +15,9 @@ const {
   revisionDetails,
   safeCaseFiles,
   worktreeDetails,
-} = require('../piecemaker-plugin/scripts/lib/checkpoints.cjs');
+} = require('../piecemaker-plugin/scripts/lib/commits.cjs');
 
-const checkpointHook = path.resolve(__dirname, '..', 'piecemaker-plugin', 'scripts', 'checkpoint-track.mjs');
+const commitHook = path.resolve(__dirname, '..', 'piecemaker-plugin', 'scripts', 'commit-track.mjs');
 const originalsHook = path.resolve(__dirname, '..', 'piecemaker-plugin', 'scripts', 'protect-originals.mjs');
 
 function git(gitDir, cwd, args) {
@@ -44,15 +44,15 @@ function fixture() {
 
 function writeConfig(data) {
   fs.mkdirSync(data.home, { recursive: true });
-  fs.writeFileSync(path.join(data.home, 'config.json'), `${JSON.stringify({ outputPath: data.casesRoot })}\n`);
+  fs.writeFileSync(path.join(data.home, 'config.json'), `${JSON.stringify({ workspacePath: data.casesRoot })}\n`);
 }
 
 test('chaque dossier juridique possède un historique indépendant sans pièces originales', (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
 
-  const alpha = createCheckpoint({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'État Alpha' });
-  const beta = createCheckpoint({ casesRoot: data.casesRoot, caseName: 'Dossier Beta', homeDir: data.home, label: 'État Beta' });
+  const alpha = createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'État Alpha' });
+  const beta = createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Beta', homeDir: data.home, label: 'État Beta' });
   assert.equal(alpha.created, true);
   assert.equal(beta.created, true);
   assert.notEqual(alpha.commit, beta.commit);
@@ -84,10 +84,10 @@ test('l’aperçu expose les métadonnées et le niveau de protection de chaque 
   assert.ok(alpha.originals.every((file) => !Object.hasOwn(file, 'content')));
 });
 
-test('les modifications et commits sont calculés par rapport au dernier checkpoint du dossier', (t) => {
+test('les modifications sont calculées par rapport au dernier commit complet du dossier', (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
-  createCheckpoint({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'Version 1' });
+  createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'Version 1' });
   fs.writeFileSync(path.join(data.caseA, 'contrat.md'), '# Contrat anonymisé v2\n');
 
   const worktree = worktreeDetails(data.casesRoot, data.home, 'Dossier Alpha', 'contrat.md');
@@ -95,33 +95,33 @@ test('les modifications et commits sont calculés par rapport au dernier checkpo
   assert.deepEqual(worktree.files.map((file) => file.path), ['contrat.md']);
   assert.match(worktree.patch, /Contrat anonymisé v2/);
 
-  const version2 = createCheckpoint({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'Version 2' });
+  const version2 = createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'Version 2' });
   const history = listHistory(data.casesRoot, data.home, { caseName: 'Dossier Alpha' });
   assert.equal(history[0].hash, version2.commit);
   assert.equal(history[0].subject, 'Version 2');
   const details = revisionDetails(data.casesRoot, data.home, 'Dossier Alpha', version2.commit);
-  assert.equal(details.kind, 'checkpoint');
+  assert.equal(details.kind, 'commit');
   assert.match(details.patch, /Contrat anonymisé v2/);
 });
 
 test('la restauration crée un retour de sécurité et préserve toutes les originales', (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
-  const version1 = createCheckpoint({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'Version 1' });
+  const version1 = createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'Version 1' });
   fs.writeFileSync(path.join(data.caseA, 'contrat.md'), '# Contrat anonymisé v2\n');
-  const version2 = createCheckpoint({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'Version 2' });
+  const version2 = createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'Version 2' });
   fs.writeFileSync(path.join(data.caseB, 'memoire.md'), '# Beta inchangé\n');
 
   const restored = restoreRevision({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, hash: version1.commit });
   assert.equal(restored.restored, true);
-  assert.equal(restored.safetyCheckpoint, version2.commit);
-  assert.ok(restored.restorationCheckpoint);
+  assert.equal(restored.safetyCommit, version2.commit);
+  assert.ok(restored.restorationCommit);
   assert.equal(restored.originalsPreserved, true);
   assert.equal(fs.readFileSync(path.join(data.caseA, 'contrat.md'), 'utf8'), '# Contrat anonymisé v1\n');
   assert.equal(fs.readFileSync(path.join(data.originals, 'contrat.pdf'), 'utf8'), 'CONTENU ORIGINAL SECRET\n');
   assert.equal(fs.readFileSync(path.join(data.caseB, 'memoire.md'), 'utf8'), '# Beta inchangé\n');
 
-  restoreRevision({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, hash: restored.safetyCheckpoint });
+  restoreRevision({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, hash: restored.safetyCommit });
   assert.equal(fs.readFileSync(path.join(data.caseA, 'contrat.md'), 'utf8'), '# Contrat anonymisé v2\n');
 });
 
@@ -130,7 +130,7 @@ test('le PostToolUse alimente uniquement l’historique du dossier juridique con
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
   writeConfig(data);
   fs.writeFileSync(path.join(data.caseA, 'contrat.md'), '# Modifié par le hook\n');
-  const result = spawnSync(process.execPath, [checkpointHook], {
+  const result = spawnSync(process.execPath, [commitHook], {
     cwd: data.casesRoot,
     encoding: 'utf8',
     input: JSON.stringify({

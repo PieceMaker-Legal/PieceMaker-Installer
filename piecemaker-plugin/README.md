@@ -19,7 +19,7 @@ agents et hooks de garde-fou pour travailler sur des dossiers juridiques
   - `analyste-piece` — synthèse structurée d'une pièce du dossier.
 - **Hooks** (`hooks/hooks.json`) — interdiction de lire les dossiers
   `pièces originales`, avertissement PII avant lecture d'un document
-  (`PreToolUse`), scan GLiNER et checkpoint Git après écriture (`PostToolUse`),
+  (`PreToolUse`), scan GLiNER et commit Git complet après écriture (`PostToolUse`),
   puis suivi de session local (`Stop`/`TaskCompleted`). Tous
   les hooks échouent "ouverts" (fail-open) : aucune erreur, timeout ou
   absence de configuration ne bloque jamais une session.
@@ -27,7 +27,7 @@ agents et hooks de garde-fou pour travailler sur des dossiers juridiques
 Tous ces composants sont découverts automatiquement par Claude Code d'après
 leur emplacement dans ce dossier — `plugin.json` ne redéclare aucun chemin.
 
-Chaque sous-dossier immédiat de `config.outputPath` est traité comme un dossier
+Chaque sous-dossier immédiat de `config.workspacePath` est traité comme un dossier
 juridique indépendant. Son historique Git est conservé hors des données client,
 dans `~/.piecemaker/case-history/`, et ne capture que les Markdown et mappings
 JSON. Les `pièces originales` ne sont jamais ouvertes ni indexées. L’historique,

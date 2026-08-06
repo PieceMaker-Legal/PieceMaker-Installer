@@ -129,7 +129,6 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); outline:
 .commit-row:hover, .change-row:hover { background: #f6f8fa; }
 .commit-row.active, .change-row.active { background: #ddf4ff; box-shadow: inset 3px 0 #0969da; }
 .commit-marker { color: #57606a; font-size: .65rem; text-align: center; }
-.commit-marker.checkpoint { color: #8250df; }
 .commit-body { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
 .commit-body strong { overflow: hidden; font-size: .78rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .commit-meta { overflow: hidden; color: #6e7781; font-size: .65rem; text-overflow: ellipsis; white-space: nowrap; }

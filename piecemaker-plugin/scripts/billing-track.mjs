@@ -102,10 +102,10 @@ function derivedDurationMs(analysis) {
   return Number.isFinite(ms) && ms >= 0 ? ms : null;
 }
 
-/** dossier = first path segment of cwd relative to the configured output dir, if any. */
+/** dossier = first path segment of cwd relative to the configured legal workspace, if any. */
 function detectDossier(cwd, config) {
-  if (!cwd || !config.outputPath) return null;
-  const resolvedOutput = path.resolve(config.outputPath);
+  if (!cwd || !config.workspacePath) return null;
+  const resolvedOutput = path.resolve(config.workspacePath);
   const resolvedCwd = path.resolve(cwd);
   if (resolvedCwd === resolvedOutput) return null;
   if (!resolvedCwd.startsWith(resolvedOutput + path.sep)) return null;
