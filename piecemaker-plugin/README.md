@@ -17,14 +17,22 @@ agents et hooks de garde-fou pour travailler sur des dossiers juridiques
   - `verificateur-anonymisation` — audit lecture seule avant sortie de
     cabinet, confirme l'absence de PII résiduelle.
   - `analyste-piece` — synthèse structurée d'une pièce du dossier.
-- **Hooks** (`hooks/hooks.json`) — avertissement PII avant lecture d'un
-  document (`PreToolUse`), scan GLiNER après écriture d'un Markdown
-  (`PostToolUse`), et suivi de session local (`Stop`/`TaskCompleted`). Tous
+- **Hooks** (`hooks/hooks.json`) — interdiction de lire les dossiers
+  `pièces originales`, avertissement PII avant lecture d'un document
+  (`PreToolUse`), scan GLiNER et checkpoint Git après écriture (`PostToolUse`),
+  puis suivi de session local (`Stop`/`TaskCompleted`). Tous
   les hooks échouent "ouverts" (fail-open) : aucune erreur, timeout ou
   absence de configuration ne bloque jamais une session.
 
 Tous ces composants sont découverts automatiquement par Claude Code d'après
 leur emplacement dans ce dossier — `plugin.json` ne redéclare aucun chemin.
+
+Chaque sous-dossier immédiat de `config.outputPath` est traité comme un dossier
+juridique indépendant. Son historique Git est conservé hors des données client,
+dans `~/.piecemaker/case-history/`, et ne capture que les Markdown et mappings
+JSON. Les `pièces originales` ne sont jamais ouvertes ni indexées. L’historique,
+les restaurations et l’état de protection GLiNER sont accessibles dans
+l’interface locale `/admin/`.
 
 ## Installation depuis le marketplace
 

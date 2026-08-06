@@ -1,7 +1,14 @@
-const express = require('express');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const {
+  createCheckpoint,
+  listHistory,
+  repositoryOverview,
+  restoreRevision,
+  revisionDetails,
+  worktreeDetails,
+} = require('../piecemaker-plugin/scripts/lib/checkpoints.cjs');
 
 const MAX_MARKDOWN_BYTES = 1024 * 1024;
 const SECRET_KEYS = new Set([
@@ -214,9 +221,13 @@ function createAdminRouter({
   homeDir = path.join(os.homedir(), '.piecemaker'),
   getRuntimeStatus = () => ({}),
 } = {}) {
+  // Lazy import keeps the pure filesystem/Git helpers testable before npm
+  // dependencies are installed. The running server already depends on Express.
+  const express = require('express');
   const router = express.Router();
   const configFile = path.join(homeDir, 'config.json');
   const envFile = path.join(repoRoot, '.env');
+  const casesRoot = () => ({ ...defaultConfig(repoRoot, homeDir), ...readJson(configFile, {}) }).outputPath;
 
   router.use((req, res, next) => {
     res.set('Cache-Control', 'no-store');
@@ -297,6 +308,71 @@ function createAdminRouter({
   router.put('/file', (req, res) => {
     try {
       res.json({ ok: true, ...saveManagedFile(repoRoot, homeDir, req.body?.path, req.body?.content) });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+
+  router.get('/repository', (req, res) => {
+    try {
+      res.json(repositoryOverview(casesRoot(), homeDir));
+    } catch (error) {
+      res.status(503).json({ error: error.message });
+    }
+  });
+
+  router.get('/history', (req, res) => {
+    try {
+      const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 250);
+      const caseName = String(req.query.case || '').trim();
+      res.json({ history: listHistory(casesRoot(), homeDir, { limit, caseName }) });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  router.get('/revision', (req, res) => {
+    try {
+      const hash = String(req.query.hash || '');
+      const filePath = String(req.query.path || '');
+      const caseName = String(req.query.case || '').trim();
+      res.json(hash === 'WORKTREE'
+        ? worktreeDetails(casesRoot(), homeDir, caseName, filePath)
+        : revisionDetails(casesRoot(), homeDir, caseName, hash, filePath));
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  router.post('/checkpoints', (req, res) => {
+    try {
+      const label = String(req.body?.label || 'Checkpoint manuel').trim().slice(0, 140);
+      const result = createCheckpoint({
+        casesRoot: casesRoot(),
+        caseName: String(req.body?.case || '').trim(),
+        homeDir,
+        label,
+        event: 'manual',
+      });
+      res.status(result.created ? 201 : 200).json({ ok: true, ...result });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  router.post('/restore', (req, res) => {
+    try {
+      if (req.body?.confirm !== true) {
+        return res.status(400).json({ error: 'La confirmation explicite de la restauration est requise.' });
+      }
+      const result = restoreRevision({
+        casesRoot: casesRoot(),
+        caseName: String(req.body?.case || '').trim(),
+        homeDir,
+        hash: req.body?.hash,
+      });
+      res.json({ ok: true, ...result });
     } catch (error) {
       res.status(400).json({ error: error.message });
     }

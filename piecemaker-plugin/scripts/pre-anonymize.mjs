@@ -2,7 +2,8 @@
 /**
  * PreToolUse hook — warns before Claude reads a document that may contain PII.
  *
- * Wired to Read|Grep in hooks/hooks.json. Runs on every matching tool call, so
+ * Wired alongside the originals guard in hooks/hooks.json. Runs on every
+ * matching tool call, so
  * the no-op path (irrelevant tool, irrelevant path, feature disabled) must
  * exit immediately without touching the filesystem beyond a stat.
  *

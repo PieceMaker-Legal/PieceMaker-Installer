@@ -18,6 +18,7 @@
 
     <nav class="tabs" aria-label="Sections">
       <button class="tab active" data-tab="dashboard">Vue d’ensemble</button>
+      <button class="tab" data-tab="history">Historique</button>
       <button class="tab" data-tab="settings">Paramètres</button>
       <button class="tab" data-tab="files">Skills et agents</button>
     </nav>
@@ -43,6 +44,84 @@
           <code id="repoRoot">—</code>
           <p class="muted">Pour arrêter ou redémarrer le serveur : <code>piecemaker stop</code> puis <code>piecemaker start</code>.</p>
         </article>
+      </section>
+
+      <section id="history" class="panel">
+        <div class="desktop-card">
+          <header class="repository-toolbar">
+            <div class="repository-identity">
+              <span class="toolbar-caption">Dossier juridique</span>
+              <strong id="repositoryName">PieceMaker</strong>
+              <code id="repositoryPath">—</code>
+            </div>
+            <div class="branch-identity">
+              <span class="toolbar-caption">Historique indépendant</span>
+              <strong id="repositoryBranch">Checkpoints</strong>
+              <span id="repositoryHead" class="sha">—</span>
+            </div>
+            <div class="toolbar-actions">
+              <button id="refreshHistory" class="button ghost" type="button">Actualiser</button>
+              <button id="createCheckpoint" class="button primary" type="button">Créer un checkpoint</button>
+            </div>
+          </header>
+
+          <div class="desktop-workspace">
+            <aside class="folder-column">
+              <div class="column-title">
+                <span>Dossiers juridiques</span>
+                <span id="folderCount" class="count-badge">0</span>
+              </div>
+              <div id="folderList" class="folder-list"></div>
+              <div class="originals-section">
+                <div class="column-title">
+                  <span>Pièces originales</span>
+                  <span id="originalCount" class="count-badge">0</span>
+                </div>
+                <div id="originalList" class="original-list"></div>
+                <p class="originals-note">Seules les métadonnées sont affichées. Le contenu original reste interdit à l’IA.</p>
+              </div>
+            </aside>
+
+            <aside class="history-column">
+              <div class="history-switch" role="tablist" aria-label="Vue Git">
+                <button id="changesView" type="button" data-history-view="changes">Modifications</button>
+                <button id="commitsView" class="active" type="button" data-history-view="commits">Historique</button>
+              </div>
+              <div class="history-summary">
+                <strong id="historyTitle">Historique</strong>
+                <span id="historyCount">0 élément</span>
+              </div>
+              <div id="historyList" class="history-list" aria-live="polite"></div>
+            </aside>
+
+            <section class="revision-column">
+              <header class="revision-header">
+                <div>
+                  <div class="revision-heading-line">
+                    <span id="revisionKind" class="revision-kind">Révision</span>
+                    <span id="revisionSha" class="sha"></span>
+                  </div>
+                  <h2 id="revisionTitle">Sélectionnez une révision</h2>
+                  <p id="revisionMeta" class="muted">Les fichiers et leur diff apparaîtront ici.</p>
+                </div>
+                <button id="restoreRevision" class="button danger-outline" type="button" hidden>Restaurer cet état</button>
+              </header>
+              <div class="revision-content">
+                <aside class="changed-files-pane">
+                  <div class="column-title"><span>Fichiers modifiés</span><span id="revisionFileCount" class="count-badge">0</span></div>
+                  <div id="revisionFiles" class="changed-file-list"></div>
+                </aside>
+                <div class="diff-pane">
+                  <div class="diff-toolbar">
+                    <strong id="diffFile">Aucun fichier sélectionné</strong>
+                    <span id="diffStats" class="diff-stats"></span>
+                  </div>
+                  <div id="diffContent" class="diff-content empty-state">Sélectionnez un commit ou un checkpoint dans l’historique.</div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
       </section>
 
       <section id="settings" class="panel">

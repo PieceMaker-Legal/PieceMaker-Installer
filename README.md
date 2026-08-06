@@ -71,7 +71,9 @@ piecemaker
 ```
 
 L’interface graphique locale permet de modifier les paramètres, les skills et
-les agents Markdown. La commande suivante démarre le serveur si nécessaire et
+les agents Markdown, mais aussi d’inspecter chaque dossier juridique indépendant,
+ses pièces originales et leur état de protection GLiNER, ainsi que ses commits et
+checkpoints automatiques. La commande suivante démarre le serveur si nécessaire et
 ouvre directement cette interface dans le navigateur :
 
 ```bash

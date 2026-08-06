@@ -72,7 +72,10 @@ function isPluginInstalled(plugins) {
 async function ensureMarketplace() {
   const marketplaces = listMarketplaces();
   if (Array.isArray(marketplaces) && marketplaces.some((m) => m.name === MARKETPLACE_NAME)) {
-    log.ok(`Marketplace "${MARKETPLACE_NAME}" déjà enregistré.`);
+    const spin = spinner(`Actualisation du marketplace "${MARKETPLACE_NAME}"...`);
+    const code = await run('claude', ['plugin', 'marketplace', 'update', MARKETPLACE_NAME]);
+    if (code === 0) spin.succeed(`Marketplace "${MARKETPLACE_NAME}" actualisé.`);
+    else spin.fail('Actualisation impossible — la copie déjà enregistrée sera utilisée.');
     return { ok: true };
   }
 
@@ -98,7 +101,10 @@ async function ensureMarketplace() {
 async function ensurePlugin() {
   const plugins = listPlugins();
   if (isPluginInstalled(plugins)) {
-    log.ok(`Plugin "${PLUGIN_SPEC}" déjà installé et activé.`);
+    const spin = spinner(`Mise à jour du plugin (${PLUGIN_SPEC})...`);
+    const code = await run('claude', ['plugin', 'update', PLUGIN_SPEC]);
+    if (code === 0) spin.succeed('Plugin PieceMaker mis à jour (redémarrage de session requis).');
+    else spin.fail('Mise à jour impossible — la version déjà installée reste active.');
     return true;
   }
 

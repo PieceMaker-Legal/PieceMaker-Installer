@@ -1,8 +1,8 @@
 {
   "name": "piecemaker",
   "displayName": "PieceMaker",
-  "version": "0.1.0",
-  "description": "Assistant juridique PieceMaker pour Claude Code : anonymisation de pièces (GLiNER/Presidio), conversion de documents en Markdown, rédaction et vérification de documents juridiques français, avec hooks de garde-fou PII et agents dédiés.",
+  "version": "0.2.0",
+  "description": "Assistant juridique PieceMaker pour Claude Code : anonymisation, conversion Markdown, rédaction juridique, checkpoints Git automatiques, garde-fous PII et agents dédiés.",
   "author": {
     "name": "PieceMaker",
     "url": "https://github.com/PieceMaker-Legal"

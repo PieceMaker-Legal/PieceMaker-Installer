@@ -10,7 +10,7 @@
       "name": "piecemaker",
       "source": "./piecemaker-plugin",
       "description": "Assistant juridique PieceMaker : anonymisation, conversion Markdown, rédaction juridique française.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "license": "MIT",
       "homepage": "https://github.com/PieceMaker-Legal/PieceMaker-Installer",
       "keywords": [

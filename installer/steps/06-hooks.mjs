@@ -1,7 +1,7 @@
 /**
  * Step 06 — Claude Code hooks (anonymisation + facturation).
  *
- * Wires piecemaker-plugin/hooks/hooks.json's three hook scripts by writing
+ * Wires piecemaker-plugin/hooks/hooks.json's five hook scripts by writing
  * their runtime configuration into ~/.piecemaker/config.json, then proves
  * each script actually runs clean by piping a synthetic, realistic payload
  * to its stdin — the same contract Claude Code uses (see
@@ -21,8 +21,8 @@ import { updateConfig } from '../lib/state.mjs';
 
 export const meta = {
   id: '06-hooks',
-  label: 'Hooks Claude Code (anonymisation & facturation)',
-  description: 'Configure les hooks PreToolUse/PostToolUse d\'anonymisation et le suivi de facturation',
+  label: 'Hooks Claude Code (anonymisation, checkpoints & facturation)',
+  description: 'Configure les garde-fous, les checkpoints PostToolUse et le suivi de facturation',
 };
 
 const PLUGIN_ROOT = path.join(REPO_ROOT, 'piecemaker-plugin');
@@ -35,8 +35,10 @@ const SYNTHESE_DIR = path.join(BILLING_DIR, 'synthese');
 const DOCUMENT_EXTENSIONS = ['.md', '.txt', '.docx', '.doc', '.pdf', '.pptx', '.ppt', '.xlsx', '.xls', '.rtf', '.odt'];
 
 const HOOK_SCRIPTS = {
+  protect: path.join(SCRIPTS_DIR, 'protect-originals.mjs'),
   pre: path.join(SCRIPTS_DIR, 'pre-anonymize.mjs'),
   post: path.join(SCRIPTS_DIR, 'post-anonymize.mjs'),
+  checkpoint: path.join(SCRIPTS_DIR, 'checkpoint-track.mjs'),
   billing: path.join(SCRIPTS_DIR, 'billing-track.mjs'),
 };
 
@@ -102,9 +104,10 @@ export async function install(ctx) {
   } else {
     updateConfig({
       anonymization: anonymizationConfig,
+      checkpoints: { enabled: true, timeoutMs: 8000 },
       billing: { enabled: true },
     });
-    log.ok('Configuration écrite dans ~/.piecemaker/config.json (anonymization, billing)');
+    log.ok('Configuration écrite dans ~/.piecemaker/config.json (anonymization, checkpoints, billing)');
   }
 
   if (ctx.dryRun) {
@@ -119,7 +122,21 @@ export async function install(ctx) {
     testDir = path.join(outputPath || REPO_ROOT, '.piecemaker-hook-selftest');
     ensureDir(testDir);
 
-    // 1. pre-anonymize.mjs — a real PII-bearing Markdown file, in scope,
+    // 1. protect-originals.mjs — explicit protected path, proving that the
+    //    original-piece boundary returns a valid blocking hook response.
+    const protectedResult = runHookSelfTest('protect-originals.mjs', HOOK_SCRIPTS.protect, {
+      hook_event_name: 'PreToolUse',
+      session_id: 'installer-selftest',
+      cwd: REPO_ROOT,
+      transcript_path: '',
+      permission_mode: 'default',
+      tool_name: 'Read',
+      tool_input: { file_path: path.join(testDir, 'pièces originales', 'piece.pdf') },
+      tool_use_id: 'toolu_installer_originals_selftest',
+    });
+    testResults.push(protectedResult);
+
+    // 2. pre-anonymize.mjs — a real PII-bearing Markdown file, in scope,
     //    proving the regex scan actually fires (pure JS, no external deps).
     const piiFile = path.join(testDir, 'pii-selftest.md');
     fs.writeFileSync(
@@ -139,7 +156,7 @@ export async function install(ctx) {
     });
     testResults.push(preResult);
 
-    // 2. post-anonymize.mjs — out-of-scope file (wrong extension), proving
+    // 3. post-anonymize.mjs — out-of-scope file (wrong extension), proving
     //    the fast no-op guard works without requiring GLiNER's model/deps.
     const outOfScopeFile = path.join(testDir, 'not-a-document.txt');
     fs.writeFileSync(outOfScopeFile, 'rien à voir ici', 'utf8');
@@ -156,7 +173,22 @@ export async function install(ctx) {
     });
     testResults.push(postResult);
 
-    // 3. billing-track.mjs — a real Stop payload; this appends a genuine
+    // 4. checkpoint-track.mjs — failed tool response: exercises the hook I/O
+    //    contract without creating a real checkpoint during installation.
+    const checkpointResult = runHookSelfTest('checkpoint-track.mjs', HOOK_SCRIPTS.checkpoint, {
+      hook_event_name: 'PostToolUse',
+      session_id: 'installer-selftest',
+      cwd: REPO_ROOT,
+      transcript_path: '',
+      permission_mode: 'default',
+      tool_name: 'Edit',
+      tool_input: { file_path: path.join(REPO_ROOT, 'README.md') },
+      tool_response: { success: false },
+      tool_use_id: 'toolu_installer_checkpoint_selftest',
+    });
+    testResults.push(checkpointResult);
+
+    // 5. billing-track.mjs — a real Stop payload; this appends a genuine
     //    (clearly-labelled) line to the current month's billing ledger and
     //    writes a synthesis file, proving the full write path end to end.
     const billingResult = runHookSelfTest('billing-track.mjs', HOOK_SCRIPTS.billing, {
@@ -174,7 +206,7 @@ export async function install(ctx) {
   }
 
   const allOk = testResults.every((r) => r.ok);
-  if (allOk) spin.succeed('Hooks vérifiés — les trois scripts répondent au contrat stdin/stdout');
+  if (allOk) spin.succeed('Hooks vérifiés — les cinq scripts répondent au contrat stdin/stdout');
   else spin.fail('Échec de vérification d\'au moins un hook');
 
   for (const r of testResults) {
@@ -201,7 +233,7 @@ export async function check(ctx) {
   const hooksJsonExists = fs.existsSync(HOOKS_JSON);
   const dirsExist = fs.existsSync(BILLING_DIR) && fs.existsSync(SYNTHESE_DIR);
   const cfg = ctx.config || {};
-  const configOk = Boolean(cfg.anonymization && cfg.billing);
+  const configOk = Boolean(cfg.anonymization && cfg.checkpoints && cfg.billing);
 
   if (!scriptsExist || !hooksJsonExists) {
     return { status: 'failed', note: 'Fichiers du plugin manquants (scripts ou hooks.json) — réinstallez piecemaker-plugin/.' };
