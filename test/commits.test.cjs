@@ -104,6 +104,17 @@ test('les modifications sont calculées par rapport au dernier commit complet du
   assert.match(details.patch, /Contrat anonymisé v2/);
 });
 
+test('les noms de fichiers français restent lisibles dans l’historique', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(data.caseA, 'mémoire spécial.md'), '# Mémoire\n');
+
+  const overview = repositoryOverview(data.casesRoot, data.home);
+  const paths = overview.folders.find((folder) => folder.name === 'Dossier Alpha').workingChanges.map((file) => file.path);
+  assert.ok(paths.includes('mémoire spécial.md'));
+  assert.ok(paths.every((file) => !file.includes('\\303')));
+});
+
 test('la restauration crée un retour de sécurité et préserve toutes les originales', (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));

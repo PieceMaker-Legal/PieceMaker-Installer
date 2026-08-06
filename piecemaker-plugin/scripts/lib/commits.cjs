@@ -17,6 +17,8 @@ function runGit(cwd, args, { gitDir, workTree, env = {}, input, allowFailure = f
   const command = [
     ...(gitDir ? [`--git-dir=${gitDir}`] : []),
     ...(workTree ? [`--work-tree=${workTree}`] : []),
+    '-c',
+    'core.quotePath=false',
     ...args,
   ];
   const result = spawnSync('git', command, {
