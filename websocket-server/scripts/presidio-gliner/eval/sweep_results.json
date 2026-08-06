@@ -1,0 +1,5607 @@
+{
+ "baseline": {
+  "checkpoint": "fastino/gliner2-multi-v1",
+  "chunk": [
+   250,
+   50
+  ],
+  "slices": {
+   "slice_A": [
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.9869216680526733
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "LUMEVOQ®",
+     "score": 0.9918286204338074
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "EMA",
+     "score": 0.9987196922302246
+    },
+    {
+     "type": "LOCATION",
+     "text": "United States",
+     "score": 0.999599277973175
+    },
+    {
+     "type": "LOCATION",
+     "text": "Europe",
+     "score": 0.9978199005126953
+    },
+    {
+     "type": "LOCATION",
+     "text": "other countries",
+     "score": 0.6654627919197083
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GenSight",
+     "score": 0.9733248353004456
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "REFLECT",
+     "score": 0.9504382610321045
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Ophthalmology Therapy",
+     "score": 0.6047122478485107
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "FDA",
+     "score": 0.9963923096656799
+    },
+    {
+     "type": "LOCATION",
+     "text": "any country",
+     "score": 0.22421683371067047
+    },
+    {
+     "type": "PERSON",
+     "text": "ND4-LHON",
+     "score": 0.10581053793430328
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PIONEER",
+     "score": 0.2754795253276825
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GS030",
+     "score": 0.1567847579717636
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "CAT",
+     "score": 0.7591904401779175
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "topline",
+     "score": 0.0725182592868805
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "DSMB",
+     "score": 0.7436162829399109
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Data Safety Monitoring Board",
+     "score": 0.5762919783592224
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "ND4-LHON",
+     "score": 0.06393935531377792
+    },
+    {
+     "type": "LOCATION",
+     "text": "ND4-LHON",
+     "score": 0.06769809871912003
+    },
+    {
+     "type": "PERSON",
+     "text": "patients",
+     "score": 0.1104774996638298
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PPQ",
+     "score": 0.05986585095524788
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GMP",
+     "score": 0.11787637323141098
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GS010",
+     "score": 0.07492457330226898
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RECOVER",
+     "score": 0.7934638857841492
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "MHRA",
+     "score": 0.9979351758956909
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "MAA",
+     "score": 0.6589183807373047
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "NADH dehydrogenase",
+     "score": 0.2366461455821991
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AAP/AAC",
+     "score": 0.8477933406829834
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "ethics committees",
+     "score": 0.08984383195638657
+    },
+    {
+     "type": "LOCATION",
+     "text": "European Union",
+     "score": 0.999442994594574
+    },
+    {
+     "type": "LOCATION",
+     "text": "EU",
+     "score": 0.8856816291809082
+    },
+    {
+     "type": "LOCATION",
+     "text": "US",
+     "score": 0.8127808570861816
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "MTS",
+     "score": 0.14208318293094635
+    },
+    {
+     "type": "LOCATION",
+     "text": "France",
+     "score": 0.9986203908920288
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "LHON",
+     "score": 0.4542306363582611
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "REVERSE",
+     "score": 0.9575844407081604
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RESCUE",
+     "score": 0.9438703656196594
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "agency",
+     "score": 0.11997146159410477
+    },
+    {
+     "type": "LOCATION",
+     "text": "United Kingdom",
+     "score": 0.9853083491325378
+    },
+    {
+     "type": "LOCATION",
+     "text": "UK",
+     "score": 0.944157063961029
+    },
+    {
+     "type": "LOCATION",
+     "text": "LHON",
+     "score": 0.14184613525867462
+    },
+    {
+     "type": "PERSON",
+     "text": "Santhera",
+     "score": 0.4609881043434143
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "fiber GENSIGHT BIOLOGICS",
+     "score": 0.7361346483230591
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Santhera",
+     "score": 0.5020276308059692
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document",
+     "score": 0.07223398983478546
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Science Translational Medicine",
+     "score": 0.964992344379425
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Ophthalmology",
+     "score": 0.921209990978241
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "nadir",
+     "score": 0.5584182739257812
+    },
+    {
+     "type": "LOCATION",
+     "text": "nadir",
+     "score": 0.2867377996444702
+    }
+   ],
+   "slice_B": [
+    {
+     "type": "ORGANIZATION",
+     "text": "companies",
+     "score": 0.6376901268959045
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "FDA",
+     "score": 0.9997428059577942
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "NIH Office of Biotechnology Activities",
+     "score": 0.9927292466163635
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "NIH",
+     "score": 0.9966425895690918
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "OBA",
+     "score": 0.7601026892662048
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RAC",
+     "score": 0.756300151348114
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BLA",
+     "score": 0.4940827488899231
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IND",
+     "score": 0.9311261773109436
+    },
+    {
+     "type": "PERSON",
+     "text": "physicians",
+     "score": 0.1831708550453186
+    },
+    {
+     "type": "PERSON",
+     "text": "patients",
+     "score": 0.2483355551958084
+    },
+    {
+     "type": "PERSON",
+     "text": "healthy volunteers",
+     "score": 0.13773837685585022
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Institutional Review Board (IRB)",
+     "score": 0.7929397821426392
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GCP",
+     "score": 0.977220356464386
+    },
+    {
+     "type": "LOCATION",
+     "text": "GCP",
+     "score": 0.7963814735412598
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IBC",
+     "score": 0.9362624287605286
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "institutional biosafety committee",
+     "score": 0.8795953989028931
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IRB",
+     "score": 0.9792634844779968
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Institutional Review Board",
+     "score": 0.5101900100708008
+    },
+    {
+     "type": "LOCATION",
+     "text": "local",
+     "score": 0.10233724862337112
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.9525097012519836
+    },
+    {
+     "type": "PERSON",
+     "text": "human subjects",
+     "score": 0.13769111037254333
+    },
+    {
+     "type": "PERSON",
+     "text": "investigator",
+     "score": 0.07355742901563644
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "data safety monitoring board",
+     "score": 0.8637215495109558
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PREA",
+     "score": 0.22519662976264954
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Pediatric Research Equity Act",
+     "score": 0.09910903871059418
+    },
+    {
+     "type": "LOCATION",
+     "text": "U.S.",
+     "score": 0.8792362809181213
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "National Institute of Health",
+     "score": 0.9445155262947083
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "sponsor",
+     "score": 0.08240675181150436
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Competitors",
+     "score": 0.06698153913021088
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PHS Act",
+     "score": 0.6228905916213989
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GMP",
+     "score": 0.48537954688072205
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "small business",
+     "score": 0.5748670101165771
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PDUFA",
+     "score": 0.09908032417297363
+    },
+    {
+     "type": "PERSON",
+     "text": "clinicians",
+     "score": 0.20222486555576324
+    },
+    {
+     "type": "PERSON",
+     "text": "human recipient",
+     "score": 0.23071058094501495
+    },
+    {
+     "type": "PERSON",
+     "text": "donors",
+     "score": 0.21031887829303741
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "tissue establishments",
+     "score": 0.16528978943824768
+    },
+    {
+     "type": "LOCATION",
+     "text": "clinical sites",
+     "score": 0.32582375407218933
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "cGMP",
+     "score": 0.7635270953178406
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GTP",
+     "score": 0.7787719964981079
+    }
+   ],
+   "slice_C": [
+    {
+     "type": "PERSON",
+     "text": "Bernard Gilly",
+     "score": 0.9999607801437378
+    },
+    {
+     "type": "PERSON",
+     "text": "Rodriguez",
+     "score": 0.9714075922966003
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Board of Directors",
+     "score": 0.899825394153595
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document",
+     "score": 0.8278372287750244
+    },
+    {
+     "type": "LOCATION",
+     "text": "euros",
+     "score": 0.07121174782514572
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Gilly",
+     "score": 0.9980277419090271
+    },
+    {
+     "type": "PERSON",
+     "text": "Philippe Motté",
+     "score": 0.9999736547470093
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.9975144863128662
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document 13",
+     "score": 0.05947748199105263
+    },
+    {
+     "type": "PERSON",
+     "text": "Laurence Rodriguez",
+     "score": 0.9994335770606995
+    },
+    {
+     "type": "PERSON",
+     "text": "Michael Wyzga",
+     "score": 0.9999428987503052
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Motté",
+     "score": 0.9622274041175842
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Mr. Motté",
+     "score": 0.6667547225952148
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AMF",
+     "score": 0.8435935378074646
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "SVP",
+     "score": 0.2263721376657486
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Exceptional Compensation Directors",
+     "score": 0.11608293652534485
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Exceptional Compensation Directors’ Fees",
+     "score": 0.2743237316608429
+    },
+    {
+     "type": "LOCATION",
+     "text": "51,842",
+     "score": 0.5022631287574768
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Wyzga",
+     "score": 0.9849254488945007
+    },
+    {
+     "type": "PERSON",
+     "text": "Mrs Laurence Rodriguez",
+     "score": 0.7899429798126221
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GenSight Biologics France SAS",
+     "score": 0.9758561849594116
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "the Company",
+     "score": 0.2517470419406891
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "our",
+     "score": 0.09269237518310547
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Sapin 2 Law",
+     "score": 0.8000613451004028
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Shareholders’ Meeting",
+     "score": 0.05229249969124794
+    },
+    {
+     "type": "LOCATION",
+     "text": "France",
+     "score": 0.7836599349975586
+    },
+    {
+     "type": "PERSON",
+     "text": "Simone Seiter",
+     "score": 0.9999121427536011
+    },
+    {
+     "type": "PERSON",
+     "text": "Françoise de Craecker",
+     "score": 0.9999186992645264
+    },
+    {
+     "type": "PERSON",
+     "text": "Peter Goodfellow",
+     "score": 0.9999680519104004
+    },
+    {
+     "type": "PERSON",
+     "text": "Maritza McIntyre",
+     "score": 0.9998630285263062
+    },
+    {
+     "type": "PERSON",
+     "text": "Elsy Boglioli",
+     "score": 0.9997822642326355
+    },
+    {
+     "type": "PERSON",
+     "text": "Cédric Moreau",
+     "score": 0.9790301322937012
+    },
+    {
+     "type": "PERSON",
+     "text": "M. Motté",
+     "score": 0.8990913033485413
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Sofinnova Partners SAS",
+     "score": 0.9740709066390991
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "M. Motté",
+     "score": 0.1522189825773239
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BSA",
+     "score": 0.7235658168792725
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Board",
+     "score": 0.06299059092998505
+    },
+    {
+     "type": "LOCATION",
+     "text": "389,832",
+     "score": 0.08012408018112183
+    },
+    {
+     "type": "LOCATION",
+     "text": "134,832",
+     "score": 0.05863463878631592
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BCE",
+     "score": 0.398161381483078
+    },
+    {
+     "type": "PERSON",
+     "text": "Natalie Mount",
+     "score": 0.9998111128807068
+    },
+    {
+     "type": "PERSON",
+     "text": "Boglioli",
+     "score": 0.8473455905914307
+    },
+    {
+     "type": "PERSON",
+     "text": "Elsy",
+     "score": 0.6400680541992188
+    },
+    {
+     "type": "PERSON",
+     "text": "Françoise",
+     "score": 0.3739502727985382
+    },
+    {
+     "type": "PERSON",
+     "text": "de Craecker",
+     "score": 0.2584782540798187
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Boglioli",
+     "score": 0.2182520031929016
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AGA",
+     "score": 0.14322145283222198
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IFRS",
+     "score": 0.6969282627105713
+    }
+   ]
+  }
+ },
+ "sharp-desc": {
+  "checkpoint": "fastino/gliner2-multi-v1",
+  "chunk": [
+   250,
+   50
+  ],
+  "slices": {
+   "slice_A": [
+    {
+     "type": "ORGANIZATION",
+     "text": "LUMEVOQ®",
+     "score": 0.9938163757324219
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.989011287689209
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "EMA",
+     "score": 0.9995535016059875
+    },
+    {
+     "type": "LOCATION",
+     "text": "United States",
+     "score": 0.9995273351669312
+    },
+    {
+     "type": "LOCATION",
+     "text": "Europe",
+     "score": 0.9977962970733643
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GenSight",
+     "score": 0.9785754680633545
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "REFLECT",
+     "score": 0.5775308012962341
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Ophthalmology Therapy",
+     "score": 0.4991491138935089
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "FDA",
+     "score": 0.9991864562034607
+    },
+    {
+     "type": "LOCATION",
+     "text": "other countries",
+     "score": 0.32991907000541687
+    },
+    {
+     "type": "LOCATION",
+     "text": "any country",
+     "score": 0.08180873841047287
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PIONEER",
+     "score": 0.24549651145935059
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GS030",
+     "score": 0.24314682185649872
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "DSMB",
+     "score": 0.8860631585121155
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Data Safety Monitoring Board",
+     "score": 0.7214179039001465
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "CAT",
+     "score": 0.8404808044433594
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "topline",
+     "score": 0.061936117708683014
+    },
+    {
+     "type": "LOCATION",
+     "text": "ND4-LHON",
+     "score": 0.059716880321502686
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "MAA",
+     "score": 0.6866822242736816
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PPQ",
+     "score": 0.08538594096899033
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Good Manufacturing Practice",
+     "score": 0.05669122561812401
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GMP",
+     "score": 0.07193268835544586
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GS010",
+     "score": 0.054511744529008865
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "MHRA",
+     "score": 0.9982587695121765
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "NADH dehydrogenase",
+     "score": 0.3383116126060486
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RECOVER",
+     "score": 0.5821794271469116
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AAP/AAC",
+     "score": 0.8115339875221252
+    },
+    {
+     "type": "LOCATION",
+     "text": "European Union",
+     "score": 0.9991341233253479
+    },
+    {
+     "type": "LOCATION",
+     "text": "EU",
+     "score": 0.8694066405296326
+    },
+    {
+     "type": "LOCATION",
+     "text": "US",
+     "score": 0.6993531584739685
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "MTS",
+     "score": 0.7677904367446899
+    },
+    {
+     "type": "LOCATION",
+     "text": "France",
+     "score": 0.9985522627830505
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "LHON",
+     "score": 0.4042080044746399
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "REVERSE",
+     "score": 0.5533133149147034
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RESCUE",
+     "score": 0.5946367979049683
+    },
+    {
+     "type": "LOCATION",
+     "text": "United Kingdom",
+     "score": 0.9872685074806213
+    },
+    {
+     "type": "LOCATION",
+     "text": "UK",
+     "score": 0.9583008289337158
+    },
+    {
+     "type": "LOCATION",
+     "text": "LHON",
+     "score": 0.3019697368144989
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "fiber GENSIGHT BIOLOGICS",
+     "score": 0.7812056541442871
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Santhera",
+     "score": 0.8093859553337097
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document",
+     "score": 0.1636667400598526
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "nadir",
+     "score": 0.7980867028236389
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Science Translational Medicine",
+     "score": 0.9726396203041077
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Ophthalmology",
+     "score": 0.9431686401367188
+    }
+   ],
+   "slice_B": [
+    {
+     "type": "ORGANIZATION",
+     "text": "companies",
+     "score": 0.13036037981510162
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "FDA",
+     "score": 0.9999297857284546
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "NIH",
+     "score": 0.9986037611961365
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "NIH Office of Biotechnology Activities",
+     "score": 0.985063910484314
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RAC",
+     "score": 0.8371133208274841
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "OBA",
+     "score": 0.7897800207138062
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IND",
+     "score": 0.9280338883399963
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BLA",
+     "score": 0.30067119002342224
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GCP",
+     "score": 0.9890257716178894
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IRB",
+     "score": 0.9917852878570557
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Institutional Review Board",
+     "score": 0.6252805590629578
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IBC",
+     "score": 0.9455806612968445
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "institutional biosafety committee",
+     "score": 0.8647159934043884
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.9513828754425049
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "data safety monitoring board",
+     "score": 0.8209065794944763
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PREA",
+     "score": 0.5588310956954956
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Pediatric Research Equity Act",
+     "score": 0.21068021655082703
+    },
+    {
+     "type": "LOCATION",
+     "text": "U.S.",
+     "score": 0.8386949300765991
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "National Institute of Health",
+     "score": 0.922235906124115
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PHS Act",
+     "score": 0.7901304364204407
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GMP",
+     "score": 0.2905472218990326
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Genetic Modification",
+     "score": 0.05588538944721222
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PDUFA",
+     "score": 0.3605128824710846
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Prescription Drug User Fee Act",
+     "score": 0.0512373223900795
+    },
+    {
+     "type": "LOCATION",
+     "text": "clinical sites",
+     "score": 0.10934839397668839
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "cGMP",
+     "score": 0.5436158776283264
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GTP",
+     "score": 0.6101298332214355
+    }
+   ],
+   "slice_C": [
+    {
+     "type": "PERSON",
+     "text": "Bernard Gilly",
+     "score": 0.9999696016311646
+    },
+    {
+     "type": "PERSON",
+     "text": "Rodriguez",
+     "score": 0.8944764137268066
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document",
+     "score": 0.8858909606933594
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Board of Directors",
+     "score": 0.8552883863449097
+    },
+    {
+     "type": "PERSON",
+     "text": "Philippe Motté",
+     "score": 0.9999690055847168
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Gilly",
+     "score": 0.8907212615013123
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.9973973035812378
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document 13",
+     "score": 0.2698192000389099
+    },
+    {
+     "type": "PERSON",
+     "text": "Laurence Rodriguez",
+     "score": 0.9988313317298889
+    },
+    {
+     "type": "PERSON",
+     "text": "Michael Wyzga",
+     "score": 0.9999154806137085
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Motté",
+     "score": 0.9275271892547607
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Mr. Motté",
+     "score": 0.3542027771472931
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "SVP",
+     "score": 0.6709946990013123
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AMF",
+     "score": 0.9590864181518555
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Exceptional Compensation Directors’ Fees",
+     "score": 0.08319279551506042
+    },
+    {
+     "type": "LOCATION",
+     "text": "51,842",
+     "score": 0.13217715919017792
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Wyzga",
+     "score": 0.9815402626991272
+    },
+    {
+     "type": "PERSON",
+     "text": "Mrs Laurence Rodriguez",
+     "score": 0.9643310904502869
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GenSight Biologics France SAS",
+     "score": 0.9732804894447327
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "the Company",
+     "score": 0.2267349660396576
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "our",
+     "score": 0.08511510491371155
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Sapin 2 Law",
+     "score": 0.9292297959327698
+    },
+    {
+     "type": "LOCATION",
+     "text": "France",
+     "score": 0.8976824283599854
+    },
+    {
+     "type": "PERSON",
+     "text": "Simone Seiter",
+     "score": 0.9998852014541626
+    },
+    {
+     "type": "PERSON",
+     "text": "Françoise de Craecker",
+     "score": 0.9998856782913208
+    },
+    {
+     "type": "PERSON",
+     "text": "Maritza McIntyre",
+     "score": 0.9997908473014832
+    },
+    {
+     "type": "PERSON",
+     "text": "Peter Goodfellow",
+     "score": 0.9999605417251587
+    },
+    {
+     "type": "PERSON",
+     "text": "Elsy Boglioli",
+     "score": 0.9996174573898315
+    },
+    {
+     "type": "PERSON",
+     "text": "Cédric Moreau",
+     "score": 0.992237389087677
+    },
+    {
+     "type": "PERSON",
+     "text": "M. Motté",
+     "score": 0.8171853423118591
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Sofinnova Partners SAS",
+     "score": 0.9934483170509338
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BSA",
+     "score": 0.8860135674476624
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BCE",
+     "score": 0.6304958462715149
+    },
+    {
+     "type": "PERSON",
+     "text": "Natalie Mount",
+     "score": 0.9997599720954895
+    },
+    {
+     "type": "PERSON",
+     "text": "Boglioli",
+     "score": 0.8906767964363098
+    },
+    {
+     "type": "PERSON",
+     "text": "Elsy",
+     "score": 0.7173179984092712
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Boglioli",
+     "score": 0.16728457808494568
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AGA",
+     "score": 0.09429449588060379
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IFRS",
+     "score": 0.9205305576324463
+    }
+   ]
+  }
+ },
+ "chunk180": {
+  "checkpoint": "fastino/gliner2-multi-v1",
+  "chunk": [
+   180,
+   20
+  ],
+  "slices": {
+   "slice_A": [
+    {
+     "type": "PERSON",
+     "text": "LUMEVOQ®",
+     "score": 0.9651001691818237
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.9736772179603577
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "LUMEVOQ®",
+     "score": 0.9942302703857422
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "REFLECT",
+     "score": 0.9642766714096069
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "our",
+     "score": 0.11719533801078796
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "EMA",
+     "score": 0.9987622499465942
+    },
+    {
+     "type": "LOCATION",
+     "text": "United States",
+     "score": 0.998849630355835
+    },
+    {
+     "type": "LOCATION",
+     "text": "Europe",
+     "score": 0.9983845949172974
+    },
+    {
+     "type": "LOCATION",
+     "text": "other countries",
+     "score": 0.7331916093826294
+    },
+    {
+     "type": "LOCATION",
+     "text": "any country",
+     "score": 0.1171867772936821
+    },
+    {
+     "type": "PERSON",
+     "text": "ND4-LHON",
+     "score": 0.3226434886455536
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GenSight",
+     "score": 0.9550667405128479
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GS030",
+     "score": 0.14972592890262604
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Ophthalmology Therapy",
+     "score": 0.5526558756828308
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "FDA",
+     "score": 0.998144268989563
+    },
+    {
+     "type": "LOCATION",
+     "text": "ND4-LHON",
+     "score": 0.15584780275821686
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "DSMB",
+     "score": 0.7534446120262146
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Data Safety Monitoring Board",
+     "score": 0.5519033074378967
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "CAT",
+     "score": 0.603917121887207
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Good Manufacturing Practice",
+     "score": 0.13600686192512512
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GMP",
+     "score": 0.09413120150566101
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PPQ",
+     "score": 0.058692965656518936
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GS010",
+     "score": 0.07289664447307587
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RECOVER",
+     "score": 0.9683246612548828
+    },
+    {
+     "type": "PERSON",
+     "text": "first patient",
+     "score": 0.09745203703641891
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "MHRA",
+     "score": 0.9987462759017944
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AAP/AAC",
+     "score": 0.817353367805481
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "MAA",
+     "score": 0.8015506267547607
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "ethics committees",
+     "score": 0.14855705201625824
+    },
+    {
+     "type": "LOCATION",
+     "text": "US",
+     "score": 0.9918614625930786
+    },
+    {
+     "type": "LOCATION",
+     "text": "EU",
+     "score": 0.9877405762672424
+    },
+    {
+     "type": "LOCATION",
+     "text": "European Union",
+     "score": 0.9978125095367432
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "MTS",
+     "score": 0.12384161353111267
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "European Union",
+     "score": 0.18923096358776093
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "United States",
+     "score": 0.06767894327640533
+    },
+    {
+     "type": "LOCATION",
+     "text": "France",
+     "score": 0.9993112087249756
+    },
+    {
+     "type": "PERSON",
+     "text": "LHON",
+     "score": 0.8487172722816467
+    },
+    {
+     "type": "PERSON",
+     "text": "ND4",
+     "score": 0.05876189097762108
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "LHON",
+     "score": 0.3469102084636688
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "agency",
+     "score": 0.08726586401462555
+    },
+    {
+     "type": "LOCATION",
+     "text": "United Kingdom",
+     "score": 0.9920095205307007
+    },
+    {
+     "type": "LOCATION",
+     "text": "UK",
+     "score": 0.9770795702934265
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "REVERSE",
+     "score": 0.966305136680603
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RESCUE",
+     "score": 0.9570181965827942
+    },
+    {
+     "type": "LOCATION",
+     "text": "LHON",
+     "score": 0.17248837649822235
+    },
+    {
+     "type": "PERSON",
+     "text": "Santhera",
+     "score": 0.8459194302558899
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "fiber GENSIGHT BIOLOGICS",
+     "score": 0.784391462802887
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Santhera",
+     "score": 0.41647958755493164
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document",
+     "score": 0.0942806527018547
+    },
+    {
+     "type": "LOCATION",
+     "text": "nadir",
+     "score": 0.9870030283927917
+    },
+    {
+     "type": "LOCATION",
+     "text": "point",
+     "score": 0.7329261302947998
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Science Translational Medicine",
+     "score": 0.9476644396781921
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Ophthalmology",
+     "score": 0.864024817943573
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "nadir",
+     "score": 0.7172150015830994
+    },
+    {
+     "type": "LOCATION",
+     "text": "ETDRS",
+     "score": 0.07726122438907623
+    }
+   ],
+   "slice_B": [
+    {
+     "type": "ORGANIZATION",
+     "text": "companies",
+     "score": 0.8029535412788391
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "OBA",
+     "score": 0.756975531578064
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "NIH Office of Biotechnology Activities",
+     "score": 0.9934720993041992
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "FDA",
+     "score": 0.9998007416725159
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "NIH",
+     "score": 0.9922512173652649
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RAC",
+     "score": 0.7770814895629883
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BLA",
+     "score": 0.6612573862075806
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IND",
+     "score": 0.9895959496498108
+    },
+    {
+     "type": "PERSON",
+     "text": "physicians",
+     "score": 0.6976428031921387
+    },
+    {
+     "type": "PERSON",
+     "text": "patients",
+     "score": 0.21709688007831573
+    },
+    {
+     "type": "PERSON",
+     "text": "healthy volunteers",
+     "score": 0.11363156884908676
+    },
+    {
+     "type": "PERSON",
+     "text": "investigators",
+     "score": 0.5214102864265442
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IRB",
+     "score": 0.9671251773834229
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GCP",
+     "score": 0.9108184576034546
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Institutional Review Board",
+     "score": 0.2217361330986023
+    },
+    {
+     "type": "LOCATION",
+     "text": "GCP",
+     "score": 0.6980581283569336
+    },
+    {
+     "type": "PERSON",
+     "text": "his or her legal representative",
+     "score": 0.06270752102136612
+    },
+    {
+     "type": "PERSON",
+     "text": "clinical trial subject",
+     "score": 0.05880720540881157
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.9625871181488037
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IBC",
+     "score": 0.9293373823165894
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "institutional biosafety committee",
+     "score": 0.7295383214950562
+    },
+    {
+     "type": "LOCATION",
+     "text": "local",
+     "score": 0.13662585616111755
+    },
+    {
+     "type": "PERSON",
+     "text": "human subjects",
+     "score": 0.10268121212720871
+    },
+    {
+     "type": "PERSON",
+     "text": "investigator",
+     "score": 0.06166781112551689
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "U.S. Biological",
+     "score": 0.8012862205505371
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "data safety monitoring board",
+     "score": 0.8125988245010376
+    },
+    {
+     "type": "LOCATION",
+     "text": "U.S.",
+     "score": 0.923595130443573
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Pediatric Research Equity Act",
+     "score": 0.0658240094780922
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "National Institute of Health",
+     "score": 0.9778128862380981
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "clinicaltrials.gov",
+     "score": 0.15941326320171356
+    },
+    {
+     "type": "LOCATION",
+     "text": "clinicaltrials.gov",
+     "score": 0.08325564861297607
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "sponsor",
+     "score": 0.057709597051143646
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PHS Act",
+     "score": 0.2356003224849701
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GMP",
+     "score": 0.45751047134399414
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "small business",
+     "score": 0.6829079985618591
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PDUFA",
+     "score": 0.09467361867427826
+    },
+    {
+     "type": "PERSON",
+     "text": "clinicians",
+     "score": 0.21494190394878387
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "manufacturer",
+     "score": 0.058037664741277695
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Advisory Committee",
+     "score": 0.09509406238794327
+    },
+    {
+     "type": "PERSON",
+     "text": "human recipient",
+     "score": 0.20874656736850739
+    },
+    {
+     "type": "PERSON",
+     "text": "donors",
+     "score": 0.14677532017230988
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "tissue establishments",
+     "score": 0.1613587737083435
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "cGMP",
+     "score": 0.42290836572647095
+    },
+    {
+     "type": "LOCATION",
+     "text": "clinical sites",
+     "score": 0.17466633021831512
+    }
+   ],
+   "slice_C": [
+    {
+     "type": "PERSON",
+     "text": "Bernard Gilly",
+     "score": 0.9999222755432129
+    },
+    {
+     "type": "PERSON",
+     "text": "Rodriguez",
+     "score": 0.9705374836921692
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Board of Directors",
+     "score": 0.7835042476654053
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document",
+     "score": 0.7959228157997131
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Gilly",
+     "score": 0.9966863989830017
+    },
+    {
+     "type": "PERSON",
+     "text": "Gilly Chief Executive Officer",
+     "score": 0.09990101307630539
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Gilly",
+     "score": 0.9298384189605713
+    },
+    {
+     "type": "PERSON",
+     "text": "Philippe Motté",
+     "score": 0.999988317489624
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.9976146221160889
+    },
+    {
+     "type": "LOCATION",
+     "text": "euros",
+     "score": 0.07501417398452759
+    },
+    {
+     "type": "PERSON",
+     "text": "Laurence Rodriguez",
+     "score": 0.9997327923774719
+    },
+    {
+     "type": "PERSON",
+     "text": "Michael Wyzga",
+     "score": 0.9999629259109497
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Motté",
+     "score": 0.9804930090904236
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Mr. Motté",
+     "score": 0.7474154829978943
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AMF",
+     "score": 0.8591888546943665
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "SVP",
+     "score": 0.37974828481674194
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Exceptional Compensation Directors",
+     "score": 0.1878972351551056
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Wyzga",
+     "score": 0.9898202419281006
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "(6)",
+     "score": 0.06982433795928955
+    },
+    {
+     "type": "LOCATION",
+     "text": "51,842",
+     "score": 0.5143195390701294
+    },
+    {
+     "type": "LOCATION",
+     "text": "€",
+     "score": 0.05091092735528946
+    },
+    {
+     "type": "PERSON",
+     "text": "Mrs Laurence Rodriguez",
+     "score": 0.9060265421867371
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GenSight Biologics France SAS",
+     "score": 0.9622856974601746
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "the Company",
+     "score": 0.636222243309021
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "our",
+     "score": 0.07996463030576706
+    },
+    {
+     "type": "LOCATION",
+     "text": "France",
+     "score": 0.7822139859199524
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr Bernard Gilly",
+     "score": 0.8725643754005432
+    },
+    {
+     "type": "PERSON",
+     "text": "M. Motté",
+     "score": 0.9523109197616577
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Mr. Gilly",
+     "score": 0.737796425819397
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "M. Motté",
+     "score": 0.4776436388492584
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Sapin 2 Law",
+     "score": 0.8877991437911987
+    },
+    {
+     "type": "PERSON",
+     "text": "Simone Seiter",
+     "score": 0.9999594688415527
+    },
+    {
+     "type": "PERSON",
+     "text": "Maritza McIntyre",
+     "score": 0.9999392032623291
+    },
+    {
+     "type": "PERSON",
+     "text": "Françoise de Craecker",
+     "score": 0.9999690055847168
+    },
+    {
+     "type": "PERSON",
+     "text": "Elsy Boglioli",
+     "score": 0.999777615070343
+    },
+    {
+     "type": "PERSON",
+     "text": "Peter Goodfellow",
+     "score": 0.999984622001648
+    },
+    {
+     "type": "PERSON",
+     "text": "Cédric Moreau",
+     "score": 0.9600586891174316
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Sofinnova Partners SAS",
+     "score": 0.9542452692985535
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr.",
+     "score": 0.07750459760427475
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BSA",
+     "score": 0.5274473428726196
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Board",
+     "score": 0.06837029755115509
+    },
+    {
+     "type": "LOCATION",
+     "text": "389,832",
+     "score": 0.16011165082454681
+    },
+    {
+     "type": "LOCATION",
+     "text": "134,832",
+     "score": 0.11389968544244766
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BCE",
+     "score": 0.4304571747779846
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "us",
+     "score": 0.07510727643966675
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AGA",
+     "score": 0.4376610815525055
+    },
+    {
+     "type": "PERSON",
+     "text": "Natalie Mount",
+     "score": 0.9998928308486938
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT",
+     "score": 0.801990270614624
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IFRS",
+     "score": 0.6169677376747131
+    }
+   ]
+  }
+ },
+ "chunk120": {
+  "checkpoint": "fastino/gliner2-multi-v1",
+  "chunk": [
+   120,
+   15
+  ],
+  "slices": {
+   "slice_A": [
+    {
+     "type": "PERSON",
+     "text": "LUMEVOQ®",
+     "score": 0.9902607798576355
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.9302482008934021
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "LUMEVOQ®",
+     "score": 0.9872391819953918
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document",
+     "score": 0.1524655818939209
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "EMA",
+     "score": 0.9990641474723816
+    },
+    {
+     "type": "LOCATION",
+     "text": "Europe",
+     "score": 0.9982554316520691
+    },
+    {
+     "type": "PERSON",
+     "text": "37 patients",
+     "score": 0.08685624599456787
+    },
+    {
+     "type": "PERSON",
+     "text": "39 patients",
+     "score": 0.07712270319461823
+    },
+    {
+     "type": "LOCATION",
+     "text": "United States",
+     "score": 0.9989575147628784
+    },
+    {
+     "type": "LOCATION",
+     "text": "other countries",
+     "score": 0.7459501028060913
+    },
+    {
+     "type": "LOCATION",
+     "text": "any country",
+     "score": 0.14177167415618896
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "REFLECT",
+     "score": 0.9021224975585938
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RESTORE",
+     "score": 0.6820404529571533
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Ophthalmology Therapy",
+     "score": 0.6109443306922913
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "FDA",
+     "score": 0.9985685348510742
+    },
+    {
+     "type": "PERSON",
+     "text": "ND4-LHON",
+     "score": 0.08867228776216507
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GenSight",
+     "score": 0.6735316514968872
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "topline",
+     "score": 0.14125637710094452
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GS030",
+     "score": 0.129129096865654
+    },
+    {
+     "type": "LOCATION",
+     "text": "ND4-LHON",
+     "score": 0.11514656990766525
+    },
+    {
+     "type": "PERSON",
+     "text": "CAT",
+     "score": 0.09256021678447723
+    },
+    {
+     "type": "PERSON",
+     "text": "patients",
+     "score": 0.061148859560489655
+    },
+    {
+     "type": "PERSON",
+     "text": "PIONEER",
+     "score": 0.055880118161439896
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "CAT",
+     "score": 0.6976068615913391
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PIONEER",
+     "score": 0.15870480239391327
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Data Safety Monitoring Board (DSMB)",
+     "score": 0.7551094889640808
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Good Manufacturing Practice",
+     "score": 0.42440155148506165
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "MAA",
+     "score": 0.7572169303894043
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PPQ",
+     "score": 0.418408066034317
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GMP",
+     "score": 0.24841414391994476
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GS010",
+     "score": 0.16016724705696106
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "MHRA",
+     "score": 0.9973013997077942
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RECOVER",
+     "score": 0.9376855492591858
+    },
+    {
+     "type": "LOCATION",
+     "text": "US",
+     "score": 0.9945688247680664
+    },
+    {
+     "type": "LOCATION",
+     "text": "EU",
+     "score": 0.9953765869140625
+    },
+    {
+     "type": "PERSON",
+     "text": "patient",
+     "score": 0.09915252029895782
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AAP/AAC",
+     "score": 0.9541977047920227
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "ethics committees",
+     "score": 0.2445354014635086
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "regulatory agencies",
+     "score": 0.07532492280006409
+    },
+    {
+     "type": "LOCATION",
+     "text": "LHON",
+     "score": 0.36594754457473755
+    },
+    {
+     "type": "LOCATION",
+     "text": "H2 2025",
+     "score": 0.06071397289633751
+    },
+    {
+     "type": "LOCATION",
+     "text": "European Union",
+     "score": 0.9977729916572571
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "MTS",
+     "score": 0.3019945025444031
+    },
+    {
+     "type": "LOCATION",
+     "text": "mitochondrial surface",
+     "score": 0.05500835180282593
+    },
+    {
+     "type": "PERSON",
+     "text": "15 subjects",
+     "score": 0.05954299867153168
+    },
+    {
+     "type": "LOCATION",
+     "text": "France",
+     "score": 0.9989907145500183
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "agency",
+     "score": 0.07539953291416168
+    },
+    {
+     "type": "LOCATION",
+     "text": "United Kingdom",
+     "score": 0.9941484928131104
+    },
+    {
+     "type": "LOCATION",
+     "text": "UK",
+     "score": 0.9824278950691223
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "LHON",
+     "score": 0.24483685195446014
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "REVERSE",
+     "score": 0.35509827733039856
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RESCUE",
+     "score": 0.2325097620487213
+    },
+    {
+     "type": "PERSON",
+     "text": "Santhera",
+     "score": 0.9403488039970398
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Santhera",
+     "score": 0.5641950368881226
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "fiber GENSIGHT BIOLOGICS",
+     "score": 0.8296488523483276
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "nadir",
+     "score": 0.6637776494026184
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "The RESCUE",
+     "score": 0.1334892213344574
+    },
+    {
+     "type": "LOCATION",
+     "text": "nadir",
+     "score": 0.9599359631538391
+    },
+    {
+     "type": "PERSON",
+     "text": "nadir",
+     "score": 0.34654635190963745
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Science Translational Medicine",
+     "score": 0.9425852298736572
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Ophthalmology",
+     "score": 0.8368544578552246
+    }
+   ],
+   "slice_B": [
+    {
+     "type": "ORGANIZATION",
+     "text": "companies",
+     "score": 0.6928233504295349
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "FDA",
+     "score": 0.9996621608734131
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "NIH",
+     "score": 0.9968506693840027
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "NIH Office of Biotechnology Activities",
+     "score": 0.9351295828819275
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BLA",
+     "score": 0.7650249600410461
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "OBA",
+     "score": 0.7257473468780518
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IND",
+     "score": 0.9761908650398254
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RAC",
+     "score": 0.8883954286575317
+    },
+    {
+     "type": "PERSON",
+     "text": "patients",
+     "score": 0.336595743894577
+    },
+    {
+     "type": "PERSON",
+     "text": "physicians",
+     "score": 0.6143918037414551
+    },
+    {
+     "type": "PERSON",
+     "text": "healthy volunteers",
+     "score": 0.23916278779506683
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IND sponsor",
+     "score": 0.8042449951171875
+    },
+    {
+     "type": "PERSON",
+     "text": "qualified investigators",
+     "score": 0.1024274080991745
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GCP",
+     "score": 0.9708733558654785
+    },
+    {
+     "type": "LOCATION",
+     "text": "GCP",
+     "score": 0.7986648082733154
+    },
+    {
+     "type": "PERSON",
+     "text": "clinical trial subject",
+     "score": 0.07795470952987671
+    },
+    {
+     "type": "PERSON",
+     "text": "study participants",
+     "score": 0.06752652674913406
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "institutional biosafety committee",
+     "score": 0.9594166874885559
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Institutional Review Board (IRB)",
+     "score": 0.9095740914344788
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IRB",
+     "score": 0.955447793006897
+    },
+    {
+     "type": "LOCATION",
+     "text": "each institution",
+     "score": 0.09263429790735245
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IBC",
+     "score": 0.9413878321647644
+    },
+    {
+     "type": "LOCATION",
+     "text": "local",
+     "score": 0.22190868854522705
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.9591403603553772
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "regulatory agencies",
+     "score": 0.07803218066692352
+    },
+    {
+     "type": "PERSON",
+     "text": "investigators",
+     "score": 0.12022139132022858
+    },
+    {
+     "type": "PERSON",
+     "text": "investigator",
+     "score": 0.0580177940428257
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "data safety monitoring board",
+     "score": 0.9494468569755554
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "sponsor",
+     "score": 0.11842957139015198
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PREA",
+     "score": 0.605675220489502
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Pediatric Research Equity Act",
+     "score": 0.313908189535141
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "its institution",
+     "score": 0.07130659371614456
+    },
+    {
+     "type": "LOCATION",
+     "text": "U.S.",
+     "score": 0.9135566353797913
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "National Institute of Health",
+     "score": 0.9461281895637512
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "clinicaltrials.gov",
+     "score": 0.14708887040615082
+    },
+    {
+     "type": "LOCATION",
+     "text": "clinicaltrials.gov",
+     "score": 0.05468527972698212
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PHS Act",
+     "score": 0.6926020383834839
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GMP",
+     "score": 0.5623166561126709
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "small business",
+     "score": 0.6119136810302734
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PDUFA",
+     "score": 0.0788060799241066
+    },
+    {
+     "type": "PERSON",
+     "text": "clinicians",
+     "score": 0.3527558147907257
+    },
+    {
+     "type": "PERSON",
+     "text": "experts",
+     "score": 0.06136603280901909
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Advisory Committee",
+     "score": 0.3387032449245453
+    },
+    {
+     "type": "PERSON",
+     "text": "human recipient",
+     "score": 0.2018185704946518
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "manufacturer",
+     "score": 0.09770013391971588
+    },
+    {
+     "type": "PERSON",
+     "text": "donors",
+     "score": 0.09432921558618546
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "tissue establishments",
+     "score": 0.3704189658164978
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "cGMP",
+     "score": 0.5357650518417358
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GTP",
+     "score": 0.5696098208427429
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "HCT/Ps",
+     "score": 0.05511058494448662
+    },
+    {
+     "type": "LOCATION",
+     "text": "clinical sites",
+     "score": 0.2002197951078415
+    }
+   ],
+   "slice_C": [
+    {
+     "type": "PERSON",
+     "text": "Rodriguez",
+     "score": 0.9703521728515625
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document",
+     "score": 0.6973095536231995
+    },
+    {
+     "type": "PERSON",
+     "text": "Bernard Gilly",
+     "score": 0.9999356269836426
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Board of Directors",
+     "score": 0.8500235676765442
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Gilly",
+     "score": 0.9990348815917969
+    },
+    {
+     "type": "PERSON",
+     "text": "Philippe Motté",
+     "score": 0.9999914169311523
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.9980931878089905
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Motté",
+     "score": 0.997855007648468
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "SVP",
+     "score": 0.3207719027996063
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Mr. Motté",
+     "score": 0.2980639338493347
+    },
+    {
+     "type": "PERSON",
+     "text": "Laurence Rodriguez",
+     "score": 0.9997602105140686
+    },
+    {
+     "type": "PERSON",
+     "text": "Michael Wyzga",
+     "score": 0.9999748468399048
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AMF",
+     "score": 0.8297502994537354
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Exceptional Compensation Directors",
+     "score": 0.19669368863105774
+    },
+    {
+     "type": "LOCATION",
+     "text": "euros",
+     "score": 0.1434284746646881
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Exceptional Compensation Directors’ Fees",
+     "score": 0.07905981689691544
+    },
+    {
+     "type": "LOCATION",
+     "text": "51,842",
+     "score": 0.701373815536499
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Wyzga",
+     "score": 0.9951483607292175
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "(6)",
+     "score": 0.0807613953948021
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "independent directors",
+     "score": 0.05284306779503822
+    },
+    {
+     "type": "LOCATION",
+     "text": "814,392",
+     "score": 0.24705588817596436
+    },
+    {
+     "type": "LOCATION",
+     "text": "648,092",
+     "score": 0.12083803117275238
+    },
+    {
+     "type": "LOCATION",
+     "text": "401,578",
+     "score": 0.07758006453514099
+    },
+    {
+     "type": "LOCATION",
+     "text": "€",
+     "score": 0.06339038908481598
+    },
+    {
+     "type": "LOCATION",
+     "text": "587,783",
+     "score": 0.056366223841905594
+    },
+    {
+     "type": "LOCATION",
+     "text": "31,578",
+     "score": 0.05444398894906044
+    },
+    {
+     "type": "LOCATION",
+     "text": "93,461",
+     "score": 0.050113189965486526
+    },
+    {
+     "type": "PERSON",
+     "text": "Mrs Laurence Rodriguez",
+     "score": 0.7882357239723206
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "our",
+     "score": 0.09819374233484268
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Chairman of the Board",
+     "score": 0.14525091648101807
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GenSight Biologics France SAS",
+     "score": 0.9837744235992432
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "the Company",
+     "score": 0.591968297958374
+    },
+    {
+     "type": "LOCATION",
+     "text": "France",
+     "score": 0.8068835139274597
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Company",
+     "score": 0.3433424234390259
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Sapin 2 Law",
+     "score": 0.843917191028595
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Shareholders’ Meeting",
+     "score": 0.06821267306804657
+    },
+    {
+     "type": "PERSON",
+     "text": "M. Motté",
+     "score": 0.9642741084098816
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "M. Motté",
+     "score": 0.2577890455722809
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document 13",
+     "score": 0.3124662935733795
+    },
+    {
+     "type": "PERSON",
+     "text": "Simone Seiter",
+     "score": 0.9999704360961914
+    },
+    {
+     "type": "PERSON",
+     "text": "Maritza McIntyre",
+     "score": 0.9999127388000488
+    },
+    {
+     "type": "PERSON",
+     "text": "Françoise de Craecker",
+     "score": 0.9999756813049316
+    },
+    {
+     "type": "PERSON",
+     "text": "Peter Goodfellow",
+     "score": 0.9999902248382568
+    },
+    {
+     "type": "PERSON",
+     "text": "Elsy Boglioli",
+     "score": 0.999767005443573
+    },
+    {
+     "type": "PERSON",
+     "text": "Cédric Moreau",
+     "score": 0.9333208799362183
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Sofinnova Partners SAS",
+     "score": 0.9763603806495667
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BSA",
+     "score": 0.7586025595664978
+    },
+    {
+     "type": "LOCATION",
+     "text": "389,832",
+     "score": 0.4842386841773987
+    },
+    {
+     "type": "LOCATION",
+     "text": "134,832",
+     "score": 0.44085994362831116
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BCE",
+     "score": 0.7754666209220886
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "us",
+     "score": 0.10016181319952011
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Committee",
+     "score": 0.05626608058810234
+    },
+    {
+     "type": "PERSON",
+     "text": "Elsy",
+     "score": 0.6212111711502075
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Elsy",
+     "score": 0.5739870071411133
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AGA",
+     "score": 0.6114693284034729
+    },
+    {
+     "type": "PERSON",
+     "text": "Natalie Mount",
+     "score": 0.9998875856399536
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BIOLOGICS",
+     "score": 0.886417806148529
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IFRS",
+     "score": 0.6396021842956543
+    }
+   ]
+  }
+ },
+ "sharp+chunk180": {
+  "checkpoint": "fastino/gliner2-multi-v1",
+  "chunk": [
+   180,
+   20
+  ],
+  "slices": {
+   "slice_A": [
+    {
+     "type": "PERSON",
+     "text": "LUMEVOQ®",
+     "score": 0.9349216818809509
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.980637788772583
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "LUMEVOQ®",
+     "score": 0.989509105682373
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document",
+     "score": 0.2563243508338928
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "REFLECT",
+     "score": 0.9369509220123291
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "our",
+     "score": 0.10421321541070938
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "EMA",
+     "score": 0.9993764758110046
+    },
+    {
+     "type": "LOCATION",
+     "text": "United States",
+     "score": 0.9989815354347229
+    },
+    {
+     "type": "LOCATION",
+     "text": "Europe",
+     "score": 0.9980042576789856
+    },
+    {
+     "type": "LOCATION",
+     "text": "other countries",
+     "score": 0.4108291566371918
+    },
+    {
+     "type": "PERSON",
+     "text": "ND4-LHON",
+     "score": 0.12584072351455688
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GenSight",
+     "score": 0.9595803022384644
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GS030",
+     "score": 0.13497532904148102
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Ophthalmology Therapy",
+     "score": 0.495028018951416
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "FDA",
+     "score": 0.9992362260818481
+    },
+    {
+     "type": "LOCATION",
+     "text": "ND4-LHON",
+     "score": 0.16807183623313904
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "DSMB",
+     "score": 0.891865074634552
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Data Safety Monitoring Board",
+     "score": 0.7357449531555176
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "CAT",
+     "score": 0.5812972187995911
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GMP",
+     "score": 0.23835836350917816
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Good Manufacturing Practice",
+     "score": 0.19874995946884155
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PPQ",
+     "score": 0.11172690242528915
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "MAA",
+     "score": 0.7884311676025391
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GS010",
+     "score": 0.05676669999957085
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RECOVER",
+     "score": 0.8868601322174072
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "MHRA",
+     "score": 0.9988013505935669
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AAP/AAC",
+     "score": 0.7642562985420227
+    },
+    {
+     "type": "LOCATION",
+     "text": "US",
+     "score": 0.9875149726867676
+    },
+    {
+     "type": "LOCATION",
+     "text": "EU",
+     "score": 0.9862770438194275
+    },
+    {
+     "type": "LOCATION",
+     "text": "European Union",
+     "score": 0.998134195804596
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "MTS",
+     "score": 0.29865187406539917
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "European Union",
+     "score": 0.11171379685401917
+    },
+    {
+     "type": "LOCATION",
+     "text": "France",
+     "score": 0.999248206615448
+    },
+    {
+     "type": "PERSON",
+     "text": "LHON",
+     "score": 0.7391029596328735
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "LHON",
+     "score": 0.35002750158309937
+    },
+    {
+     "type": "LOCATION",
+     "text": "United Kingdom",
+     "score": 0.993976354598999
+    },
+    {
+     "type": "LOCATION",
+     "text": "UK",
+     "score": 0.9821089506149292
+    },
+    {
+     "type": "LOCATION",
+     "text": "LHON",
+     "score": 0.28649821877479553
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "REVERSE",
+     "score": 0.6991066932678223
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RESCUE",
+     "score": 0.7278088331222534
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "fiber GENSIGHT BIOLOGICS",
+     "score": 0.9003547430038452
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Santhera",
+     "score": 0.8515185117721558
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "nadir",
+     "score": 0.8342466354370117
+    },
+    {
+     "type": "LOCATION",
+     "text": "nadir",
+     "score": 0.3275526762008667
+    },
+    {
+     "type": "LOCATION",
+     "text": "point",
+     "score": 0.05514327064156532
+    },
+    {
+     "type": "PERSON",
+     "text": "Santhera",
+     "score": 0.15019777417182922
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Science Translational Medicine",
+     "score": 0.9661255478858948
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Ophthalmology",
+     "score": 0.9042255282402039
+    },
+    {
+     "type": "LOCATION",
+     "text": "ETDRS",
+     "score": 0.1434435099363327
+    }
+   ],
+   "slice_B": [
+    {
+     "type": "ORGANIZATION",
+     "text": "companies",
+     "score": 0.40195131301879883
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "FDA",
+     "score": 0.999924898147583
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "NIH Office of Biotechnology Activities",
+     "score": 0.9869073629379272
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "NIH",
+     "score": 0.9965355396270752
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RAC",
+     "score": 0.8624191880226135
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "OBA",
+     "score": 0.7828371524810791
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BLA",
+     "score": 0.44871172308921814
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IND",
+     "score": 0.9878716468811035
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IRB",
+     "score": 0.9829590320587158
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GCP",
+     "score": 0.9615321159362793
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Institutional Review Board",
+     "score": 0.36388418078422546
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.9746836423873901
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IBC",
+     "score": 0.8854290843009949
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "institutional biosafety committee",
+     "score": 0.5062386989593506
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "U.S. Biological",
+     "score": 0.8019828200340271
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "data safety monitoring board",
+     "score": 0.7683538794517517
+    },
+    {
+     "type": "LOCATION",
+     "text": "U.S.",
+     "score": 0.8840129375457764
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Pediatric Research Equity Act",
+     "score": 0.18525291979312897
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PREA",
+     "score": 0.1545151323080063
+    },
+    {
+     "type": "PERSON",
+     "text": "146",
+     "score": 0.08141003549098969
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "National Institute of Health",
+     "score": 0.9604325294494629
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "clinicaltrials.gov",
+     "score": 0.3635835647583008
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PHS Act",
+     "score": 0.6368837952613831
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GMP",
+     "score": 0.3354945182800293
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PDUFA",
+     "score": 0.31251245737075806
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "cGMP",
+     "score": 0.27963557839393616
+    }
+   ],
+   "slice_C": [
+    {
+     "type": "PERSON",
+     "text": "Bernard Gilly",
+     "score": 0.9999257326126099
+    },
+    {
+     "type": "PERSON",
+     "text": "Rodriguez",
+     "score": 0.8958480954170227
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document",
+     "score": 0.8742254972457886
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Board of Directors",
+     "score": 0.6958919167518616
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Gilly",
+     "score": 0.9642592668533325
+    },
+    {
+     "type": "PERSON",
+     "text": "Gilly",
+     "score": 0.4585937559604645
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Gilly",
+     "score": 0.744911253452301
+    },
+    {
+     "type": "PERSON",
+     "text": "Philippe Motté",
+     "score": 0.9999876022338867
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.996904194355011
+    },
+    {
+     "type": "PERSON",
+     "text": "Laurence Rodriguez",
+     "score": 0.9997947812080383
+    },
+    {
+     "type": "PERSON",
+     "text": "Michael Wyzga",
+     "score": 0.999961256980896
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Motté",
+     "score": 0.959481418132782
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Mr. Motté",
+     "score": 0.5161722898483276
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "SVP",
+     "score": 0.544296145439148
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AMF",
+     "score": 0.9458134770393372
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Wyzga",
+     "score": 0.9456037878990173
+    },
+    {
+     "type": "LOCATION",
+     "text": "51,842",
+     "score": 0.10993082821369171
+    },
+    {
+     "type": "PERSON",
+     "text": "Mrs Laurence Rodriguez",
+     "score": 0.9721169471740723
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GenSight Biologics France SAS",
+     "score": 0.9498422741889954
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "the Company",
+     "score": 0.16431790590286255
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "our",
+     "score": 0.0680793896317482
+    },
+    {
+     "type": "LOCATION",
+     "text": "France",
+     "score": 0.8873988389968872
+    },
+    {
+     "type": "PERSON",
+     "text": "M. Motté",
+     "score": 0.93882817029953
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "The Company",
+     "score": 0.579387903213501
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "M. Motté",
+     "score": 0.5760751366615295
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Mr. Gilly",
+     "score": 0.4286114275455475
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Sapin 2 Law",
+     "score": 0.9217199087142944
+    },
+    {
+     "type": "PERSON",
+     "text": "Simone Seiter",
+     "score": 0.9999558925628662
+    },
+    {
+     "type": "PERSON",
+     "text": "Maritza McIntyre",
+     "score": 0.9999206066131592
+    },
+    {
+     "type": "PERSON",
+     "text": "Peter Goodfellow",
+     "score": 0.9999812841415405
+    },
+    {
+     "type": "PERSON",
+     "text": "Françoise de Craecker",
+     "score": 0.9999520778656006
+    },
+    {
+     "type": "PERSON",
+     "text": "Elsy Boglioli",
+     "score": 0.9996484518051147
+    },
+    {
+     "type": "PERSON",
+     "text": "Cédric Moreau",
+     "score": 0.9755800366401672
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Sofinnova Partners SAS",
+     "score": 0.9837884902954102
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BSA",
+     "score": 0.725557267665863
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Board",
+     "score": 0.06210317835211754
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BCE",
+     "score": 0.5669373273849487
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AGA",
+     "score": 0.2651653289794922
+    },
+    {
+     "type": "PERSON",
+     "text": "Natalie Mount",
+     "score": 0.9998844861984253
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT",
+     "score": 0.8345310091972351
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IFRS",
+     "score": 0.9057075381278992
+    }
+   ]
+  }
+ },
+ "pii-ckpt": {
+  "checkpoint": "/private/tmp/claude-501/-Users-tsardet-Sites-GITHUB---Letino-Festival-Website/32824a73-7ffe-4725-8d71-8bd90fb73979/scratchpad/pii_ckpt",
+  "chunk": [
+   250,
+   50
+  ],
+  "slices": {
+   "slice_A": [
+    {
+     "type": "PERSON",
+     "text": "patients",
+     "score": 0.8497138619422913
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "LUMEVOQ®",
+     "score": 0.996276319026947
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.9560992121696472
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "EMA",
+     "score": 0.9975447058677673
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document",
+     "score": 0.2931326925754547
+    },
+    {
+     "type": "LOCATION",
+     "text": "United States",
+     "score": 0.9992258548736572
+    },
+    {
+     "type": "LOCATION",
+     "text": "Europe",
+     "score": 0.9929159879684448
+    },
+    {
+     "type": "LOCATION",
+     "text": "countries",
+     "score": 0.7712425589561462
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GenSight",
+     "score": 0.9375603199005127
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "REFLECT",
+     "score": 0.766559898853302
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "FDA",
+     "score": 0.9933752417564392
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Ophthalmology Therapy",
+     "score": 0.24718283116817474
+    },
+    {
+     "type": "LOCATION",
+     "text": "country",
+     "score": 0.1269167959690094
+    },
+    {
+     "type": "PERSON",
+     "text": "ND4-LHON",
+     "score": 0.07910700142383575
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Data Safety Monitoring Board",
+     "score": 0.7543646693229675
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "EMA’s CAT",
+     "score": 0.23895472288131714
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GS030",
+     "score": 0.31285610795021057
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "topline",
+     "score": 0.14778664708137512
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PIONEER",
+     "score": 0.12920503318309784
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "ND4-LHON",
+     "score": 0.10641086101531982
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "DSMB",
+     "score": 0.4573761522769928
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "CAT",
+     "score": 0.8234166502952576
+    },
+    {
+     "type": "PERSON",
+     "text": "operating teams",
+     "score": 0.11950444430112839
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Good Manufacturing Practice",
+     "score": 0.24610884487628937
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "MAA",
+     "score": 0.9014582633972168
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PIONEER Phase I/II clinical trial",
+     "score": 0.27580901980400085
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "post-gene therapy administration",
+     "score": 0.2756180465221405
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GMP",
+     "score": 0.13389484584331512
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PPQ",
+     "score": 0.11469779908657074
+    },
+    {
+     "type": "PERSON",
+     "text": "subjects",
+     "score": 0.3556845486164093
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GS010",
+     "score": 0.19471783936023712
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "MHRA",
+     "score": 0.992577850818634
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "regulatory agencies",
+     "score": 0.7856537103652954
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RECOVER",
+     "score": 0.9659586548805237
+    },
+    {
+     "type": "PERSON",
+     "text": "young adults",
+     "score": 0.8042198419570923
+    },
+    {
+     "type": "PERSON",
+     "text": "teens",
+     "score": 0.7311320304870605
+    },
+    {
+     "type": "PERSON",
+     "text": "first patient",
+     "score": 0.3202938735485077
+    },
+    {
+     "type": "PERSON",
+     "text": "ND1",
+     "score": 0.060964684933423996
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "NADH dehydrogenase",
+     "score": 0.47227147221565247
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AAP/AAC",
+     "score": 0.8656551837921143
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "ethics committees",
+     "score": 0.831961989402771
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "local competent authorities",
+     "score": 0.47655385732650757
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "H2 2025",
+     "score": 0.22191423177719116
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "US",
+     "score": 0.21993288397789001
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "EU",
+     "score": 0.21045634150505066
+    },
+    {
+     "type": "LOCATION",
+     "text": "European Union",
+     "score": 0.9980410933494568
+    },
+    {
+     "type": "LOCATION",
+     "text": "US",
+     "score": 0.9810134768486023
+    },
+    {
+     "type": "LOCATION",
+     "text": "EU",
+     "score": 0.9589986801147461
+    },
+    {
+     "type": "LOCATION",
+     "text": "France",
+     "score": 0.9981951117515564
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "agency",
+     "score": 0.7254200577735901
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RESCUE",
+     "score": 0.8988379240036011
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "REVERSE",
+     "score": 0.8895503878593445
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "minutes",
+     "score": 0.12315856665372849
+    },
+    {
+     "type": "LOCATION",
+     "text": "United Kingdom",
+     "score": 0.9822768568992615
+    },
+    {
+     "type": "LOCATION",
+     "text": "UK",
+     "score": 0.9691698551177979
+    },
+    {
+     "type": "PERSON",
+     "text": "ETDRS",
+     "score": 0.07107122987508774
+    },
+    {
+     "type": "PERSON",
+     "text": "REFLECT",
+     "score": 0.06917744129896164
+    },
+    {
+     "type": "PERSON",
+     "text": "baseline",
+     "score": 0.05895838886499405
+    },
+    {
+     "type": "PERSON",
+     "text": "LUMEVOQ®",
+     "score": 0.05197986215353012
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "LHON",
+     "score": 0.7873790264129639
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Phase III clinical trials",
+     "score": 0.057973988354206085
+    },
+    {
+     "type": "PERSON",
+     "text": "Santhera",
+     "score": 0.8456097841262817
+    },
+    {
+     "type": "PERSON",
+     "text": "REVERSE subjects",
+     "score": 0.08872813731431961
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "fiber GENSIGHT BIOLOGICS",
+     "score": 0.7597746253013611
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Santhera",
+     "score": 0.23531053960323334
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "LUMEVOQ®-treated eyes",
+     "score": 0.06683234125375748
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "LUMEVOQ® -treated eyes",
+     "score": 0.06169706955552101
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document – 47 5 BUSINESS OVERVIEW",
+     "score": 0.09749316424131393
+    },
+    {
+     "type": "PERSON",
+     "text": "non-human primates",
+     "score": 0.5384243130683899
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Science Translational Medicine",
+     "score": 0.847165048122406
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Ophthalmology",
+     "score": 0.6909377574920654
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "nadir",
+     "score": 0.49984902143478394
+    },
+    {
+     "type": "LOCATION",
+     "text": "nadir",
+     "score": 0.3416677713394165
+    }
+   ],
+   "slice_B": [
+    {
+     "type": "PERSON",
+     "text": "investigators",
+     "score": 0.8354784250259399
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "companies",
+     "score": 0.704524040222168
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "FDA",
+     "score": 0.9994828701019287
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "NIH Office of Biotechnology Activities",
+     "score": 0.9763121604919434
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IND",
+     "score": 0.995159924030304
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "NIH",
+     "score": 0.9867997169494629
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "OBA",
+     "score": 0.9042263031005859
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BLA",
+     "score": 0.875167191028595
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RAC",
+     "score": 0.8723063468933105
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "standard oversight bodies",
+     "score": 0.5756659507751465
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "institutions",
+     "score": 0.3616340458393097
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "clinical trial sponsor",
+     "score": 0.0955704003572464
+    },
+    {
+     "type": "PERSON",
+     "text": "physicians",
+     "score": 0.9729868173599243
+    },
+    {
+     "type": "PERSON",
+     "text": "patients",
+     "score": 0.9442964196205139
+    },
+    {
+     "type": "PERSON",
+     "text": "healthy volunteers",
+     "score": 0.8988254070281982
+    },
+    {
+     "type": "PERSON",
+     "text": "qualified investigators",
+     "score": 0.7902782559394836
+    },
+    {
+     "type": "PERSON",
+     "text": "research subjects",
+     "score": 0.664705216884613
+    },
+    {
+     "type": "PERSON",
+     "text": "study sponsor",
+     "score": 0.11850172281265259
+    },
+    {
+     "type": "PERSON",
+     "text": "IND sponsor",
+     "score": 0.05158785730600357
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Institutional Review Board",
+     "score": 0.9777217507362366
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GCP",
+     "score": 0.9547404050827026
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IRB",
+     "score": 0.9792879223823547
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "institution",
+     "score": 0.306702584028244
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "study sponsor",
+     "score": 0.28504565358161926
+    },
+    {
+     "type": "PERSON",
+     "text": "legal representative",
+     "score": 0.8891615867614746
+    },
+    {
+     "type": "PERSON",
+     "text": "study participants",
+     "score": 0.8169553875923157
+    },
+    {
+     "type": "PERSON",
+     "text": "sponsor",
+     "score": 0.6309913992881775
+    },
+    {
+     "type": "PERSON",
+     "text": "clinical trial subject",
+     "score": 0.507575511932373
+    },
+    {
+     "type": "PERSON",
+     "text": "individuals",
+     "score": 0.4617970585823059
+    },
+    {
+     "type": "PERSON",
+     "text": "product candidate",
+     "score": 0.08495522290468216
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "institutional biosafety committee",
+     "score": 0.9809859395027161
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IBC",
+     "score": 0.9331382513046265
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "local institutional committee",
+     "score": 0.4560909569263458
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "sponsor",
+     "score": 0.7289378643035889
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Phase IV clinical trials",
+     "score": 0.11102551966905594
+    },
+    {
+     "type": "PERSON",
+     "text": "human subjects",
+     "score": 0.8385745286941528
+    },
+    {
+     "type": "PERSON",
+     "text": "subjects",
+     "score": 0.5559654831886292
+    },
+    {
+     "type": "PERSON",
+     "text": "investigator",
+     "score": 0.6234975457191467
+    },
+    {
+     "type": "PERSON",
+     "text": "sponsors",
+     "score": 0.232754185795784
+    },
+    {
+     "type": "PERSON",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.07578182965517044
+    },
+    {
+     "type": "PERSON",
+     "text": "person",
+     "score": 0.07058660686016083
+    },
+    {
+     "type": "PERSON",
+     "text": "laboratory animals",
+     "score": 0.05083738639950752
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.767376184463501
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "regulatory agencies",
+     "score": 0.6881269812583923
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document",
+     "score": 0.07880466431379318
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "data safety monitoring board",
+     "score": 0.9554998278617859
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Pediatric Research Equity Act",
+     "score": 0.7247939109802246
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "U.S. Biological Product Review",
+     "score": 0.4728263020515442
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PREA",
+     "score": 0.40338966250419617
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Phase I",
+     "score": 0.3490805923938751
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Phase II",
+     "score": 0.15754461288452148
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Phase III",
+     "score": 0.055926576256752014
+    },
+    {
+     "type": "LOCATION",
+     "text": "U.S.",
+     "score": 0.7590152025222778
+    },
+    {
+     "type": "PERSON",
+     "text": "Competitors",
+     "score": 0.4112955629825592
+    },
+    {
+     "type": "PERSON",
+     "text": "patient population",
+     "score": 0.36935955286026
+    },
+    {
+     "type": "PERSON",
+     "text": "Sponsors",
+     "score": 0.21084584295749664
+    },
+    {
+     "type": "PERSON",
+     "text": "pediatric subpopulations",
+     "score": 0.09206546097993851
+    },
+    {
+     "type": "PERSON",
+     "text": "pediatric subpopulation",
+     "score": 0.07358875870704651
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "National Institute of Health",
+     "score": 0.8888267278671265
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "clinicaltrials.gov",
+     "score": 0.687074601650238
+    },
+    {
+     "type": "LOCATION",
+     "text": "study sites",
+     "score": 0.41647765040397644
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Competitors",
+     "score": 0.2910175323486328
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PHS Act",
+     "score": 0.9190095663070679
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GMP",
+     "score": 0.30127108097076416
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Genetic Modification Clinical Research Information System",
+     "score": 0.12649531662464142
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "small business",
+     "score": 0.42987027764320374
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Prescription Drug User Fee Act",
+     "score": 0.4464377462863922
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PDUFA",
+     "score": 0.3449919819831848
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "agency",
+     "score": 0.521778404712677
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BLAs",
+     "score": 0.14163686335086823
+    },
+    {
+     "type": "PERSON",
+     "text": "clinicians",
+     "score": 0.8581835627555847
+    },
+    {
+     "type": "PERSON",
+     "text": "experts",
+     "score": 0.8393933176994324
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "advisory committee",
+     "score": 0.9586661458015442
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "panel",
+     "score": 0.41782769560813904
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "REMS",
+     "score": 0.06233764439821243
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Risk Evaluation and Mitigation Strategies",
+     "score": 0.054890818893909454
+    },
+    {
+     "type": "PERSON",
+     "text": "donors",
+     "score": 0.9215366244316101
+    },
+    {
+     "type": "PERSON",
+     "text": "human recipient",
+     "score": 0.8777615427970886
+    },
+    {
+     "type": "PERSON",
+     "text": "manufacturer",
+     "score": 0.058327268809080124
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "tissue establishments",
+     "score": 0.6870379447937012
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "manufacturer",
+     "score": 0.1425003558397293
+    },
+    {
+     "type": "LOCATION",
+     "text": "clinical sites",
+     "score": 0.9055795669555664
+    },
+    {
+     "type": "LOCATION",
+     "text": "facilities",
+     "score": 0.4947674572467804
+    },
+    {
+     "type": "PERSON",
+     "text": "applicant",
+     "score": 0.639307975769043
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "cGMP",
+     "score": 0.7615622878074646
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GTP",
+     "score": 0.5578184127807617
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "HCT/Ps",
+     "score": 0.09158315509557724
+    }
+   ],
+   "slice_C": [
+    {
+     "type": "PERSON",
+     "text": "Rodriguez",
+     "score": 0.9255069494247437
+    },
+    {
+     "type": "PERSON",
+     "text": "Bernard Gilly",
+     "score": 0.9989268183708191
+    },
+    {
+     "type": "PERSON",
+     "text": "founders",
+     "score": 0.5442146062850952
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Board of Directors",
+     "score": 0.8525188565254211
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document",
+     "score": 0.8416991829872131
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Rodriguez Chief Executive Officer",
+     "score": 0.053870249539613724
+    },
+    {
+     "type": "PERSON",
+     "text": "Philippe Motté",
+     "score": 0.9976466298103333
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Gilly",
+     "score": 0.9741132259368896
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.9918476343154907
+    },
+    {
+     "type": "PERSON",
+     "text": "Laurence Rodriguez",
+     "score": 0.9990112781524658
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Motté",
+     "score": 0.9785782694816589
+    },
+    {
+     "type": "PERSON",
+     "text": "Michael Wyzga",
+     "score": 0.9996398687362671
+    },
+    {
+     "type": "PERSON",
+     "text": "Deputy Chief Executive Officer",
+     "score": 0.08773277699947357
+    },
+    {
+     "type": "PERSON",
+     "text": "SENIOR EXECUTIVES",
+     "score": 0.2597651779651642
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "SVP",
+     "score": 0.4454769492149353
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AMF",
+     "score": 0.6928538084030151
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Exceptional Compensation Directors’ Fees",
+     "score": 0.2602264881134033
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Fixed Compensation Variable Compensation",
+     "score": 0.29399290680885315
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Wyzga",
+     "score": 0.9124822616577148
+    },
+    {
+     "type": "PERSON",
+     "text": "directors",
+     "score": 0.15336616337299347
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Chief Executive Officer",
+     "score": 0.127084419131279
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "independent directors",
+     "score": 0.08796040713787079
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Chairman of the Board",
+     "score": 0.051116228103637695
+    },
+    {
+     "type": "PERSON",
+     "text": "Chairman",
+     "score": 0.2723919749259949
+    },
+    {
+     "type": "PERSON",
+     "text": "CEO",
+     "score": 0.15030798316001892
+    },
+    {
+     "type": "PERSON",
+     "text": "Directors",
+     "score": 0.12077994644641876
+    },
+    {
+     "type": "PERSON",
+     "text": "Chief Executive Officer",
+     "score": 0.052338242530822754
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GenSight Biologics France SAS",
+     "score": 0.9719650149345398
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Company",
+     "score": 0.16566970944404602
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Sapin 2 Law",
+     "score": 0.787663459777832
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Shareholders’ Meeting",
+     "score": 0.26846975088119507
+    },
+    {
+     "type": "LOCATION",
+     "text": "France",
+     "score": 0.3761395215988159
+    },
+    {
+     "type": "PERSON",
+     "text": "Françoise de Craecker",
+     "score": 0.998749852180481
+    },
+    {
+     "type": "PERSON",
+     "text": "Elsy Boglioli",
+     "score": 0.9969814419746399
+    },
+    {
+     "type": "PERSON",
+     "text": "Simone Seiter",
+     "score": 0.999338686466217
+    },
+    {
+     "type": "PERSON",
+     "text": "Peter Goodfellow",
+     "score": 0.999489426612854
+    },
+    {
+     "type": "PERSON",
+     "text": "Maritza McIntyre",
+     "score": 0.99604731798172
+    },
+    {
+     "type": "PERSON",
+     "text": "Cédric Moreau",
+     "score": 0.9710120558738708
+    },
+    {
+     "type": "PERSON",
+     "text": "M. Motté",
+     "score": 0.9422656893730164
+    },
+    {
+     "type": "PERSON",
+     "text": "senior executives",
+     "score": 0.09347134828567505
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Sofinnova Partners SAS",
+     "score": 0.963775098323822
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Mr. Motté",
+     "score": 0.05457625538110733
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BSA",
+     "score": 0.6827051639556885
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Board",
+     "score": 0.20453618466854095
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Committee",
+     "score": 0.14374598860740662
+    },
+    {
+     "type": "PERSON",
+     "text": "DIRECTORS",
+     "score": 0.35476234555244446
+    },
+    {
+     "type": "PERSON",
+     "text": "FOUNDERS",
+     "score": 0.2225988656282425
+    },
+    {
+     "type": "PERSON",
+     "text": "BSA",
+     "score": 0.1610914021730423
+    },
+    {
+     "type": "PERSON",
+     "text": "Key Management Persons",
+     "score": 0.06444808840751648
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BCE",
+     "score": 0.5073030591011047
+    },
+    {
+     "type": "LOCATION",
+     "text": "3.32",
+     "score": 0.30613231658935547
+    },
+    {
+     "type": "PERSON",
+     "text": "Natalie Mount",
+     "score": 0.9912153482437134
+    },
+    {
+     "type": "PERSON",
+     "text": "Boglioli Françoise de Craecker",
+     "score": 0.8556509613990784
+    },
+    {
+     "type": "PERSON",
+     "text": "Elsy",
+     "score": 0.5371825098991394
+    },
+    {
+     "type": "PERSON",
+     "text": "Boglioli Françoise",
+     "score": 0.4625212848186493
+    },
+    {
+     "type": "PERSON",
+     "text": "shareholders",
+     "score": 0.09421084076166153
+    },
+    {
+     "type": "PERSON",
+     "text": "AGA",
+     "score": 0.08337772637605667
+    },
+    {
+     "type": "PERSON",
+     "text": "independent expert",
+     "score": 0.051434826105833054
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Boglioli",
+     "score": 0.41884636878967285
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AGA",
+     "score": 0.30279478430747986
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "share warrants",
+     "score": 0.08252742141485214
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IFRS",
+     "score": 0.5734062790870667
+    }
+   ]
+  }
+ },
+ "pii-ckpt+sharp": {
+  "checkpoint": "/private/tmp/claude-501/-Users-tsardet-Sites-GITHUB---Letino-Festival-Website/32824a73-7ffe-4725-8d71-8bd90fb73979/scratchpad/pii_ckpt",
+  "chunk": [
+   250,
+   50
+  ],
+  "slices": {
+   "slice_A": [
+    {
+     "type": "PERSON",
+     "text": "patients",
+     "score": 0.43332988023757935
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "LUMEVOQ®",
+     "score": 0.9981016516685486
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.9526862502098083
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "EMA",
+     "score": 0.9986810088157654
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document",
+     "score": 0.33567366003990173
+    },
+    {
+     "type": "LOCATION",
+     "text": "Europe",
+     "score": 0.9946809411048889
+    },
+    {
+     "type": "LOCATION",
+     "text": "United States",
+     "score": 0.9991822838783264
+    },
+    {
+     "type": "LOCATION",
+     "text": "countries",
+     "score": 0.27395862340927124
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GenSight",
+     "score": 0.9422447681427002
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "FDA",
+     "score": 0.9967226386070251
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Ophthalmology Therapy",
+     "score": 0.1790807843208313
+    },
+    {
+     "type": "LOCATION",
+     "text": "country",
+     "score": 0.08517087250947952
+    },
+    {
+     "type": "PERSON",
+     "text": "ND4-LHON patients",
+     "score": 0.067162424325943
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GS030",
+     "score": 0.38077592849731445
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "ND4-LHON",
+     "score": 0.1029156818985939
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "CAT",
+     "score": 0.8793199062347412
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "topline",
+     "score": 0.08663520216941833
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PIONEER",
+     "score": 0.07665922492742538
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Data Safety Monitoring Board",
+     "score": 0.8716036081314087
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "REFLECT",
+     "score": 0.5018935203552246
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "DSMB",
+     "score": 0.63054358959198
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "MAA",
+     "score": 0.9417350888252258
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Good Manufacturing Practice",
+     "score": 0.26679253578186035
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GMP",
+     "score": 0.19223612546920776
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PPQ",
+     "score": 0.11190736293792725
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PIONEER Phase I/II",
+     "score": 0.09443330764770508
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "post-gene therapy administration",
+     "score": 0.06470141559839249
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GS010",
+     "score": 0.07373613864183426
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "MHRA",
+     "score": 0.994371771812439
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "regulatory agencies",
+     "score": 0.3487738370895386
+    },
+    {
+     "type": "PERSON",
+     "text": "young adults",
+     "score": 0.4896814823150635
+    },
+    {
+     "type": "PERSON",
+     "text": "teens",
+     "score": 0.43152403831481934
+    },
+    {
+     "type": "PERSON",
+     "text": "first patient",
+     "score": 0.10622788965702057
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "NADH dehydrogenase",
+     "score": 0.39192891120910645
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AAP/AAC",
+     "score": 0.8971090912818909
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RECOVER",
+     "score": 0.8485859632492065
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "ethics committees",
+     "score": 0.7479625344276428
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "EU",
+     "score": 0.33681756258010864
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "H2 2025",
+     "score": 0.2817422151565552
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "local competent authorities",
+     "score": 0.213730126619339
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "US",
+     "score": 0.1819853037595749
+    },
+    {
+     "type": "LOCATION",
+     "text": "European Union",
+     "score": 0.9960915446281433
+    },
+    {
+     "type": "LOCATION",
+     "text": "US",
+     "score": 0.9758816957473755
+    },
+    {
+     "type": "LOCATION",
+     "text": "EU",
+     "score": 0.9296539425849915
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "MTS",
+     "score": 0.10623625665903091
+    },
+    {
+     "type": "LOCATION",
+     "text": "France",
+     "score": 0.9988333582878113
+    },
+    {
+     "type": "PERSON",
+     "text": "subjects",
+     "score": 0.08006647229194641
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "agency",
+     "score": 0.37224316596984863
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RESCUE",
+     "score": 0.7304893732070923
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "minutes",
+     "score": 0.08540333807468414
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "REVERSE",
+     "score": 0.6879963278770447
+    },
+    {
+     "type": "LOCATION",
+     "text": "United Kingdom",
+     "score": 0.9854452013969421
+    },
+    {
+     "type": "LOCATION",
+     "text": "UK",
+     "score": 0.9766042828559875
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "LHON",
+     "score": 0.6212291717529297
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "ETDRS",
+     "score": 0.10018380731344223
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Phase III",
+     "score": 0.07060517370700836
+    },
+    {
+     "type": "PERSON",
+     "text": "Santhera",
+     "score": 0.8152514696121216
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "fiber GENSIGHT BIOLOGICS",
+     "score": 0.8139922618865967
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Santhera",
+     "score": 0.5337074995040894
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "LUMEVOQ®-treated eyes",
+     "score": 0.09300906211137772
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document – 47 5 BUSINESS OVERVIEW",
+     "score": 0.10481081157922745
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "nadir",
+     "score": 0.671737015247345
+    },
+    {
+     "type": "PERSON",
+     "text": "non-human primates",
+     "score": 0.15654689073562622
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Science Translational Medicine",
+     "score": 0.8928104639053345
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Ophthalmology",
+     "score": 0.7093830704689026
+    }
+   ],
+   "slice_B": [
+    {
+     "type": "PERSON",
+     "text": "investigators",
+     "score": 0.6421183347702026
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "companies",
+     "score": 0.4294235110282898
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "FDA",
+     "score": 0.9993782043457031
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "NIH",
+     "score": 0.9945671558380127
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "NIH Office of Biotechnology Activities",
+     "score": 0.9724746346473694
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IND",
+     "score": 0.9967344403266907
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "OBA",
+     "score": 0.896904706954956
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "RAC",
+     "score": 0.8804571032524109
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BLA",
+     "score": 0.8933711647987366
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "standard oversight bodies",
+     "score": 0.36573272943496704
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Institutions",
+     "score": 0.19469723105430603
+    },
+    {
+     "type": "PERSON",
+     "text": "patients",
+     "score": 0.8911367654800415
+    },
+    {
+     "type": "PERSON",
+     "text": "physicians",
+     "score": 0.8264848589897156
+    },
+    {
+     "type": "PERSON",
+     "text": "healthy volunteers",
+     "score": 0.7335503697395325
+    },
+    {
+     "type": "PERSON",
+     "text": "qualified investigators",
+     "score": 0.5308318138122559
+    },
+    {
+     "type": "PERSON",
+     "text": "research subjects",
+     "score": 0.3156246542930603
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Institutional Review Board",
+     "score": 0.9800274968147278
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GCP",
+     "score": 0.9694005846977234
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IRB",
+     "score": 0.9792831540107727
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "institution",
+     "score": 0.17335094511508942
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "study sponsor",
+     "score": 0.0938841924071312
+    },
+    {
+     "type": "PERSON",
+     "text": "legal representative",
+     "score": 0.5026625394821167
+    },
+    {
+     "type": "PERSON",
+     "text": "study participants",
+     "score": 0.46939384937286377
+    },
+    {
+     "type": "PERSON",
+     "text": "clinical trial subject",
+     "score": 0.3800821006298065
+    },
+    {
+     "type": "PERSON",
+     "text": "sponsor",
+     "score": 0.3220517337322235
+    },
+    {
+     "type": "PERSON",
+     "text": "individuals",
+     "score": 0.1475878804922104
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "institutional biosafety committee",
+     "score": 0.9710781574249268
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IBC",
+     "score": 0.9380453824996948
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "local institutional committee",
+     "score": 0.28689339756965637
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Phase IV clinical trials",
+     "score": 0.131362184882164
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "sponsor",
+     "score": 0.1367165446281433
+    },
+    {
+     "type": "PERSON",
+     "text": "human subjects",
+     "score": 0.5473760962486267
+    },
+    {
+     "type": "PERSON",
+     "text": "subjects",
+     "score": 0.18191368877887726
+    },
+    {
+     "type": "PERSON",
+     "text": "investigator",
+     "score": 0.3069682717323303
+    },
+    {
+     "type": "PERSON",
+     "text": "sponsors",
+     "score": 0.07484028488397598
+    },
+    {
+     "type": "PERSON",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.052879754453897476
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.7874234914779663
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "regulatory agencies",
+     "score": 0.4173174798488617
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document",
+     "score": 0.12636682391166687
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "data safety monitoring board",
+     "score": 0.9358949661254883
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Pediatric Research Equity Act",
+     "score": 0.8959821462631226
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PREA",
+     "score": 0.7231436371803284
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "U.S. Biological Product Review",
+     "score": 0.4381350874900818
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Phase I",
+     "score": 0.298530638217926
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Phase II",
+     "score": 0.13387691974639893
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Phase III",
+     "score": 0.05607655271887779
+    },
+    {
+     "type": "LOCATION",
+     "text": "U.S.",
+     "score": 0.5674939155578613
+    },
+    {
+     "type": "PERSON",
+     "text": "Competitors",
+     "score": 0.1287040263414383
+    },
+    {
+     "type": "PERSON",
+     "text": "Sponsors",
+     "score": 0.0978422686457634
+    },
+    {
+     "type": "PERSON",
+     "text": "patient population",
+     "score": 0.08253592252731323
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "clinicaltrials.gov",
+     "score": 0.8866392970085144
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "National Institute of Health",
+     "score": 0.8865192532539368
+    },
+    {
+     "type": "LOCATION",
+     "text": "study sites",
+     "score": 0.18765997886657715
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PHS Act",
+     "score": 0.9711941480636597
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GMP",
+     "score": 0.4084665775299072
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Genetic Modification Clinical Research Information System",
+     "score": 0.29848137497901917
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "small business",
+     "score": 0.08420626819133759
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "PDUFA",
+     "score": 0.756959855556488
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Prescription Drug User Fee Act",
+     "score": 0.7189508676528931
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BLAs",
+     "score": 0.34435179829597473
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "agency",
+     "score": 0.12543369829654694
+    },
+    {
+     "type": "PERSON",
+     "text": "clinicians",
+     "score": 0.5214011073112488
+    },
+    {
+     "type": "PERSON",
+     "text": "experts",
+     "score": 0.5110001564025879
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "advisory committee",
+     "score": 0.809548556804657
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "panel",
+     "score": 0.22251945734024048
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "REMS",
+     "score": 0.09495345503091812
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Risk Evaluation and Mitigation Strategies",
+     "score": 0.09331286698579788
+    },
+    {
+     "type": "PERSON",
+     "text": "donors",
+     "score": 0.8461676836013794
+    },
+    {
+     "type": "PERSON",
+     "text": "human recipient",
+     "score": 0.7583317756652832
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "tissue establishments",
+     "score": 0.14170782268047333
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Good Tissue Practices",
+     "score": 0.05962321162223816
+    },
+    {
+     "type": "LOCATION",
+     "text": "clinical sites",
+     "score": 0.8538297414779663
+    },
+    {
+     "type": "LOCATION",
+     "text": "facilities",
+     "score": 0.19951722025871277
+    },
+    {
+     "type": "PERSON",
+     "text": "applicant",
+     "score": 0.3244635760784149
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "cGMP",
+     "score": 0.7057534456253052
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GTP",
+     "score": 0.5135553479194641
+    }
+   ],
+   "slice_C": [
+    {
+     "type": "PERSON",
+     "text": "Bernard Gilly",
+     "score": 0.9987127780914307
+    },
+    {
+     "type": "PERSON",
+     "text": "Rodriguez",
+     "score": 0.7879791259765625
+    },
+    {
+     "type": "PERSON",
+     "text": "founders",
+     "score": 0.18155436217784882
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Board of Directors",
+     "score": 0.7319080829620361
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Universal Registration Document",
+     "score": 0.7983356714248657
+    },
+    {
+     "type": "PERSON",
+     "text": "Philippe Motté",
+     "score": 0.9975219368934631
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Gilly",
+     "score": 0.7786006927490234
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GENSIGHT BIOLOGICS",
+     "score": 0.9947496056556702
+    },
+    {
+     "type": "PERSON",
+     "text": "Laurence Rodriguez",
+     "score": 0.9986518025398254
+    },
+    {
+     "type": "PERSON",
+     "text": "Michael Wyzga",
+     "score": 0.9994770884513855
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Motté",
+     "score": 0.9427611827850342
+    },
+    {
+     "type": "PERSON",
+     "text": "Deputy Chief Executive Officer",
+     "score": 0.0910334587097168
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "SVP",
+     "score": 0.6041975021362305
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AMF",
+     "score": 0.8378740549087524
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Fixed Compensation Variable Compensation",
+     "score": 0.17179608345031738
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Exceptional Compensation Directors’ Fees",
+     "score": 0.11627089232206345
+    },
+    {
+     "type": "PERSON",
+     "text": "Mrs Laurence Rodriguez",
+     "score": 0.9364177584648132
+    },
+    {
+     "type": "PERSON",
+     "text": "Mr. Wyzga",
+     "score": 0.9062685370445251
+    },
+    {
+     "type": "PERSON",
+     "text": "directors",
+     "score": 0.07985911518335342
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "as",
+     "score": 0.22117020189762115
+    },
+    {
+     "type": "PERSON",
+     "text": "CEO",
+     "score": 0.19494721293449402
+    },
+    {
+     "type": "PERSON",
+     "text": "Chairman",
+     "score": 0.15010058879852295
+    },
+    {
+     "type": "PERSON",
+     "text": "Directors",
+     "score": 0.08869799226522446
+    },
+    {
+     "type": "PERSON",
+     "text": "Chief Executive Officer",
+     "score": 0.06299357116222382
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "GenSight Biologics France SAS",
+     "score": 0.9819923639297485
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Sapin 2 Law",
+     "score": 0.9160603284835815
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Shareholders’ Meeting",
+     "score": 0.1405348926782608
+    },
+    {
+     "type": "LOCATION",
+     "text": "France",
+     "score": 0.6953996419906616
+    },
+    {
+     "type": "PERSON",
+     "text": "Françoise de Craecker",
+     "score": 0.998634397983551
+    },
+    {
+     "type": "PERSON",
+     "text": "Elsy Boglioli",
+     "score": 0.9964711666107178
+    },
+    {
+     "type": "PERSON",
+     "text": "Simone Seiter",
+     "score": 0.9992673993110657
+    },
+    {
+     "type": "PERSON",
+     "text": "Peter Goodfellow",
+     "score": 0.9993508458137512
+    },
+    {
+     "type": "PERSON",
+     "text": "Cédric Moreau",
+     "score": 0.9779637455940247
+    },
+    {
+     "type": "PERSON",
+     "text": "Maritza McIntyre",
+     "score": 0.9962981343269348
+    },
+    {
+     "type": "PERSON",
+     "text": "M. Motté",
+     "score": 0.9209182262420654
+    },
+    {
+     "type": "PERSON",
+     "text": "senior executives",
+     "score": 0.06050014868378639
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Sofinnova Partners SAS",
+     "score": 0.9863479137420654
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Company",
+     "score": 0.1186138167977333
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BSA",
+     "score": 0.7567437887191772
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Board",
+     "score": 0.08128552883863449
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Committee",
+     "score": 0.07718787342309952
+    },
+    {
+     "type": "PERSON",
+     "text": "DIRECTORS",
+     "score": 0.2855280637741089
+    },
+    {
+     "type": "PERSON",
+     "text": "SENIOR EXECUTIVES",
+     "score": 0.20979735255241394
+    },
+    {
+     "type": "PERSON",
+     "text": "FOUNDERS",
+     "score": 0.12333507090806961
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "BCE",
+     "score": 0.4464043378829956
+    },
+    {
+     "type": "PERSON",
+     "text": "Natalie Mount",
+     "score": 0.9918349981307983
+    },
+    {
+     "type": "PERSON",
+     "text": "Boglioli Françoise de Craecker",
+     "score": 0.8635208010673523
+    },
+    {
+     "type": "PERSON",
+     "text": "Elsy",
+     "score": 0.5927778482437134
+    },
+    {
+     "type": "PERSON",
+     "text": "Boglioli Françoise",
+     "score": 0.5479201674461365
+    },
+    {
+     "type": "PERSON",
+     "text": "BSA",
+     "score": 0.07888201624155045
+    },
+    {
+     "type": "PERSON",
+     "text": "shareholders",
+     "score": 0.07797373086214066
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "Boglioli",
+     "score": 0.20336034893989563
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "AGA",
+     "score": 0.053828757256269455
+    },
+    {
+     "type": "LOCATION",
+     "text": "3.32",
+     "score": 0.05111424997448921
+    },
+    {
+     "type": "ORGANIZATION",
+     "text": "IFRS",
+     "score": 0.7730110287666321
+    }
+   ]
+  }
+ }
+}

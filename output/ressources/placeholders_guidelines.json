@@ -1,0 +1,251 @@
+{
+  "placeholders": {
+    "PARTIE_CLIENTE": {
+      "name": "PARTIE_CLIENTE",
+      "step": 1,
+      "guideline": [
+        "Nom complet de la partie cliente avec qualité juridique  (tool read_case)",
+        "Exemple personne morale : **X**, Société Anonyme au capital de 1.000 €, immatriculée au Registre du Commerce et des Sociétés de Nanterre sous le numéro SIREN_01, dont le siège social est situé ADRESSE_01, 92813 PUTEAUX CEDEX, prise en la personne de son représentant légal domicilié en cette qualité audit siège.",
+        "Exemple personne physique : **Monsieur Y**, né le 25 juin 1902 à Neuilly-sur-Seine, de nationalité française, demeurant ADRESSE_01 75006 PARIS."
+      ],
+      "validation": {
+        "enabled": false,
+        "rules": []
+      }
+    },
+    "PARTIE_ADVERSE": {
+      "name": "PARTIE_ADVERSE",
+      "step": 2,
+      "guideline": [
+        "Nom complet de la partie adverse avec qualité juridique"
+      ],
+      "validation": {
+        "enabled": false,
+        "rules": []
+      }
+    },
+    "TYPE_DOCUMENT": {
+      "name": "TYPE_DOCUMENT",
+      "step": 3,
+      "guideline": [
+        "Type de document juridique (ex: \"CONCLUSIONS\", \"CONCLUSIONS DE DÉFENSE\", \"ASSIGNATION\")",
+        "Toujours en majuscules & avec le format markdown #TYPE_DOCUMENT#",
+        "Doit correspondre à la nature exacte de l'acte"
+      ],
+      "validation": {
+        "enabled": true,
+        "rules": [
+          {
+            "type": "contains",
+            "patterns": [
+              "#"
+            ],
+            "operator": "OR",
+            "message": "must be a heading md #"
+          }]
+      }
+    },
+    "ROLE_CLIENT": {
+      "name": "ROLE_CLIENT",
+      "step": 4,
+      "guideline": [
+        "Rôle procédural de la partie cliente selon la procédure: demandeur/défendeur, appelant / intimé",
+        "Accorder en genre",
+        "Toujours en italique et aligné à droite sous le nom de la partie"
+      ],
+      "validation": {
+        "enabled": false,
+        "rules": []
+      }
+    },
+    "ROLE_ADVERSE": {
+      "name": "ROLE_ADVERSE",
+      "step": 5,
+      "guideline": [
+        "Rôle procédural de la partie cliente selon la procédure: demandeur/défendeur, appelant / intimé",
+        "Accorder en genre",
+        "Toujours en italique et aligné à droite sous le nom de la partie"
+      ],
+      "validation": {
+        "enabled": false,
+        "rules": []
+      }
+    },
+    "FAITS": {
+      "name": "FAITS",
+      "step": 6,
+      "guideline": [
+        "1° Lire les pièces avec read_case",
+        "2° Rédiger l'exposé chronologique de toutes les pièces du dossier (toujours commencer par un paragraphe de présentation pour chaque partie et son objet social/activité, citer le KBIS en pièce si disponible)",
+        "3° Une date = 1 paragraphe détaillé explicatif avec citation pertinente de la pièce+ 1 footnote indiquant la pièce",
+        "4° Numéroter les pièces dans leur ordre d'apparition (ne faire aucune référence à l'id utilisé dans read_case)",
+        "5° Si nécessaire, introduire une division entre le ###Rappel des faits### et le ###Rappel de la procédure###",
+        "FORMAT : Style formel et présenté en faveur du client (ex : Le **3 janvier 2024**, les sociétés X et Y ont conclu un contrat aux termes duquel...)",
+        "FORMAT Pièces : Doit être synthétique : \"**Pièce n°X.** Titre et date de la pièce + nom des parties impliquées\n (ex : **Pièce n°1.** Email de la société X à la société Y en date du 1er janvier 2025)",
+        "FORMAT Citation : Toujours entre guillemets et en italique (aucune citation dans les footnotes)."
+      ],
+      "validation": {
+        "enabled": false,
+        "rules": []
+      }
+    },
+    "DISCUSSION_ASSIGNATION": {
+      "name": "DISCUSSION_ASSIGNATION",
+      "step": 7,
+      "guideline": [
+        "WORKFLOW OBLIGATOIRE:",
+        "1° Lire le #Rappel des faits avec read_doc si nécessaire",
+        "2° Lister toutes les prétentions possibles pour le client par ordre d'importance (Principale > Subsidiaire = une prétention subsidiaire ne peut pas être cumulée avec une principale. Elle est formulée au cas où le juge rejetterait la prétention principale)",
+        "3° Validation obligatoire par l'utilisateur",
+        "4° Insère un placeholder pour chaque prétention validée par l'utilisateur, par ordre d'importance",
+        "FORMAT PLACEHOLDER ATTENDU : \"##{{PRETENTION[Prétention 1 PRINCIPALE - Objet de la prétention 1 / Enumère tous les points de fait essentiels à utiliser / Enonce le ou les problèmes de droit qu'il faudra résoudre]}}##\", ##{{PRETENTION[Prétention 2 SUBSIDIAIRE - idem]}}##. ",
+        "DÉFINITION: La prétention constitue l'objet des demandes auxquelles les parties engagées dans une procédure judiciaire, sollicitent qu'elles leur soit accordées droit. Types: CONDAMNER, ORDONNER, PRONONCER, DIRE ET JUGER, DÉCLARER. ATTENTION: DONNER ACTE ou CONSTATER ne sont PAS des prétentions car ils n'emportent pas décision légale",
+        "PAS DE RECHERCHE JURIDIQUE A CE STADE"
+      ],
+      "validation": {
+        "enabled": true,
+        "rules": [
+          {
+            "type": "contains",
+            "patterns": [
+              "##{{PRETENTION"
+            ],
+            "operator": "OR",
+            "message": "Uniquement intégrer les prétentions sous ce format : \"##{{PRETENTION[Prétention 1 PRINCIPALE - Objet de la prétention 1 / Enumère tous les points de fait essentiels à utiliser / Enonce le ou les problèmes de droit qu'il faudra résoudre]}}##\""
+          }
+        ]
+      }
+    },
+    "JURIDICTION_COMPETENTE": {
+      "name": "JURIDICTION_COMPETENTE",
+      "step": 8,
+      "guideline": [
+        "1° Sur la base des prétentions formulées, détermine la juridiction compétente en citant l'article du code (tool recherche_code) et en expliquant ton choix",
+        "Rédige le nom de la juridiction compétente (ex: \"TRIBUNAL JUDICIAIRE DE PARIS\")",
+        "Toujours en majuscules",
+        "Préciser le type de juridiction (judiciaire, commerce, etc) & le lieu géographique"
+      ],
+      "validation": {
+        "enabled": false,
+        "rules": []
+      }
+    },
+    "ADRESSE_TRIBUNAL": {
+      "name": "ADRESSE-TRIBUNAL",
+      "step": 9,
+      "guideline": [
+        "Effectue une websearch pour trouver l'adresse exacte de la juridiction compétente",
+        "Ecrire cette phrase : \"Devant la JURIDICTION_COMPETENTE siégeant au Palais de Justice de ladite ville, {{ADRESSE-TRIBUNAL}}.\""
+      ],
+      "validation": {
+        "enabled": false,
+        "rules": []
+      }
+    },
+    "PLAISE": {
+      "name": "PLAISE",
+      "step": 10,
+      "guideline": [
+        "Formule introductive selon la juridiction avec le format #PLAISE#",
+        "ATTENTION : Cette formule saisit le Tribunal / Juge. Une erreur est fatale. Toujours vérifier dans le code qui doit être saisi (Compétence : Juge de la mise en état / Référé : Président / etc...)",
+        "\"Plaise au Tribunal\" pour les tribunaux",
+        "\"Plaise à la Cour\" pour les cours d'appel et Cour de cassation",
+        "Indiquer la ville & le type de Tribunal saisi : \"Plaise au Tribunal de Commerce de Paris\" ou en référé \"Plaise au président\"",
+        "Ajoute un commentaire pour citer tes sources & expliquer ton choix"
+      ],
+      "validation": {
+        "enabled": true,
+        "rules": [
+          {
+            "type": "contains",
+            "patterns": [
+              "#"
+            ],
+            "operator": "OR",
+            "message": "must be a heading md #"
+          }
+        ]
+      }
+    },
+    "PRETENTION": {
+      "name": "PRETENTION",
+      "step": 11,
+      "guideline": [
+        "Avant de commencer, arrête le flow & demande impérativement à l'utilisateur d'utiliser le mode Extended thinking",
+        "1°<Research> Identifier les arguments de droit permettant d'atteindre l'objectif de la prétention (Outils recherche_code, recherche_jurisprudence)",
+        "EXIGENCE : Citer un article & 2 jurisprudences récentes qui utilisent cet article dans un cas similaire",
+        "2° Rédiger la prétention",
+        "- ###Titre###: A titre principal, sur la demande de...",
+        "- '**En droit,**' : lister les fondements juridiques & la citation exacte (article de loi, jurisprudence - Si doute, indiquer [A VERIFIER])",
+        "- '**En l'espèce,**' : expliquer en quoi les pièces justifient l'application du droit cité (outil obligatoire: read_case). Pour chaque fait évoqué, citer la pièce + citation exacte",
+        "- '**Par conséquent, il est demandé au [JURIDICTION_COMPETENTE] de condamner/ordonner...**'",
+        "EXIGENCE : Citer chaque source utilisée dans le texte + Footnote indiquant la référence (pour la jurisprudence, toujours citer le numéro de référence + le lien hypertexte",
+        "Aucune affirmation sans une source certaine",
+        "Toujours chiffrer les préjudices et justifier le montant demandé"
+      ],
+      "validation": {
+        "enabled": true,
+        "rules": [
+          {
+            "type": "contains",
+            "patterns": [
+              "[^footnote:",
+              "[^1"
+            ],
+            "operator": "OR",
+            "message": "La discussion juridique doit contenir au moins une note de bas de page citant les sources juridiques. Formats acceptés : [^footnote: source] ou [^1"
+          }
+        ]
+      }
+    },
+    "DISPOSITIF": {
+      "name": "DISPOSITIF",
+      "step": 12,
+      "guideline": [
+        "1° Si nécessaire, relire la partie discussion",
+        "2° Rédiger dans l'ordre suivant :",
+        "- Lister tous les articles cités : \"Vu les articles [références légales],\"",
+        "- \"Il est demandé à la [JURIDICTION_COMPETENTE] de :",
+        "- Lister les demandes principales formulées dans la discussion (*DÉCLARER*, *DIRE ET JUGER*, *CONDAMNER*, etc...)",
+        "- Lister les demandes subsidiaires",
+        "- Lister les demandes accessoires : article 700 CPC, dépens, exécution provisoire",
+        "Terminer par: \"SOUS TOUTES RÉSERVES\"",
+        "Style impératif avec verbes en majuscules"
+      ],
+      "validation": {
+        "enabled": false,
+        "rules": []
+      }
+    },
+    "BORDEREAU_PIECES": {
+      "name": "BORDEREAU_PIECES",
+      "step": 13,
+      "guideline": [
+        "1° Si nécessaire, relire le rappel des faits",
+        "2° Lister les pièces du dossier en partant de la n°1",
+        "Format: \"**Pièce n°[ID].** [Type de document] du [date]\" (aucune description nécessaire)"
+      ],
+      "validation": {
+        "enabled": false,
+        "rules": []
+      }
+    },
+    "MENTIONS_OBLIGATOIRES": {
+      "step": 14,
+      "guideline": [
+        "1° Utilise read_doc pour vérifier les mentions déjà renseignées",
+        "2° Sois sûr à 100% des mentions obligatoires d'une assignation à peine de nullité (CPC) (outil recherche_code)",
+        "EXIGENCE : Intègre les citations exactes des articles obligatoires avec guillemets et italique"
+      ],
+      "validation": {
+        "enabled": false,
+        "rules": []
+      }
+    }
+  },
+  "metadata": {
+    "version": "2.0.0",
+    "last_updated": "2025-12-30",
+    "description": "Template library with per-placeholder validation rules"
+  }
+}

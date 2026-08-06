@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""Run mdeberta's encoder on the Mac GPU through CoreML instead of the CPU.
+
+The encoder is 92 % of a scan's wall clock, and a CoreML/GPU MLProgram runs it about twice
+as fast as torch on this hardware. Measured end to end, fp32 against CoreML, on the same
+machine one run after the other (see eval/BACKENDS_MESURES.md §6):
+
+    GENSIGHT_URD_2023  972 chunks   18,76 min -> 8,96 min    2,09x
+    Assignation URGOT   18 chunks   0,932 -> 0,403 s/chunk    2,31x
+    Conclusions         13 chunks   0,999 -> 0,441 s/chunk    2,27x
+
+Quality is unchanged: on both French documents the sets of detected entities are strictly
+identical to fp32 at every threshold, and on GENSIGHT 810 of the 812 entities at the
+production threshold are shared — the four differences being longer or shorter forms of
+entities the other backend also finds, which global string substitution redacts either way.
+
+NOT the Neural Engine: `CPU_AND_NE` measured **3,3x slower** than the CPU on this model.
+deberta-v3's disentangled attention is the pattern the ANE handles worst. `CPU_AND_GPU` is
+a measured choice, not a default.
+
+Everything degrades to plain torch: coremltools missing, model file missing, a load failure,
+a prediction failure, or a sequence longer than the converted shape — each falls back
+correctly. A scan must never fail because of an optimisation.
+
+Environment:
+    PIECEMAKER_COREML=0          disable entirely (default: enabled)
+    PIECEMAKER_COREML_MODEL=...  path to the .mlmodelc (default: models/ next to this file)
+"""
+import os
+import sys
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_SEQ = 832
+DEFAULT_MODEL = os.path.join(_HERE, "models", f"encoder_b1_{DEFAULT_SEQ}.mlmodelc")
+
+
+def _log(msg):
+    print(msg, file=sys.stderr, flush=True)
+
+
+class _Out:
+    """Duck-types the HF model output — gliner2 only reads `.last_hidden_state`."""
+
+    __slots__ = ("last_hidden_state",)
+
+    def __init__(self, h):
+        self.last_hidden_state = h
+
+
+class CoreMLEncoder:
+    """Callable replacement for `model.encoder.forward`.
+
+    The converted model has a fixed shape (1 x seq_len), so each sequence is padded to
+    seq_len and predicted on its own. Sequences longer than seq_len — 11 batches of 122 on
+    GENSIGHT, none on the French corpus — go to torch, which is why the original forward is
+    kept rather than replaced.
+    """
+
+    def __init__(self, mlmodel, torch_forward, seq_len):
+        import numpy as np
+        import torch
+
+        self._np = np
+        self._torch = torch
+        self.m = mlmodel
+        self.torch_forward = torch_forward
+        self.seq_len = seq_len
+        self.calls = 0
+        self.fallbacks = 0
+
+    def __call__(self, input_ids=None, attention_mask=None, **kw):
+        torch, np = self._torch, self._np
+        self.calls += 1
+
+        if input_ids is None or attention_mask is None:
+            return self.torch_forward(input_ids=input_ids, attention_mask=attention_mask, **kw)
+
+        _, s = input_ids.shape
+        if s > self.seq_len:
+            self.fallbacks += 1
+            return self.torch_forward(input_ids=input_ids, attention_mask=attention_mask, **kw)
+
+        pad = self.seq_len - s
+        ids = torch.nn.functional.pad(input_ids, (0, pad)).numpy().astype(np.int32)
+        msk = torch.nn.functional.pad(attention_mask, (0, pad)).numpy().astype(np.int32)
+
+        try:
+            rows = [self.m.predict({"input_ids": ids[i:i + 1], "attention_mask": msk[i:i + 1]})
+                    ["last_hidden_state"] for i in range(ids.shape[0])]
+        except Exception as exc:  # noqa: BLE001
+            self.fallbacks += 1
+            _log(f"CoreML predict failed ({type(exc).__name__}: {exc}) — falling back to torch")
+            return self.torch_forward(input_ids=input_ids, attention_mask=attention_mask, **kw)
+
+        h = np.concatenate(rows, axis=0)[:, :s, :].astype(np.float32)
+        return _Out(torch.from_numpy(h))
+
+
+# The worker builds one GLiNER2Recognizer per language and pre-loads a shared model, so
+# maybe_accelerate is reached three times per process. Loading the .mlmodelc three times
+# took startup from 63 s to 208 s (measured); the model is immutable, so cache it.
+_MLMODEL_CACHE = {}
+
+
+def _seq_len_from_path(path: str) -> int:
+    """The sequence length is encoded in the filename (encoder_b1_832.mlmodelc).
+
+    Guessing wrong in the safe direction matters: too small only costs speed (more torch
+    fallbacks), while too large would feed the model a shape it was not converted for.
+    """
+    base = os.path.basename(path)
+    tail = base.rsplit("_", 1)[-1].split(".")[0] if "_" in base else ""
+    return int(tail) if tail.isdigit() else DEFAULT_SEQ
+
+
+def maybe_accelerate(model) -> bool:
+    """Point `model.encoder.forward` at CoreML when it is available and wanted.
+
+    Returns True if the encoder was swapped. Never raises.
+    """
+    if os.environ.get("PIECEMAKER_COREML", "1").lower() in ("0", "false", "no"):
+        _log("CoreML disabled (PIECEMAKER_COREML=0) — torch CPU")
+        return False
+
+    path = os.environ.get("PIECEMAKER_COREML_MODEL", DEFAULT_MODEL)
+    if not os.path.exists(path):
+        _log(f"CoreML model absent ({path}) — torch CPU")
+        return False
+
+    if path in _MLMODEL_CACHE:
+        mlmodel = _MLMODEL_CACHE[path]
+        if mlmodel is None:  # a previous attempt already failed; don't retry per recognizer
+            return False
+    else:
+        try:
+            import coremltools as ct
+
+            mlmodel = ct.models.CompiledMLModel(path, compute_units=ct.ComputeUnit.CPU_AND_GPU)
+        except Exception as exc:  # noqa: BLE001
+            _MLMODEL_CACHE[path] = None
+            _log(f"CoreML unavailable ({type(exc).__name__}: {exc}) — torch CPU")
+            return False
+        _MLMODEL_CACHE[path] = mlmodel
+        _log(f"CoreML GPU encoder active (seq {_seq_len_from_path(path)}) — ~2x faster than torch CPU")
+
+    model.encoder.forward = CoreMLEncoder(mlmodel, model.encoder.forward, _seq_len_from_path(path))
+    return True

@@ -1,0 +1,7 @@
+# Modeles convertis et tenseurs captures: 3,6 Go, tous regenerables
+# (encoder_backends.py export / coreml_encoder.py convert)
+artifacts/
+
+# Cartes d entites produites par les verifications (contiennent de la PII)
+gensight_map/
+fr_maps/

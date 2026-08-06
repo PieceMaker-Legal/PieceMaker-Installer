@@ -1,0 +1,4 @@
+# Compiled CoreML encoder: 620 Mo, regenerable in ~4 min. Not a source file.
+#   cd eval && PIECEMAKER_COREML_SEQ=832 python3 coreml_encoder.py convert
+#   then compile once and copy the .mlmodelc here (see MODELE_COREML.md).
+models/

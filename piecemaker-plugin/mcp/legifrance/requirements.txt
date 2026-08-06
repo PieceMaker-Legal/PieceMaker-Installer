@@ -1,0 +1,6 @@
+# Dépendances du serveur MCP Légifrance (transport stdio local).
+# Pas de Flask / flask-cors : le port stdio n'a plus de couche HTTP.
+# Pas de spaCy / Presidio / parsing de documents : ces dépendances
+# appartiennent à l'anonymiseur, qui vit ailleurs dans PieceMaker_Claude_CLI.
+requests>=2.31.0
+python-dotenv>=1.0.0

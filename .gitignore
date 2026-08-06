@@ -1,0 +1,73 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build outputs
+dist/
+out/
+*.exe
+*.dmg
+*.AppImage
+*.deb
+*.snap
+*.zip
+
+# Electron
+.webpack/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Config files (containing sensitive data)
+config.json
+settings.json
+
+# Certificats et clés privées (NE JAMAIS COMMIT)
+*.pfx
+*.p12
+*.pem
+*.key
+*.cer
+*.crt
+piecemaker-cert.*
+certificate-config.yml
+# BMad
+.bmad-core/
+web-bundles/
+
+# Ajouts manuels
+.claude/commands/BMad
+.claude/settings.local.json
+__pycache__/
+# output/ contient les mappings d'anonymisation : des données client réelles.
+# Rien n'y est versionné hormis les modèles de documents.
+output/*
+!output/ressources/
+test_output/
+gliner2_output/
+coverage/
+.eslintcache

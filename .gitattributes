@@ -1,0 +1,19 @@
+# Force LF line endings and prevent BOM on all text files
+* text=auto eol=lf
+
+# Explicitly handle JavaScript files
+*.js text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.xml text eol=lf
+*.md text eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.dotm binary
+*.asar binary
