@@ -13,8 +13,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { log, spinner, blank } from '../lib/ui.mjs';
-import { ask, secret, select, confirm } from '../lib/prompt.mjs';
+import { log, spinner, blank, link } from '../lib/ui.mjs';
+import { ask, select, confirm, nonInteractive } from '../lib/prompt.mjs';
 import { REPO_ROOT } from '../lib/platform.mjs';
 import { writeEnv } from '../lib/state.mjs';
 
@@ -29,29 +29,22 @@ const MCP_SERVER_PATH = path.join(PLUGIN_ROOT, 'mcp', 'legifrance', 'mcp_stdio_s
 const MCP_JSON_PATH = path.join(PLUGIN_ROOT, '.mcp.json');
 
 const REGISTRATION_URL = 'https://piste.gouv.fr/registration';
-const CATALOG_URL = 'https://piste.gouv.fr/api-catalog-sandbox';
+const CATALOG_URL = 'https://piste.gouv.fr/api-catalog-all';
+const PISTE_ENV = 'production';
 
 // Mêmes points de terminaison que piecemaker-plugin/mcp/legifrance/config/settings.py
 // (dupliqués volontairement : cette étape doit rester autonome, sans importer
 // le serveur MCP).
 const ENDPOINTS = {
-  sandbox: {
-    token: 'https://sandbox-oauth.piste.gouv.fr/api/oauth/token',
-    api: 'https://sandbox-api.piste.gouv.fr/dila/legifrance/lf-engine-app/',
-  },
-  production: {
-    token: 'https://oauth.piste.gouv.fr/api/oauth/token',
-    api: 'https://api.piste.gouv.fr/dila/legifrance/lf-engine-app/',
-  },
+  token: 'https://oauth.piste.gouv.fr/api/oauth/token',
+  api: 'https://api.piste.gouv.fr/dila/legifrance/lf-engine-app/',
 };
 
 /** Obtains a token then runs one trivial search, to prove the keys actually work end to end. */
-async function validatePisteCredentials(clientId, clientSecret, env) {
-  const endpoints = ENDPOINTS[env];
-
+async function validatePisteCredentials(clientId, clientSecret) {
   let tokenRes;
   try {
-    tokenRes = await fetch(endpoints.token, {
+    tokenRes = await fetch(ENDPOINTS.token, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -62,7 +55,7 @@ async function validatePisteCredentials(clientId, clientSecret, env) {
       }),
     });
   } catch (error) {
-    return { ok: false, message: `Impossible de joindre le serveur OAuth PISTE (${endpoints.token}) : ${error.message}` };
+    return { ok: false, message: `Impossible de joindre le serveur OAuth PISTE (${ENDPOINTS.token}) : ${error.message}` };
   }
 
   if (!tokenRes.ok) {
@@ -70,7 +63,7 @@ async function validatePisteCredentials(clientId, clientSecret, env) {
     return {
       ok: false,
       message:
-        `Authentification refusée par PISTE (HTTP ${tokenRes.status}, environnement "${env}"). ` +
+        `Authentification refusée par PISTE (HTTP ${tokenRes.status}, environnement "${PISTE_ENV}"). ` +
         `Vérifiez le Client ID et le Client Secret.` +
         (detail ? ` Détail : ${detail.slice(0, 200)}` : ''),
     };
@@ -84,7 +77,7 @@ async function validatePisteCredentials(clientId, clientSecret, env) {
 
   let searchRes;
   try {
-    searchRes = await fetch(`${endpoints.api}search`, {
+    searchRes = await fetch(`${ENDPOINTS.api}search`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -107,7 +100,7 @@ async function validatePisteCredentials(clientId, clientSecret, env) {
       }),
     });
   } catch (error) {
-    return { ok: false, message: `Jeton obtenu, mais impossible de joindre l'API Légifrance (${endpoints.api}) : ${error.message}` };
+    return { ok: false, message: `Jeton obtenu, mais impossible de joindre l'API Légifrance (${ENDPOINTS.api}) : ${error.message}` };
   }
 
   if (!searchRes.ok) {
@@ -116,7 +109,7 @@ async function validatePisteCredentials(clientId, clientSecret, env) {
       ok: false,
       message:
         `Jeton obtenu, mais la requête de test a échoué (HTTP ${searchRes.status}). ` +
-        `Vérifiez que l'API "Légifrance" est bien souscrite pour cette application PISTE, dans l'environnement "${env}" ` +
+        `Vérifiez que l'API "Légifrance" est bien souscrite pour cette application PISTE, dans l'environnement "${PISTE_ENV}" ` +
         `(catalogue : ${CATALOG_URL}).` +
         (detail ? ` Détail : ${detail.slice(0, 200)}` : ''),
     };
@@ -129,10 +122,9 @@ export async function install(ctx) {
   const existingEnv = ctx.env || {};
   let clientId = existingEnv.LEGIFRANCE_CLIENT_ID || '';
   let clientSecret = existingEnv.LEGIFRANCE_CLIENT_SECRET || '';
-  let pisteEnv = (existingEnv.LEGIFRANCE_ENV || 'sandbox').toLowerCase() === 'production' ? 'production' : 'sandbox';
 
   if (clientId && clientSecret) {
-    const keep = await confirm(`Des clés PISTE sont déjà configurées (environnement : ${pisteEnv}). Les conserver ?`, true);
+    const keep = await confirm('Des clés PISTE sont déjà configurées. Les conserver pour la production ?', true);
     if (!keep) {
       clientId = '';
       clientSecret = '';
@@ -141,53 +133,69 @@ export async function install(ctx) {
 
   if (!clientId || !clientSecret) {
     log.info("Le serveur MCP Légifrance interroge l'API officielle de la DILA via la plateforme PISTE (OAuth2).");
-    log.detail(`1. Créez un compte PISTE : ${REGISTRATION_URL}`);
-    log.detail(`2. Dans votre application, souscrivez à l'API "Légifrance" et acceptez ses CGU — à faire dans les DEUX environnements (sandbox et production). Catalogue : ${CATALOG_URL}`);
-    log.detail('3. Récupérez le Client ID et le Client Secret de votre application PISTE.');
+    log.detail(`1. Créez un compte PISTE : ${link(REGISTRATION_URL, REGISTRATION_URL)}`);
+    log.detail(`2. Dans votre application, souscrivez à l'API "Légifrance" et acceptez ses CGU dans l'environnement de production. Catalogue : ${link(CATALOG_URL, CATALOG_URL)}`);
+    log.detail('3. Récupérez le Client ID et le Client Secret de production de votre application PISTE.');
     blank();
+  }
 
-    clientId = await ask('Client ID PISTE', { required: true });
-    clientSecret = await secret('Client Secret PISTE (saisie masquée)');
-    pisteEnv = await select(
-      'Environnement PISTE',
+  for (;;) {
+    if (!clientId || !clientSecret) {
+      clientId = await ask('Client ID PISTE (production)', { required: true });
+      clientSecret = await ask('Client Secret PISTE (production)', { required: true });
+    }
+
+    if (!clientId || !clientSecret) {
+      return {
+        status: 'skipped',
+        note: 'Aucune clé PISTE saisie — le serveur MCP Légifrance démarrera mais ses outils renverront une erreur tant que les clés ne sont pas configurées.',
+      };
+    }
+
+    if (ctx.dryRun) {
+      log.info('[simulation] Écriture de LEGIFRANCE_CLIENT_ID / LEGIFRANCE_CLIENT_SECRET / LEGIFRANCE_ENV=production dans .env (non exécutée).');
+      return { status: 'skipped', note: 'Mode simulation — aucune modification effectuée.' };
+    }
+
+    writeEnv({ LEGIFRANCE_CLIENT_ID: clientId, LEGIFRANCE_CLIENT_SECRET: clientSecret, LEGIFRANCE_ENV: PISTE_ENV });
+    log.ok('Clés PISTE de production enregistrées dans .env (permissions restreintes 0600).');
+
+    if (!fs.existsSync(MCP_SERVER_PATH) || !fs.existsSync(MCP_JSON_PATH)) {
+      log.warn(`Fichiers du serveur MCP Légifrance introuvables sous ${PLUGIN_ROOT} — les clés sont enregistrées mais le serveur ne pourra pas démarrer.`);
+    }
+
+    const spin = spinner("Validation des clés PISTE de production (jeton OAuth2 puis recherche de test)...");
+    const validation = await validatePisteCredentials(clientId, clientSecret);
+
+    if (validation.ok) {
+      spin.succeed('Clés PISTE valides — connexion à l\'API Légifrance de production confirmée.');
+      return { status: 'done', note: '' };
+    }
+
+    spin.fail('Échec de la validation des clés PISTE.');
+    log.error(validation.message);
+
+    if (nonInteractive) {
+      return { status: 'skipped', note: `Validation ignorée en mode non interactif. ${validation.message}` };
+    }
+
+    const action = await select(
+      'La validation a échoué. Que voulez-vous faire ?',
       [
-        { value: 'sandbox', label: 'Sandbox', hint: 'gratuit, pour tester — quotas réduits' },
-        { value: 'production', label: 'Production', hint: 'clés PISTE de production' },
+        { value: 'retry', label: 'Réessayer', hint: 'ressaisir les clés puis relancer la validation' },
+        { value: 'skip', label: 'Passer cette étape', hint: 'conserver les clés saisies sans validation' },
       ],
       { def: 0 }
     );
+
+    if (action === 'skip') {
+      return { status: 'skipped', note: `Validation ignorée à la demande de l'utilisateur. ${validation.message}` };
+    }
+
+    clientId = '';
+    clientSecret = '';
+    blank();
   }
-
-  if (!clientId || !clientSecret) {
-    return {
-      status: 'skipped',
-      note: 'Aucune clé PISTE saisie — le serveur MCP Légifrance démarrera mais ses outils renverront une erreur tant que les clés ne sont pas configurées.',
-    };
-  }
-
-  if (ctx.dryRun) {
-    log.info('[simulation] Écriture de LEGIFRANCE_CLIENT_ID / LEGIFRANCE_CLIENT_SECRET / LEGIFRANCE_ENV dans .env (non exécutée).');
-    return { status: 'skipped', note: 'Mode simulation — aucune modification effectuée.' };
-  }
-
-  writeEnv({ LEGIFRANCE_CLIENT_ID: clientId, LEGIFRANCE_CLIENT_SECRET: clientSecret, LEGIFRANCE_ENV: pisteEnv });
-  log.ok('Clés PISTE enregistrées dans .env (permissions restreintes 0600).');
-
-  if (!fs.existsSync(MCP_SERVER_PATH) || !fs.existsSync(MCP_JSON_PATH)) {
-    log.warn(`Fichiers du serveur MCP Légifrance introuvables sous ${PLUGIN_ROOT} — les clés sont enregistrées mais le serveur ne pourra pas démarrer.`);
-  }
-
-  const spin = spinner("Validation des clés PISTE (jeton OAuth2 puis recherche de test)...");
-  const validation = await validatePisteCredentials(clientId, clientSecret, pisteEnv);
-
-  if (validation.ok) {
-    spin.succeed('Clés PISTE valides — connexion à l\'API Légifrance confirmée.');
-    return { status: 'done', note: '' };
-  }
-
-  spin.fail('Échec de la validation des clés PISTE.');
-  log.error(validation.message);
-  return { status: 'partial', note: validation.message };
 }
 
 export async function check(ctx) {
@@ -202,5 +210,8 @@ export async function check(ctx) {
   if (!hasKeys) {
     return { status: 'failed', note: 'Clés PISTE absentes de .env — relancez cette étape.' };
   }
-  return { status: 'done', note: `Clés PISTE présentes (environnement : ${env.LEGIFRANCE_ENV || 'sandbox'}). Validation réseau non refaite ici — utilisez --step 07-legifrance pour retester.` };
+  if ((env.LEGIFRANCE_ENV || PISTE_ENV).toLowerCase() !== PISTE_ENV) {
+    return { status: 'failed', note: 'Les clés PISTE ne sont pas configurées pour la production — relancez cette étape.' };
+  }
+  return { status: 'done', note: 'Clés PISTE de production présentes. Validation réseau non refaite ici — utilisez --step 07-legifrance pour retester.' };
 }

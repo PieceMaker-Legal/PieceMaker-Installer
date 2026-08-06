@@ -34,13 +34,24 @@ export const c = Object.fromEntries(
   Object.keys(CODES).map((k) => [k, (text) => wrap(k, text)])
 );
 
+/** Clickable OSC 8 link on compatible terminals; plain text everywhere else. */
+export function link(label, url) {
+  const text = String(label);
+  if (!process.stdout.isTTY || process.env.TERM === 'dumb') return text;
+  const safeUrl = String(url).replace(/[\x00-\x1f\x7f]/g, '');
+  return `\x1b]8;;${safeUrl}\x1b\\${text}\x1b]8;;\x1b\\`;
+}
+
 export function columns() {
   return process.stdout.columns || 80;
 }
 
 /** Visible width, ignoring ANSI escapes. */
 export function visibleWidth(text) {
-  return String(text).replace(/\x1b\[[0-9;]*m/g, '').length;
+  return String(text)
+    .replace(/\x1b]8;;[^\x1b]*\x1b\\/g, '')
+    .replace(/\x1b\[[0-9;]*m/g, '')
+    .length;
 }
 
 export function write(text = '') {
