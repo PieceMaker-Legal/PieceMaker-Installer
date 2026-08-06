@@ -51,7 +51,7 @@ test('la liste contient les instructions, skills et agents', (t) => {
   assert.equal(files[0].exists, false);
 });
 
-test('les synthèses de facturation sont listées en lecture seule', (t) => {
+test('la facturation reste hors de la liste des skills et agents', (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
   const billingDir = path.join(data.home, 'billing', 'synthese');
@@ -60,18 +60,20 @@ test('les synthèses de facturation sont listées en lecture seule', (t) => {
   fs.writeFileSync(path.join(data.home, 'billing', '2026-08.jsonl'), `${JSON.stringify({
     timestamp: '2026-08-06T08:00:00.000Z', event: 'Stop', task_label: 'Analyse', dossier: 'Martin', duration_ms: 65000,
   })}\n`);
-  const billingFiles = listManagedFiles(data.repo, data.home).filter((file) => file.kind === 'billing');
-  const report = billingFiles.find((file) => file.path.endsWith('.md'));
-  assert.equal(report.path, 'billing/synthese/session-2026.md');
-  assert.equal(report.readonly, true);
-  assert.equal(readManagedFile(data.repo, report.path, data.home).content, '# Facturation\n');
-  assert.throws(() => saveManagedFile(data.repo, data.home, report.path, 'altéré'), /lecture seule/);
-  const ledger = billingFiles.find((file) => file.path.endsWith('.jsonl'));
-  const preview = readManagedFile(data.repo, ledger.path, data.home);
-  assert.equal(ledger.name, 'Suivi mensuel 2026-08');
+  const files = listManagedFiles(data.repo, data.home);
+  assert.deepEqual(files.filter((file) => file.kind === 'billing'), []);
+  assert.deepEqual([...new Set(files.map((file) => file.kind))], ['instructions', 'agent', 'skill']);
+  // La hiérarchie ~/.piecemaker/billing reste lisible en direct, toujours en
+  // lecture seule — elle n'est simplement plus proposée dans l'éditeur.
+  const preview = readManagedFile(data.repo, 'billing/2026-08.jsonl', data.home);
+  assert.equal(preview.readonly, true);
   assert.equal(preview.sourceType, 'billing-ledger');
   assert.match(preview.content, /# Suivi de facturation — 2026-08/);
   assert.match(preview.content, /\| Analyse \| Martin \| 1 min 5 s \|/);
+  assert.throws(
+    () => saveManagedFile(data.repo, data.home, 'billing/synthese/session-2026.md', 'altéré'),
+    /lecture seule/,
+  );
 });
 
 test('un nouveau skill reçoit un front matter et reste dans le dossier autorisé', (t) => {

@@ -178,6 +178,9 @@ function managedAbsolutePath(repoRoot, relativePath, homeDir = path.join(os.home
   return { normalized, absolute };
 }
 
+// Les instructions, skills et agents seulement : les aperçus de facturation
+// vivent dans ~/.piecemaker/billing, une hiérarchie distincte du dépôt, et ne
+// sont pas listés dans l'éditeur « Skills et agents ».
 function listManagedFiles(repoRoot, homeDir = path.join(os.homedir(), '.piecemaker'), userHome = os.homedir()) {
   const candidates = ['AGENTS.md', 'CLAUDE.md'];
   const agentsDir = path.join(repoRoot, 'piecemaker-plugin', 'agents');
@@ -194,42 +197,19 @@ function listManagedFiles(repoRoot, homeDir = path.join(os.homedir(), '.piecemak
     }
   }
 
-  const billingRoot = path.join(homeDir, 'billing');
-  if (fs.existsSync(billingRoot)) {
-    const ledgers = fs.readdirSync(billingRoot)
-      .filter((entry) => /^\d{4}-\d{2}\.jsonl$/.test(entry))
-      .sort()
-      .reverse()
-      .slice(0, 24);
-    for (const ledger of ledgers) candidates.push(`billing/${ledger}`);
-  }
-  const billingDir = path.join(billingRoot, 'synthese');
-  if (fs.existsSync(billingDir)) {
-    const reports = fs.readdirSync(billingDir)
-      .filter((entry) => entry.endsWith('.md'))
-      .map((entry) => ({ entry, time: fs.statSync(path.join(billingDir, entry)).mtimeMs }))
-      .sort((a, b) => b.time - a.time)
-      .slice(0, 30);
-    for (const report of reports) candidates.push(`billing/synthese/${report.entry}`);
-  }
-
   return candidates.map((relativePath) => {
     const { absolute, normalized } = managedAbsolutePath(repoRoot, relativePath, homeDir);
     const kind = managedFileKind(normalized);
     return {
       path: normalized,
-      name: kind === 'billing'
-        ? normalized.endsWith('.jsonl')
-          ? `Suivi mensuel ${path.basename(normalized, '.jsonl')}`
-          : path.basename(normalized, '.md')
-        : normalized === 'AGENTS.md' || normalized === 'CLAUDE.md'
+      name: normalized === 'AGENTS.md' || normalized === 'CLAUDE.md'
         ? normalized
         : path.basename(path.dirname(normalized)) === 'agents'
           ? path.basename(normalized, '.md')
           : path.basename(path.dirname(normalized)),
       kind,
       exists: fs.existsSync(absolute),
-      readonly: kind === 'billing',
+      readonly: false,
       // Visibilité côté Claude Code (voir claude-assets.cjs) — null pour les
       // fichiers qui ne sont pas des composants de plugin.
       claudeCode: claudeAssetStatus(repoRoot, userHome, normalized),

@@ -600,7 +600,7 @@ async function syncClaudeAssets() {
 }
 
 function fileGroupLabel(kind) {
-  return { instructions: 'Instructions', skill: 'Skills', agent: 'Agents', billing: 'Facturation — aperçus' }[kind] || kind;
+  return { instructions: 'Instructions', skill: 'Skills', agent: 'Agents' }[kind] || kind;
 }
 
 async function loadFiles({ selectPath = null } = {}) {
@@ -609,7 +609,7 @@ async function loadFiles({ selectPath = null } = {}) {
   try {
     const { files } = await api('/api/admin/files');
     list.textContent = '';
-    for (const kind of ['instructions', 'skill', 'agent', 'billing']) {
+    for (const kind of ['instructions', 'skill', 'agent']) {
       const groupFiles = files.filter((file) => file.kind === kind);
       if (!groupFiles.length) continue;
       const heading = document.createElement('div');

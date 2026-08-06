@@ -10,10 +10,14 @@ this repo — read it before touching `websocket-server/` or `taskpane/`.
 
 - **`admin/`** — local browser administration UI for settings, the general
   Telegram assistant, one assistant per legal-case directory, the global
-  non-LLM monitor, visual skill/agent Markdown editing, read-only billing
-  previews, and the per-case "pièces originales" frame (Markdown conversion,
-  local PII pipeline, mapping editor — see "Originals pipeline" below), served
-  at `/admin/`.
+  non-LLM monitor, visual skill/agent Markdown editing, and the per-case
+  "pièces originales" frame (Markdown conversion, local PII pipeline, mapping
+  editor — see "Originals pipeline" below), served at `/admin/`.
+  The "Skills et agents" file list is restricted to the repo's own hierarchies
+  — `CLAUDE.md`/`AGENTS.md`, `piecemaker-plugin/skills/`,
+  `piecemaker-plugin/agents/`. The billing ledgers and syntheses under
+  `~/.piecemaker/billing/` are a separate hierarchy and are no longer listed
+  there (`readManagedFile` still renders them read-only if a path is given).
   Original-document contents must never be read by this UI; original filenames
   are returned only after mapping substitution, with a generic fallback.
   Skills and agents created here are registered with Claude Code immediately —
