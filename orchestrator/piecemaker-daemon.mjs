@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Superviseur PieceMaker — daemon Telegram. PAS une session Claude, aucun LLM.
+// Daemon de surveillance Telegram PieceMaker. PAS un assistant, aucun LLM.
 // Long-poll Telegram getUpdates, exécute des commandes shell d'orchestration :
 //   /status            état des sessions déclarées (active/arrêtée)
 //   /launch <projet>   lance une session, saute si déjà active
@@ -7,10 +7,8 @@
 //   /help              aide
 // Restreint à l'allowlist de telegram-piecemaker-lord/access.json.
 //
-// Porté depuis « Lord of the bots ». Seule différence de fond : la liste des
-// projets n'est plus codée en dur, elle vient de
-// ~/.piecemaker/orchestrator/projects.json (voir config.mjs). Le superviseur
-// est livré vide, prêt à recevoir les bots déclarés à l'installation.
+// Le nom d'affichage et la racine surveillée viennent de
+// ~/.piecemaker/orchestrator/projects.json (voir config.mjs).
 //
 // Démarrage : node piecemaker-daemon.mjs
 
@@ -25,7 +23,7 @@ import {
 } from './codex-addon.mjs';
 import { checkLimits } from './limit-watch.mjs';
 import {
-  PROJECTS, STATE_DIR, isConfigured, resolveTarget, targetList, PROJECTS_FILE,
+  DAEMON_NAME, PROJECTS, STATE_DIR, isConfigured, resolveTarget, targetList, PROJECTS_FILE,
 } from './config.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -35,7 +33,7 @@ const CHANNEL_ROOT = join(homedir(), '.claude', 'channels');
 function readToken() {
   const raw = readFileSync(join(STATE_DIR, '.env'), 'utf8');
   const m = raw.match(/^TELEGRAM_BOT_TOKEN=(.+)$/m);
-  if (!m) throw new Error('token du superviseur introuvable');
+  if (!m) throw new Error('token du daemon de surveillance introuvable');
   return m[1].trim();
 }
 function readAllow() {
@@ -120,7 +118,7 @@ function statusReport() {
 // tty de contrôle d'un process (ex. "/dev/ttys007"), ou '' si mort/détaché.
 // On identifie la fenêtre Terminal par ce tty et PAS par son titre : Claude Code
 // réécrit le titre de l'onglet via des séquences d'échappement (« ✳ Claude Code… »),
-// donc le custom title « lord-<projet> » posé au launch est écrasé et ne matche plus.
+// donc le custom title « assistant-<projet> » posé au launch est écrasé et ne matche plus.
 function ttyDev(pid) {
   try {
     const t = execFileSync('ps', ['-o', 'tty=', '-p', String(pid)]).toString().trim();
@@ -212,6 +210,7 @@ async function killSession(p) {
 }
 
 const fmt = (n) => Number(n || 0).toLocaleString('en-US');
+const markdown = (value) => String(value).replace(/([_*\[\]`])/g, '\\$1');
 
 function usageLine(p) { // lit le snapshot écrit par le hook report-cycle.mjs
   try {
@@ -248,7 +247,7 @@ function setModel(p, arg) {
 
 // Construit à l'exécution : les cibles dépendent de projects.json.
 const HELP = () =>
-  '*PieceMaker* — superviseur\n' +
+  `*${markdown(DAEMON_NAME)}* — daemon de surveillance PieceMaker (sans assistant ni LLM)\n` +
   'Grammaire : `@cible /verbe [arg]`\n\n' +
   `*Cibles* : ${targetList()} \`@all\`\n` +
   '*Verbes* :\n' +
@@ -266,8 +265,8 @@ const HELP = () =>
 // Message affiché tant qu'aucun projet n'est déclaré.
 const NOT_CONFIGURED =
   '⚠️ Aucun projet déclaré.\n\n' +
-  `Ajoutez vos bots dans \`${PROJECTS_FILE}\`, ou relancez :\n` +
-  '`node installer/bin/piecemaker.mjs --step 10-superviseur`';
+  `Configurez la racine dans \`${PROJECTS_FILE}\`, ou relancez :\n` +
+  '`node installer/bin/piecemaker.mjs --step 08-telegram`';
 
 // Applique un verbe à un ou plusieurs projets. Renvoie le texte de réponse.
 async function applyVerb(verb, projects, arg) {
@@ -351,7 +350,7 @@ async function handle(chatId, text) {
 // Sans ça, aucune commande n'apparaît dans la liste proposée par Telegram.
 async function registerCommands() {
   const commands = [
-    { command: 'status',  description: 'État des 4 sessions + modèle' },
+    { command: 'status',  description: `État des ${PROJECTS.length} session(s) + modèle` },
     { command: 'usage',   description: 'Tokens utilisés' },
     { command: 'launch',  description: '@cible : lance la session' },
     { command: 'restart', description: '@cible : relance (contexte neuf)' },
@@ -365,8 +364,11 @@ async function registerCommands() {
     { command: 'help',    description: 'Aide' },
   ];
   try {
-    const r = await tg('setMyCommands', { commands });
-    console.error(`[piecemaker] setMyCommands ok=${r?.ok}`);
+    const [nameResult, commandsResult] = await Promise.all([
+      tg('setMyName', { name: DAEMON_NAME }),
+      tg('setMyCommands', { commands }),
+    ]);
+    console.error(`[piecemaker] setMyName ok=${nameResult?.ok}, setMyCommands ok=${commandsResult?.ok}`);
   } catch (e) { console.error('[piecemaker] setMyCommands', e?.message || e); }
 }
 
@@ -374,9 +376,13 @@ async function registerCommands() {
 // (report-cycle.mjs) au cas où il ne se déclenche pas quand la limite tombe.
 // Lecture seule des transcripts + un sendMessage ; dédupliqué via le ledger
 // partagé, donc pas de doublon avec le hook. Ne bloque jamais la boucle Telegram.
-const LIMIT_CHAT_ID = process.env.CHAT_ID || '5609576448';
+const LIMIT_CHAT_ID = process.env.CHAT_ID || [...readAllow()][0] || '';
 const LIMIT_POLL_MS = Number(process.env.LIMIT_POLL_MS) || 30000;
 function startLimitWatch() {
+  if (!LIMIT_CHAT_ID) {
+    console.error('[piecemaker] surveillance des limites inactive : allowlist vide');
+    return;
+  }
   const run = () => checkLimits({
     send: (_project, text) => send(LIMIT_CHAT_ID, text),
     isActive,
@@ -388,7 +394,7 @@ function startLimitWatch() {
 
 async function loop() {
   const allow = readAllow();
-  console.error(`[piecemaker] démarré. allowlist=${[...allow].join(',') || '(vide!)'}`);
+  console.error(`[piecemaker] daemon « ${DAEMON_NAME} » démarré (sans LLM). allowlist=${[...allow].join(',') || '(vide!)'}`);
   await registerCommands();
   startLimitWatch();
   let offset = 0;

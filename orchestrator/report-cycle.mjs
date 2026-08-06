@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Stop hook: à la fin de chaque cycle de réflexion Claude, envoie un rapport
-// (tokens utilisés) sur Telegram via @LordLetinoBot. AUCUN LLM, aucune session.
+// (tokens utilisés) sur Telegram via le daemon nommé par l'utilisateur.
+// AUCUN LLM, aucune session conversationnelle.
 //
 // Câblage (dans le .claude/settings.json de CHAQUE session projet) :
 //   "hooks": { "Stop": [ { "hooks": [ {

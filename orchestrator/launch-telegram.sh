@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
-# Lance une (ou toutes) session(s) Claude branchée(s) sur son bot Telegram.
+# Lance l'Assistant Bot Claude dans sa racine PieceMaker configurée.
 # Idempotent : saute une session déjà active (bot.pid vivant).
 # Ouvre un vrai Terminal macOS par session.
 #
 # Usage :
 #   ./launch-telegram.sh <projet> | all
 #
-# Appelé aussi par piecemaker-daemon.mjs sur /launch <projet>.
+# Appelé aussi par le daemon de surveillance sur /launch <projet>.
 #
-# Porté depuis « Lord of the bots » : les projets ne sont plus codés en dur,
-# ils viennent de ~/.piecemaker/orchestrator/projects.json.
+# La racine vient de ~/.piecemaker/orchestrator/projects.json.
 
 set -euo pipefail
 
@@ -19,12 +18,12 @@ PROJECTS_FILE="$HOME/.piecemaker/orchestrator/projects.json"
 
 if [ ! -f "$PROJECTS_FILE" ]; then
   echo "❌ Aucun projet déclaré : $PROJECTS_FILE est absent."
-  echo "   Lancez : node installer/bin/piecemaker.mjs --step 10-superviseur"
+  echo "   Lancez : node installer/bin/piecemaker.mjs --step 08-telegram"
   exit 1
 fi
 
 # ---- CONFIG : lue depuis projects.json ------------------------------------
-# node plutôt que jq : déjà requis par le superviseur, et jq n'est pas garanti
+# node plutôt que jq : déjà requis par le daemon, et jq n'est pas garanti
 # présent. Toujours du bash 3.2 (macOS) : pas de tableau associatif.
 _field_for() {  # $1 = projet, $2 = champ, $3 = valeur par défaut
   node -e '
@@ -88,10 +87,10 @@ launch_one() {
   # Mode de permission résolu par projet (voir permmode_for) : bypass pour trading,
   #   auto pour les autres.
   # '; exit' : à la fin de claude (normal OU tué par /stop /restart) le shell sort ;
-  #   la fermeture de fenêtre est faite explicitement par lord-daemon (killSession),
+  #   la fermeture de fenêtre est faite explicitement par le daemon (killSession),
   #   on ne dépend donc plus de la préférence Terminal « fermer si sortie propre ».
   local pmode; pmode="$(permmode_for "$p")"
-  local title="lord-$p"   # tag stable pour retrouver et fermer la fenêtre au restart
+  local title="assistant-$p"   # titre explicite : cette fenêtre contient bien l'assistant
   local cmd="cd '$wd' && TELEGRAM_STATE_DIR='$sd' claude --channels $CHANNELS --permission-mode $pmode$model_flag; exit"
 
   # Bureau (Space) cible : LORD_DESKTOP=2 par défaut. Bascule best-effort AVANT
@@ -106,10 +105,10 @@ launch_one() {
     sleep 0.3
   fi
 
-  # Ouvre la fenêtre, lui pose le titre « lord-<projet> » (cosmétique : Claude Code
+  # Ouvre la fenêtre, lui pose le titre « assistant-<projet> » (cosmétique : Claude Code
   # le réécrit ensuite via séquences d'échappement) et récupère son tty. Le tty est
   # persisté dans $sd/tty : c'est LUI, et pas le titre, qui sert à retrouver et
-  # fermer la fenêtre au /stop /restart (lord-daemon.mjs ▸ closeTerminalWindow).
+  # fermer la fenêtre au /stop /restart (piecemaker-daemon.mjs ▸ closeTerminalWindow).
   local newtty
   newtty="$(osascript 2>/dev/null <<OSA || true
 tell application "Terminal"

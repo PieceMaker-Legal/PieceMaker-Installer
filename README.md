@@ -36,14 +36,14 @@ dépendances npm puis ouvre l'installateur interactif. Variables disponibles :
 | git | — | amorçage |
 | Node.js | 18+ | installateur, serveur |
 | Python | 3.10+ | anonymisation, conversion |
-| [Claude Code](https://claude.com/claude-code) | — | hooks, plugin, Telegram, superviseur |
+| [Claude Code](https://claude.com/claude-code) | — | hooks, plugin et Assistant Bot Telegram |
 
 Prévoir une vingtaine de minutes et environ 2,5 Go : dépendances npm,
 environnement virtuel Python et modèles GLiNER2 + spaCy.
 
 ## Ce que fait l'installateur
 
-Dix étapes, exécutables ensemble ou une par une :
+Neuf étapes, exécutables ensemble ou une par une :
 
 | # | Étape | Contenu |
 | --- | --- | --- |
@@ -54,12 +54,11 @@ Dix étapes, exécutables ensemble ou une par une :
 | 05 | Certificats HTTPS | certificat local requis par Word |
 | 06 | Hooks Claude Code | garde-fous PII et suivi de facturation |
 | 07 | Serveur MCP Légifrance | clés PISTE, validées en ligne |
-| 08 | Plugin Telegram | plugin officiel et token du bot |
+| 08 | Telegram | Assistant Bot à la racine de PieceMaker + daemon de surveillance nommable, sans LLM |
 | 09 | Plugin Claude Code PieceMaker | marketplace, skills et agents |
-| 10 | Superviseur Telegram | une session Claude par projet |
 
-Rien n'est écrit hors de `~/.piecemaker/` et du dépôt ; les secrets vont dans
-`.env` en 0600.
+Les secrets Telegram vont dans `~/.claude/channels/` en 0600. Sur macOS, le
+daemon est installé comme service utilisateur dans `~/Library/LaunchAgents/`.
 
 ## Utilisation directe
 
@@ -95,7 +94,7 @@ Légifrance. Voir [`piecemaker-plugin/README.md`](./piecemaker-plugin/README.md)
 
 - `installer/` — installateur terminal (aucune dépendance)
 - `piecemaker-plugin/` — plugin Claude Code : skills, agents, hooks, MCP
-- `orchestrator/` — superviseur Telegram, une session Claude par projet
+- `orchestrator/` — Assistant Bot Telegram et daemon de surveillance sans LLM
 - `websocket-server/` — serveur HTTPS/WebSocket, API REST et scripts Python
 - `taskpane/` — volet Office du complément Word
 - `mcp-server/` — serveur MCP exposant les outils document

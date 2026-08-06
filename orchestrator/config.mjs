@@ -1,13 +1,14 @@
 /**
- * Registre des projets pilotés par le superviseur PieceMaker.
+ * Registre de la session pilotée par le daemon de surveillance PieceMaker.
  *
  * Porté depuis « Lord of the bots », où la liste des projets et leurs chemins
  * étaient codés en dur. Ici tout vient de ~/.piecemaker/orchestrator/projects.json,
- * écrit par l'installateur : le superviseur est livré vide et prêt à recevoir
- * les bots que l'utilisateur déclare.
+ * écrit par l'installateur. L'Assistant Bot PieceMaker pointe toujours vers la
+ * racine du dépôt ; le daemon reste un processus déterministe sans LLM.
  *
  * Format :
  * {
+ *   "daemonName": "PieceMaker Monitor",
  *   "projects": [
  *     { "name": "piecemaker", "workdir": "/chemin/vers/le/projet",
  *       "aliases": ["pm", "cli"], "permissionMode": "auto" }
@@ -22,23 +23,29 @@ import { join } from 'node:path';
 export const ORCHESTRATOR_DIR = join(homedir(), '.piecemaker', 'orchestrator');
 export const PROJECTS_FILE = join(ORCHESTRATOR_DIR, 'projects.json');
 
-/** State dir du superviseur lui-même — distinct des state dirs par projet. */
+/** State dir du daemon lui-même — distinct de celui de l'Assistant Bot. */
 export const STATE_DIR = join(homedir(), '.claude', 'channels', 'telegram-piecemaker-lord');
 
-function readProjects() {
-  if (!existsSync(PROJECTS_FILE)) return [];
+function readConfig() {
+  if (!existsSync(PROJECTS_FILE)) return { projects: [] };
   try {
     const parsed = JSON.parse(readFileSync(PROJECTS_FILE, 'utf8'));
-    const list = Array.isArray(parsed) ? parsed : parsed.projects;
-    if (!Array.isArray(list)) return [];
-    return list.filter((p) => p && typeof p.name === 'string' && typeof p.workdir === 'string');
+    if (Array.isArray(parsed)) return { projects: parsed };
+    return parsed && typeof parsed === 'object' ? parsed : { projects: [] };
   } catch (error) {
     console.error(`[piecemaker] projects.json illisible : ${error.message}`);
-    return [];
+    return { projects: [] };
   }
 }
 
-const ENTRIES = readProjects();
+const CONFIG = readConfig();
+const ENTRIES = Array.isArray(CONFIG.projects)
+  ? CONFIG.projects.filter((p) => p && typeof p.name === 'string' && typeof p.workdir === 'string')
+  : [];
+
+/** Nom d'affichage du daemon, modifiable en relançant l'étape Telegram. */
+export const DAEMON_NAME = String(CONFIG.daemonName || 'PieceMaker Monitor').trim().slice(0, 64)
+  || 'PieceMaker Monitor';
 
 /** Noms canoniques, dans l'ordre de déclaration. */
 export const PROJECTS = ENTRIES.map((p) => p.name);

@@ -13,9 +13,9 @@
 // On EXCLUT les 500/server_error (transitoires) et les erreurs d'auth.
 //
 // Deux modes :
-//   - importé par lord-daemon.mjs → checkLimits() appelé sur un intervalle ;
+//   - importé par piecemaker-daemon.mjs → checkLimits() appelé sur un intervalle ;
 //   - standalone `node limit-watch.mjs` → boucle autonome avec son propre envoi
-//     Telegram (même token Lord que report-cycle.mjs).
+//     Telegram (même token de surveillance que report-cycle.mjs).
 //
 // Ne signe/exécute rien, ne touche aucune session : lecture seule + un sendMessage.
 
@@ -28,7 +28,7 @@ import { join } from 'node:path';
 
 const CHANNEL_ROOT = join(homedir(), '.claude', 'channels');
 const LORD_DIR = join(CHANNEL_ROOT, 'telegram-piecemaker-lord');
-// Ledger surchargeable (tests) via LIMIT_LEDGER ; défaut = state-dir du superviseur.
+// Ledger surchargeable (tests) via LIMIT_LEDGER ; défaut = state-dir du daemon.
 const LEDGER = process.env.LIMIT_LEDGER || join(LORD_DIR, 'limit-alerts.json');
 const PROJECTS_ROOT = join(homedir(), '.claude', 'projects');
 

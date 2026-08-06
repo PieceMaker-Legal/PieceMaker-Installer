@@ -1,64 +1,66 @@
 /**
- * Step 08 — official Telegram plugin (claude-plugins-official).
+ * Étape Telegram unique.
  *
- * PieceMaker does NOT ship its own Telegram client. Anthropic's official
- * "telegram" plugin already does this (grammY-based MCP server, its own
- * pairing/allowlist system, its own /telegram:configure and /telegram:access
- * skills). This step only: (1) makes sure that plugin is installed and
- * enabled, (2) walks the user through creating a bot with @BotFather, and
- * (3) hands the token to the plugin's own configuration skill instead of
- * writing TELEGRAM_BOT_TOKEN anywhere ourselves.
+ * Deux bots Telegram, deux rôles volontairement séparés :
+ *   1. l'Assistant Bot ouvre une vraie session Claude dans la racine PieceMaker ;
+ *   2. le daemon de surveillance ne contient aucun assistant/LLM. Il observe et
+ *      pilote la session avec des commandes déterministes (/status, /restart…).
  *
- * Verified against a live `claude` 2.1.222 install:
- *   claude plugin marketplace list --json   -> [{ name: "claude-plugins-official",
- *     source: "github", repo: "anthropics/claude-plugins-official", installLocation }]
- *   claude plugin list --json               -> [{ id: "telegram@claude-plugins-official",
- *     version, scope, enabled, installPath, mcpServers }, ...]
- *   claude plugin install <plugin>          -> "Install a plugin from available marketplaces"
- * The plugin's own README (~/.claude/plugins/cache/claude-plugins-official/telegram/<version>/README.md)
- * documents /telegram:configure <token>, which "Writes TELEGRAM_BOT_TOKEN=...
- * to ~/.claude/channels/telegram/.env". Its skill frontmatter
- * (.../telegram/<version>/skills/configure/SKILL.md) declares
- * `allowed-tools: Read, Write, Bash(ls *), Bash(mkdir *)`, which Claude Code
- * grants for the skill's own execution — this is what lets us drive it
- * headlessly via `claude -p` without --dangerously-skip-permissions.
- *
- * OPEN QUESTION (see final report): whether `claude -p "/telegram:configure
- * <token>"` reliably loads plugin skills in print/non-interactive mode is
- * not documented in `claude --help` and was not executed live here (it would
- * write a real token to the operator's real ~/.claude/channels/telegram/.env).
- * The token is passed as a single argv element via node's spawnSync argv
- * array (no shell involved, so no shell-history/injection exposure), but it
- * is transiently visible in `ps` output on the local machine while the
- * subprocess runs — flagged as a known limitation, not silently accepted.
+ * Écrit :
+ *   ~/.claude/channels/telegram-piecemaker/       état de l'Assistant Bot
+ *   ~/.claude/channels/telegram-piecemaker-lord/  état du daemon (chemin historique)
+ *   ~/.piecemaker/orchestrator/projects.json      racine et nom du daemon
+ *   ~/Library/LaunchAgents/com.piecemaker.telegram-monitor.plist (macOS)
  */
 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
 import { log, spinner } from '../lib/ui.mjs';
-import { confirm, secret } from '../lib/prompt.mjs';
-import { commandExists, run, runCapture } from '../lib/platform.mjs';
-import { writeEnv } from '../lib/state.mjs';
+import { ask, confirm, secret, nonInteractive } from '../lib/prompt.mjs';
+import {
+  commandExists,
+  ensureDir,
+  HOME_DIR,
+  IS_MAC,
+  REPO_ROOT,
+  run,
+  runCapture,
+} from '../lib/platform.mjs';
 
 export const meta = {
   id: '08-telegram',
-  label: 'Plugin Telegram officiel',
-  description: "Installe le plugin Telegram officiel de Claude Code et configure le token du bot",
+  label: 'Telegram — Assistant Bot et daemon',
+  description: 'Configure le bot conversationnel PieceMaker et son daemon de surveillance séparé',
 };
 
 const OFFICIAL_MARKETPLACE = 'claude-plugins-official';
 const OFFICIAL_MARKETPLACE_REPO = 'anthropics/claude-plugins-official';
-const PLUGIN_ID = 'telegram';
-const PLUGIN_SPEC = `${PLUGIN_ID}@${OFFICIAL_MARKETPLACE}`;
-const TELEGRAM_ENV = path.join(os.homedir(), '.claude', 'channels', 'telegram', '.env');
-const CONFIGURE_TIMEOUT_MS = 90000;
+const PLUGIN_SPEC = `telegram@${OFFICIAL_MARKETPLACE}`;
 
-function parseJson(str) {
+const CHANNEL_ROOT = path.join(os.homedir(), '.claude', 'channels');
+const GENERIC_STATE_DIR = path.join(CHANNEL_ROOT, 'telegram');
+const ASSISTANT_STATE_DIR = path.join(CHANNEL_ROOT, 'telegram-piecemaker');
+// Conservé pour migrer sans casser les installations « Lord of the bots ».
+const DAEMON_STATE_DIR = path.join(CHANNEL_ROOT, 'telegram-piecemaker-lord');
+
+const ORCHESTRATOR_SRC = path.join(REPO_ROOT, 'orchestrator');
+const ORCHESTRATOR_DIR = path.join(HOME_DIR, 'orchestrator');
+const PROJECTS_FILE = path.join(ORCHESTRATOR_DIR, 'projects.json');
+const ASSISTANT_LAUNCHER = path.join(ORCHESTRATOR_SRC, 'launch-telegram.sh');
+const DAEMON_ENTRY = path.join(ORCHESTRATOR_SRC, 'piecemaker-daemon.mjs');
+
+const DAEMON_LABEL = 'com.piecemaker.telegram-monitor';
+const DAEMON_PLIST = path.join(os.homedir(), 'Library', 'LaunchAgents', `${DAEMON_LABEL}.plist`);
+const DAEMON_LOG = path.join(ORCHESTRATOR_DIR, 'telegram-monitor.log');
+const DEFAULT_DAEMON_NAME = 'PieceMaker Monitor';
+
+function parseJson(raw, fallback = null) {
   try {
-    return JSON.parse(str);
+    return JSON.parse(raw);
   } catch {
-    return null;
+    return fallback;
   }
 }
 
@@ -73,51 +75,262 @@ function listPlugins() {
 }
 
 function isTelegramInstalled(plugins) {
-  return Array.isArray(plugins) && plugins.some((p) => p.id === PLUGIN_SPEC && p.enabled !== false);
+  return Array.isArray(plugins) && plugins.some((plugin) => (
+    plugin.id === PLUGIN_SPEC && plugin.enabled !== false
+  ));
 }
 
-/** Read-only check — never writes here. The plugin's own skill owns writing this file. */
-function hasTokenConfigured() {
-  if (!fs.existsSync(TELEGRAM_ENV)) return false;
-  try {
-    return /^TELEGRAM_BOT_TOKEN=.+/m.test(fs.readFileSync(TELEGRAM_ENV, 'utf8'));
-  } catch {
-    return false;
-  }
-}
-
-async function ensureOfficialMarketplace() {
+async function ensureOfficialPlugin() {
   const marketplaces = listMarketplaces();
-  const already = Array.isArray(marketplaces) && marketplaces.some((m) => m.name === OFFICIAL_MARKETPLACE);
-  if (already) {
-    log.ok(`Marketplace officiel "${OFFICIAL_MARKETPLACE}" déjà enregistré.`);
-    return true;
-  }
+  const marketplaceInstalled = Array.isArray(marketplaces)
+    && marketplaces.some((marketplace) => marketplace.name === OFFICIAL_MARKETPLACE);
 
-  const spin = spinner(`Enregistrement du marketplace officiel (${OFFICIAL_MARKETPLACE_REPO})...`);
-  const code = await run('claude', ['plugin', 'marketplace', 'add', OFFICIAL_MARKETPLACE_REPO]);
-  if (code === 0) {
+  if (!marketplaceInstalled) {
+    const spin = spinner(`Enregistrement du marketplace officiel (${OFFICIAL_MARKETPLACE_REPO})...`);
+    const code = await run('claude', ['plugin', 'marketplace', 'add', OFFICIAL_MARKETPLACE_REPO]);
+    if (code !== 0) {
+      spin.fail('Échec de l\'enregistrement du marketplace officiel.');
+      return false;
+    }
     spin.succeed('Marketplace officiel enregistré.');
-    return true;
+  } else {
+    log.ok(`Marketplace officiel « ${OFFICIAL_MARKETPLACE} » déjà enregistré.`);
   }
-  spin.fail('Échec de l\'enregistrement du marketplace officiel.');
-  return false;
-}
 
-async function ensureTelegramPlugin() {
   const plugins = listPlugins();
   if (isTelegramInstalled(plugins)) {
-    log.ok(`Plugin "${PLUGIN_SPEC}" déjà installé et activé.`);
+    log.ok(`Plugin « ${PLUGIN_SPEC} » déjà installé et activé.`);
     return true;
   }
 
   const spin = spinner(`Installation du plugin officiel (${PLUGIN_SPEC})...`);
   const code = await run('claude', ['plugin', 'install', PLUGIN_SPEC]);
-  if (code === 0) {
-    spin.succeed('Plugin Telegram installé.');
+  if (code !== 0) {
+    spin.fail('Échec de l\'installation du plugin Telegram.');
+    return false;
+  }
+  spin.succeed('Plugin Telegram installé.');
+  return true;
+}
+
+function readToken(stateDir) {
+  try {
+    return fs.readFileSync(path.join(stateDir, '.env'), 'utf8')
+      .match(/^TELEGRAM_BOT_TOKEN=(.+)$/m)?.[1]
+      ?.trim() || '';
+  } catch {
+    return '';
+  }
+}
+
+function writeToken(stateDir, token) {
+  ensureDir(stateDir);
+  const file = path.join(stateDir, '.env');
+  fs.writeFileSync(file, `TELEGRAM_BOT_TOKEN=${token}\n`, { encoding: 'utf8', mode: 0o600 });
+  try {
+    fs.chmodSync(file, 0o600);
+  } catch {
+    // Les ACL du profil utilisateur s'appliquent sur Windows.
+  }
+}
+
+function readAccess(stateDir) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(stateDir, 'access.json'), 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeAccess(stateDir, ids, { pairing = false } = {}) {
+  ensureDir(stateDir);
+  const existing = readAccess(stateDir);
+  const access = {
+    ...existing,
+    dmPolicy: pairing && !ids.length ? 'pairing' : 'allowlist',
+    allowFrom: ids,
+    groups: existing.groups || {},
+    pending: existing.pending || {},
+  };
+  fs.writeFileSync(
+    path.join(stateDir, 'access.json'),
+    `${JSON.stringify(access, null, 2)}\n`,
+    'utf8',
+  );
+}
+
+function configuredIds() {
+  for (const stateDir of [ASSISTANT_STATE_DIR, DAEMON_STATE_DIR, GENERIC_STATE_DIR]) {
+    const ids = readAccess(stateDir).allowFrom;
+    if (Array.isArray(ids) && ids.length) return ids.map(String);
+  }
+  return [];
+}
+
+function readOrchestratorConfig() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(PROJECTS_FILE, 'utf8'));
+    if (Array.isArray(parsed)) return { projects: parsed };
+    if (parsed && typeof parsed === 'object') return parsed;
+  } catch {
+    // Une configuration saine sera créée ci-dessous.
+  }
+  return { projects: [] };
+}
+
+function normalizeDaemonName(value) {
+  return String(value || DEFAULT_DAEMON_NAME).replace(/[\r\n]+/g, ' ').trim().slice(0, 64)
+    || DEFAULT_DAEMON_NAME;
+}
+
+function writeOrchestratorConfig(daemonName) {
+  const config = readOrchestratorConfig();
+  const projects = Array.isArray(config.projects) ? [...config.projects] : [];
+  const index = projects.findIndex((project) => project?.name === 'piecemaker');
+  const existing = index >= 0 ? projects[index] : {};
+  const piecemaker = {
+    ...existing,
+    name: 'piecemaker',
+    workdir: REPO_ROOT,
+    aliases: [...new Set([...(existing.aliases || []), 'pm'])],
+    permissionMode: existing.permissionMode || 'auto',
+  };
+
+  if (index >= 0) projects[index] = piecemaker;
+  else projects.unshift(piecemaker);
+
+  ensureDir(ORCHESTRATOR_DIR);
+  fs.writeFileSync(
+    PROJECTS_FILE,
+    `${JSON.stringify({ ...config, daemonName, projects }, null, 2)}\n`,
+    'utf8',
+  );
+  return projects;
+}
+
+function xml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&apos;');
+}
+
+function daemonPlist() {
+  const values = [process.execPath, DAEMON_ENTRY].map((value) => (
+    `      <string>${xml(value)}</string>`
+  )).join('\n');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>${DAEMON_LABEL}</string>
+    <key>ProgramArguments</key>
+    <array>
+${values}
+    </array>
+    <key>WorkingDirectory</key>
+    <string>${xml(REPO_ROOT)}</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>${xml(DAEMON_LOG)}</string>
+    <key>StandardErrorPath</key>
+    <string>${xml(DAEMON_LOG)}</string>
+  </dict>
+</plist>
+`;
+}
+
+function installDaemonService() {
+  if (!IS_MAC || typeof process.getuid !== 'function') return false;
+
+  ensureDir(path.dirname(DAEMON_PLIST));
+  ensureDir(ORCHESTRATOR_DIR);
+  fs.writeFileSync(DAEMON_PLIST, daemonPlist(), 'utf8');
+
+  const domain = `gui/${process.getuid()}`;
+  // bootout échoue normalement lors de la première installation.
+  runCapture('launchctl', ['bootout', domain, DAEMON_PLIST]);
+  const bootstrap = runCapture('launchctl', ['bootstrap', domain, DAEMON_PLIST]);
+  if (bootstrap.code !== 0) {
+    log.warn(`Le service n'a pas démarré : ${bootstrap.stderr || 'erreur launchctl'}`);
+    return false;
+  }
+  const start = runCapture('launchctl', ['kickstart', '-k', `${domain}/${DAEMON_LABEL}`]);
+  if (start.code !== 0) {
+    log.warn(`Le daemon est installé mais n'a pas démarré : ${start.stderr || 'erreur launchctl'}`);
+    return false;
+  }
+  return true;
+}
+
+function daemonServiceRunning() {
+  if (!IS_MAC || typeof process.getuid !== 'function') return false;
+  return runCapture('launchctl', ['print', `gui/${process.getuid()}/${DAEMON_LABEL}`]).code === 0;
+}
+
+async function configureToken({ title, purpose, stateDir, migrateFrom = null }) {
+  log.step(title);
+  log.detail(purpose);
+
+  let token = readToken(stateDir);
+  if (!token && migrateFrom) {
+    const previous = readToken(migrateFrom);
+    if (previous && await confirm('Réutiliser le bot Telegram déjà configuré ?', true)) {
+      writeToken(stateDir, previous);
+      token = previous;
+      log.ok('Token existant réutilisé dans la configuration dédiée PieceMaker.');
+    }
+  }
+
+  if (token) {
+    log.ok('Token déjà configuré.');
+    if (!nonInteractive && await confirm('Remplacer ce token ?', false)) {
+      const replacement = await secret(`Nouveau token — ${title}`);
+      if (replacement) {
+        writeToken(stateDir, replacement);
+        token = replacement;
+      }
+    }
+    return token;
+  }
+
+  if (nonInteractive) return '';
+  const value = await secret(`Token BotFather — ${title}`);
+  if (value) {
+    writeToken(stateDir, value);
+    log.ok(`Token enregistré en 0600 dans ${stateDir}`);
+  }
+  return value;
+}
+
+async function launchAssistant() {
+  if (!IS_MAC) {
+    log.info('Démarrage manuel de l’Assistant Bot :');
+    log.detail(`cd "${REPO_ROOT}" && TELEGRAM_STATE_DIR="${ASSISTANT_STATE_DIR}" claude --channels plugin:${PLUGIN_SPEC}`);
     return true;
   }
-  spin.fail('Échec de l\'installation du plugin Telegram.');
+
+  if (!await confirm('Ouvrir maintenant la session de l’Assistant Bot à la racine de PieceMaker ?', true)) {
+    log.info(`Lancement reporté : /bin/bash ${ASSISTANT_LAUNCHER} piecemaker`);
+    return true;
+  }
+
+  const result = runCapture('/bin/bash', [ASSISTANT_LAUNCHER, 'piecemaker'], { timeout: 30000 });
+  if (result.code === 0) {
+    log.ok(result.stdout || `Assistant Bot ouvert dans ${REPO_ROOT}`);
+    return true;
+  }
+  log.warn(result.stderr || result.stdout || 'Impossible d’ouvrir la session de l’Assistant Bot.');
   return false;
 }
 
@@ -125,93 +338,128 @@ export async function install(ctx) {
   if (!commandExists('claude', ['--version'])) {
     return {
       status: 'skipped',
-      note: 'CLI "claude" introuvable — installez Claude Code puis relancez cette étape.',
+      note: 'CLI « claude » introuvable — installez Claude Code puis relancez cette étape.',
     };
+  }
+  if (!fs.existsSync(ORCHESTRATOR_SRC)) {
+    return { status: 'failed', note: `Dossier orchestrator/ introuvable : ${ORCHESTRATOR_SRC}` };
   }
 
   if (ctx.dryRun) {
-    log.info(`[simulation] claude plugin marketplace add ${OFFICIAL_MARKETPLACE_REPO}`);
-    log.info(`[simulation] claude plugin install ${PLUGIN_SPEC}`);
-    log.info('[simulation] claude -p "/telegram:configure ***" (token masqué)');
+    log.info(`[simulation] Installation de ${PLUGIN_SPEC}`);
+    log.info(`[simulation] Assistant Bot dans ${ASSISTANT_STATE_DIR}, session ouverte dans ${REPO_ROOT}`);
+    log.info(`[simulation] Daemon de surveillance nommé et configuré dans ${DAEMON_STATE_DIR}`);
+    if (IS_MAC) log.info(`[simulation] Service utilisateur ${DAEMON_PLIST}`);
     return { status: 'skipped', note: 'Mode simulation — aucune modification effectuée.' };
   }
 
-  const marketplaceOk = await ensureOfficialMarketplace();
-  if (!marketplaceOk) {
+  if (!await ensureOfficialPlugin()) {
     return {
       status: 'failed',
-      note: `Impossible d'accéder au marketplace officiel Claude Code (${OFFICIAL_MARKETPLACE_REPO}). Vérifiez la connexion réseau.`,
+      note: `Impossible d'installer le plugin officiel « ${PLUGIN_SPEC} ».
+Vérifiez la connexion réseau et le marketplace Claude Code.`,
     };
   }
 
-  const pluginOk = await ensureTelegramPlugin();
-  if (!pluginOk) {
-    return {
-      status: 'failed',
-      note: `Échec de "claude plugin install ${PLUGIN_SPEC}" — le marketplace officiel est peut-être indisponible.`,
-    };
+  log.step('Deux bots Telegram distincts sont nécessaires');
+  log.detail('Dans @BotFather, utilisez /newbot deux fois : un bot conversationnel et un bot de surveillance.');
+  log.detail('Leurs tokens doivent être différents : le daemon ne dialogue jamais avec Claude et ne consomme aucun LLM.');
+
+  const assistantToken = await configureToken({
+    title: '1/2 — Assistant Bot conversationnel',
+    purpose: `Sa session Claude est toujours ouverte à la racine de PieceMaker : ${REPO_ROOT}`,
+    stateDir: ASSISTANT_STATE_DIR,
+    migrateFrom: GENERIC_STATE_DIR,
+  });
+
+  const existingConfig = readOrchestratorConfig();
+  const currentName = normalizeDaemonName(existingConfig.daemonName);
+  const daemonName = nonInteractive
+    ? currentName
+    : normalizeDaemonName(await ask('Nom du daemon de surveillance', { def: currentName }));
+
+  const daemonToken = await configureToken({
+    title: `2/2 — ${daemonName}, daemon de surveillance`,
+    purpose: 'Outil déterministe sans assistant : état, usage, lancement, arrêt et redémarrage de la session.',
+    stateDir: DAEMON_STATE_DIR,
+  });
+
+  const previousIds = configuredIds();
+  const idsRaw = nonInteractive
+    ? previousIds.join(', ')
+    : await ask('Identifiants Telegram autorisés pour les deux bots', { def: previousIds.join(', ') });
+  const ids = [...new Set(idsRaw.split(',').map((id) => id.trim()).filter(Boolean))];
+
+  if (assistantToken) writeAccess(ASSISTANT_STATE_DIR, ids, { pairing: true });
+  if (daemonToken) writeAccess(DAEMON_STATE_DIR, ids);
+  if (ids.length) log.ok(`Allowlist commune enregistrée : ${ids.join(', ')}`);
+  else log.warn('Aucun identifiant autorisé : le daemon refusera tous les messages.');
+
+  const projects = writeOrchestratorConfig(daemonName);
+  log.ok(`Assistant « piecemaker » fixé à la racine : ${REPO_ROOT}`);
+
+  const issues = [];
+  if (!assistantToken) issues.push('token de l’Assistant Bot absent');
+  if (!daemonToken) issues.push('token du daemon absent');
+  if (assistantToken && daemonToken && assistantToken === daemonToken) {
+    issues.push('les deux bots utilisent le même token');
+    log.warn('Un token Telegram ne peut pas être interrogé simultanément par l’Assistant Bot et le daemon.');
+  }
+  if (!ids.length) issues.push('allowlist du daemon vide');
+
+  let daemonStarted = false;
+  if (daemonToken && ids.length && assistantToken !== daemonToken) {
+    if (IS_MAC) {
+      daemonStarted = installDaemonService();
+      if (daemonStarted) log.ok(`Daemon « ${daemonName} » installé et démarré (sans LLM).`);
+      else issues.push('service du daemon non démarré');
+    } else {
+      log.info(`Démarrage manuel du daemon : node ${DAEMON_ENTRY}`);
+    }
   }
 
-  if (hasTokenConfigured()) {
-    log.ok('Un token Telegram est déjà configuré (~/.claude/channels/telegram/.env).');
-    return { status: 'done', note: '' };
-  }
+  let assistantStarted = true;
+  if (assistantToken) assistantStarted = await launchAssistant();
+  if (!assistantStarted) issues.push('session de l’Assistant Bot non ouverte');
 
-  log.step('Configuration du bot Telegram');
-  log.detail('1. Ouvrez une conversation avec @BotFather sur Telegram et envoyez /newbot.');
-  log.detail('2. Choisissez un nom d\'affichage, puis un identifiant se terminant par "bot".');
-  log.detail('3. BotFather répond avec un token du type 123456789:AAHfiqksKZ8... — copiez-le en entier.');
-  log.detail('Ce token est transmis directement au plugin officiel (/telegram:configure) : il n\'est jamais écrit ailleurs par cet installeur.');
-
-  const wantConfigure = await confirm('Configurer le bot Telegram maintenant ?', true);
-  if (!wantConfigure) {
-    return {
-      status: 'partial',
-      note: `Plugin installé, configuration reportée. Lancez "claude" puis /telegram:configure <token> (BotFather) dans une session interactive.`,
-    };
-  }
-
-  const token = await secret('Token du bot (@BotFather)');
-  if (!token) {
-    return {
-      status: 'partial',
-      note: 'Aucun token saisi. Plugin installé ; configurez plus tard avec /telegram:configure <token>.',
-    };
-  }
-
-  const spin = spinner('Transmission du token au plugin Telegram officiel (/telegram:configure)...');
-  const result = runCapture('claude', ['-p', `/telegram:configure ${token}`], { timeout: CONFIGURE_TIMEOUT_MS });
-
-  if (result.code === 0 && hasTokenConfigured()) {
-    spin.succeed('Token transmis au plugin Telegram officiel.');
-    log.info('Verrouillez l\'accès : dans une session "claude", lancez /telegram:access policy allowlist une fois votre propre identifiant appairé.');
-    log.info(`Pour recevoir les messages : relancez avec "claude --channels plugin:${PLUGIN_SPEC}".`);
-    return { status: 'done', note: '' };
-  }
-
-  spin.fail('Échec de la configuration automatique du plugin Telegram.');
-  log.warn('Le token n\'a pas pu être transmis via "claude -p" (voir ci-dessous pour le faire vous-même).');
-  if (result.stderr) log.detail(result.stderr.split('\n')[0]);
-
-  // Fallback: keep the token for the user in the app's own .env — this is
-  // NOT read by the telegram plugin, it is purely so the token is not lost.
-  writeEnv({ TELEGRAM_BOT_TOKEN: token });
+  if (issues.length) return { status: 'partial', note: issues.join(' ; ') };
   return {
-    status: 'partial',
-    note: `Token sauvegardé dans le .env du projet (non lu par le plugin Telegram). Configurez-le vous-même : lancez "claude" puis /telegram:configure <token>.`,
+    status: 'done',
+    note: `${projects.length} projet(s) ; Assistant Bot à la racine ; daemon « ${daemonName} »${daemonStarted ? ' actif' : ' configuré'}.`,
   };
 }
 
-export async function check(ctx) {
+export async function check() {
   if (!commandExists('claude', ['--version'])) {
-    return { status: 'skipped', note: 'CLI "claude" introuvable.' };
+    return { status: 'skipped', note: 'CLI « claude » introuvable.' };
   }
 
-  const plugins = listPlugins();
-  const pluginInstalled = isTelegramInstalled(plugins);
-  const tokenConfigured = hasTokenConfigured();
+  const syntax = runCapture(process.execPath, ['--check', DAEMON_ENTRY]);
+  if (syntax.code !== 0) {
+    return { status: 'failed', note: `Le daemon ne compile pas : ${syntax.stderr.split('\n')[0]}` };
+  }
 
-  if (pluginInstalled && tokenConfigured) return { status: 'done', note: '' };
-  if (!pluginInstalled) return { status: 'failed', note: `Plugin "${PLUGIN_SPEC}" non installé.` };
-  return { status: 'partial', note: 'Plugin installé, token Telegram non configuré.' };
+  const pluginInstalled = isTelegramInstalled(listPlugins());
+  const assistantToken = readToken(ASSISTANT_STATE_DIR);
+  const daemonToken = readToken(DAEMON_STATE_DIR);
+  const config = readOrchestratorConfig();
+  const rootConfigured = Array.isArray(config.projects) && config.projects.some((project) => (
+    project?.name === 'piecemaker'
+      && typeof project.workdir === 'string'
+      && path.resolve(project.workdir) === REPO_ROOT
+  ));
+  const ids = readAccess(DAEMON_STATE_DIR).allowFrom || [];
+  const serviceReady = !IS_MAC || daemonServiceRunning();
+
+  const missing = [];
+  if (!pluginInstalled) missing.push('plugin Telegram absent');
+  if (!assistantToken) missing.push('Assistant Bot non configuré');
+  if (!daemonToken) missing.push('daemon non configuré');
+  if (assistantToken && daemonToken && assistantToken === daemonToken) missing.push('tokens identiques');
+  if (!rootConfigured) missing.push('racine PieceMaker non configurée');
+  if (!ids.length) missing.push('allowlist du daemon vide');
+  if (!serviceReady) missing.push('service du daemon arrêté');
+
+  if (missing.length) return { status: 'partial', note: missing.join(' ; ') };
+  return { status: 'done', note: `Assistant Bot + daemon « ${normalizeDaemonName(config.daemonName)} »` };
 }
