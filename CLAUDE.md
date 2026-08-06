@@ -10,8 +10,10 @@ this repo — read it before touching `websocket-server/` or `taskpane/`.
 
 - **`admin/`** — local browser administration UI for settings, the general
   Telegram assistant, one assistant per legal-case directory, the global
-  non-LLM monitor, visual skill/agent Markdown editing, and read-only billing
-  previews, served at `/admin/`.
+  non-LLM monitor, visual skill/agent Markdown editing, read-only billing
+  previews, and the per-case "pièces originales" frame (Markdown conversion,
+  local PII pipeline, mapping editor — see "Originals pipeline" below), served
+  at `/admin/`.
   Original-document contents must never be read by this UI; original filenames
   are returned only after mapping substitution, with a generic fallback.
   Skills and agents created here are registered with Claude Code immediately —
@@ -159,6 +161,30 @@ always sorted **longest-entity-first** (`byDescendingEntityLength`, around
 line 116) before substitution, so a short name that is a substring of a
 longer one (e.g. "Dupont" inside "Jean Dupont-Martin") never gets replaced
 first and corrupt the longer match.
+
+## Originals pipeline (admin)
+
+`websocket-server/originals-pipeline.cjs` drives the per-case "pièces
+originales" frame in `/admin/`. It is the *local* pipeline (`smart_converter.py`
+then `presidio-gliner.py`), never the remote bulk anonymisation job.
+
+- `GET /api/admin/repository` decorates every folder with its non-Markdown
+  originals (each carrying `converted` / `scanned`, the two badges the UI
+  shows) and a `mapping` summary (`{ exists, name, entries }` — counts only,
+  never entity contents).
+- `POST /api/admin/originals/pipeline` (`action: 'convert' | 'anonymize'`)
+  starts a background job scoped to one case and returns its id;
+  `GET/DELETE /api/admin/originals/job?id=` polls or cancels it. Both scripts
+  run with the legal-case directory as their output dir, so the `.md` and
+  `*_sensitive_map.json` land next to the files already versioned. Only
+  `PROGRESS:` lines and a short stderr tail are kept in a job's log — raw
+  script stdout can carry document text.
+- The case mapping is `<case>/mapping_dossier.json` (an existing
+  `mapping*.json` wins), read/written via
+  `GET/PUT /api/admin/mapping` and rebuilt from the scans by
+  `POST /api/admin/mapping/rebuild`. Entries are stored longest-entity-first,
+  a code is never reused, and an entry deleted in the admin editor is recorded
+  under `ignored` so the next rebuild does not reintroduce that false positive.
 
 ## Document conversion
 

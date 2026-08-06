@@ -29,6 +29,10 @@ let selectedRevision = null;
 let tamponImage = null;          // data URL du tampon courant (cf. anonymization.js)
 let dossiers = [];
 let selectedPieces = [];         // IDs dans l'ordre du bordereau
+let selectedOriginals = new Set(); // chemins des pièces cochées dans le cadre « Pièces originales »
+let originalsJob = null;         // travail de conversion/anonymisation en cours
+let originalsJobTimer = null;
+let mappingDocument = null;      // { mapping, reverse_mapping } en cours d'édition
 
 function toast(message) {
   const element = byId('toast');
@@ -788,36 +792,353 @@ function renderFolders() {
   renderOriginals();
 }
 
+// ---------------------------------------------------------------------------
+// Pièces originales : conversion Markdown puis pipeline d'anonymisation.
+// Le cadre ne liste que les pièces telles qu'elles ont été déposées — le
+// Markdown produit par la conversion est exclu, il apparaît déjà dans
+// l'historique du dossier. Chaque pièce porte deux badges indépendants :
+// « Markdown » quand la conversion existe, « PII » quand le scan GLiNER a
+// écrit son `_sensitive_map.json`.
+// ---------------------------------------------------------------------------
+
+function caseOriginals() {
+  return currentCase()?.originals || [];
+}
+
+function formatBytes(size) {
+  const value = Number(size) || 0;
+  if (value < 1024) return `${value} o`;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} Ko`;
+  return `${(value / (1024 * 1024)).toFixed(1)} Mo`;
+}
+
 function renderOriginals() {
   const list = byId('originalList');
-  const originals = currentCase()?.originals || [];
+  const originals = caseOriginals();
   list.textContent = '';
   byId('originalCount').textContent = String(originals.length);
+  const known = new Set(originals.map((original) => original.path));
+  for (const selected of [...selectedOriginals]) {
+    if (!known.has(selected)) selectedOriginals.delete(selected);
+  }
   if (!selectedFolder) {
     list.append(createHistoryEmpty('Sélectionnez un dossier'));
+    updateOriginalsActions();
+    renderMappingSummary();
     return;
   }
   if (!originals.length) {
-    list.append(createHistoryEmpty('Aucune pièce originale'));
+    list.append(createHistoryEmpty('Aucune pièce originale', 'Déposez les pièces dans le sous-dossier « pièces originales ».'));
+    updateOriginalsActions();
+    renderMappingSummary();
     return;
   }
   for (const original of originals) {
-    const row = document.createElement('div');
-    row.className = 'original-row';
+    const row = document.createElement('label');
+    row.className = `original-row${selectedOriginals.has(original.path) ? ' selected' : ''}`;
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = selectedOriginals.has(original.path);
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) selectedOriginals.add(original.path);
+      else selectedOriginals.delete(original.path);
+      row.classList.toggle('selected', checkbox.checked);
+      updateOriginalsActions();
+    });
     const body = document.createElement('span');
     body.className = 'original-body';
     const name = document.createElement('strong');
     name.textContent = original.path;
     const detail = document.createElement('span');
-    detail.textContent = original.converted
-      ? (original.scanned ? 'Markdown généré · GLiNER validé' : 'Markdown généré · scan GLiNER manquant')
-      : 'Markdown non généré';
+    detail.textContent = `${formatBytes(original.size)} · ${original.converted
+      ? (original.scanned ? 'Markdown et scan PII à jour' : 'Markdown généré, scan PII manquant')
+      : 'Markdown non généré'}`;
     body.append(name, detail);
-    const badge = document.createElement('span');
-    badge.className = `protection-badge ${original.status}`;
-    badge.textContent = original.protected ? 'Protégée' : original.converted ? 'À scanner' : 'À convertir';
-    row.append(body, badge);
+    const badges = document.createElement('span');
+    badges.className = 'original-badges';
+    if (original.converted) {
+      const converted = document.createElement('span');
+      converted.className = 'protection-badge converted';
+      converted.textContent = 'Markdown';
+      badges.append(converted);
+    }
+    if (original.scanned) {
+      const scanned = document.createElement('span');
+      scanned.className = 'protection-badge scanned';
+      scanned.textContent = 'PII';
+      badges.append(scanned);
+    }
+    if (!original.converted) {
+      const pending = document.createElement('span');
+      pending.className = 'protection-badge not-converted';
+      pending.textContent = 'À convertir';
+      badges.append(pending);
+    }
+    row.append(checkbox, body, badges);
     list.append(row);
+  }
+  updateOriginalsActions();
+  renderMappingSummary();
+}
+
+/** Sans sélection explicite, les boutons agissent sur toutes les pièces. */
+function originalsToProcess() {
+  const originals = caseOriginals();
+  if (!selectedOriginals.size) return originals.map((original) => original.path);
+  return originals.filter((original) => selectedOriginals.has(original.path)).map((original) => original.path);
+}
+
+function updateOriginalsActions() {
+  const originals = caseOriginals();
+  const running = Boolean(originalsJob && originalsJob.state === 'running');
+  const count = originalsToProcess().length;
+  const selectAll = byId('selectAllOriginals');
+  selectAll.disabled = running || !originals.length;
+  selectAll.checked = Boolean(originals.length) && selectedOriginals.size === originals.length;
+  selectAll.indeterminate = selectedOriginals.size > 0 && selectedOriginals.size < originals.length;
+  const suffix = selectedOriginals.size ? ` (${count})` : '';
+  const convert = byId('convertOriginals');
+  const anonymize = byId('anonymizeOriginals');
+  convert.disabled = running || !count;
+  anonymize.disabled = running || !count;
+  convert.textContent = `Convertir en Markdown${suffix}`;
+  anonymize.textContent = `Anonymiser et mapper${suffix}`;
+}
+
+function showOriginalsProgress(message, kind = '') {
+  const element = byId('originalsProgress');
+  element.hidden = !message;
+  element.textContent = message || '';
+  element.className = `originals-progress${kind ? ` ${kind}` : ''}`;
+}
+
+function describeJob(job) {
+  const phase = { convert: 'Conversion', scan: 'Analyse PII', mapping: 'Mise à jour du mapping' }[job.phase] || 'Traitement';
+  if (job.state === 'running') return `${phase} · ${job.processed}/${job.total} · ${job.percent}%`;
+  if (job.state === 'error') return `Échec : ${job.error}`;
+  const result = job.result || {};
+  return job.action === 'convert'
+    ? `${result.converted || job.total} pièce(s) converties en Markdown.`
+    : `${result.scanned || job.total} pièce(s) analysées · ${result.mappingAdded || 0} entrée(s) ajoutée(s) au mapping.`;
+}
+
+async function startOriginalsPipeline(action) {
+  if (!selectedFolder) return;
+  const files = originalsToProcess();
+  if (!files.length) return;
+  clearTimeout(originalsJobTimer);
+  try {
+    const result = await api('/api/admin/originals/pipeline', {
+      method: 'POST',
+      body: JSON.stringify({ case: selectedFolder, action, files }),
+    });
+    originalsJob = result.job;
+    updateOriginalsActions();
+    showOriginalsProgress(describeJob(originalsJob));
+    pollOriginalsJob();
+  } catch (error) {
+    showOriginalsProgress(error.message, 'error');
+  }
+}
+
+async function pollOriginalsJob() {
+  if (!originalsJob) return;
+  try {
+    const { job } = await api(`/api/admin/originals/job?id=${encodeURIComponent(originalsJob.id)}`);
+    originalsJob = job;
+    showOriginalsProgress(describeJob(job), job.state === 'error' ? 'error' : '');
+    if (job.state === 'running') {
+      originalsJobTimer = setTimeout(pollOriginalsJob, 1500);
+      return;
+    }
+    updateOriginalsActions();
+    toast(job.state === 'error' ? 'Traitement interrompu' : 'Traitement terminé');
+    await loadRepositoryHistory({ quiet: true });
+  } catch (error) {
+    showOriginalsProgress(error.message, 'error');
+    originalsJob = null;
+    updateOriginalsActions();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Mapping d'anonymisation du dossier — lecture et édition ligne à ligne.
+// ---------------------------------------------------------------------------
+
+function renderMappingSummary() {
+  const legalCase = currentCase();
+  const button = byId('openMapping');
+  const entries = legalCase ? Object.keys(legalCase.mapping?.mapping || {}).length : 0;
+  byId('mappingCount').textContent = String(entries);
+  byId('mappingName').textContent = legalCase?.mapping?.name || 'Aucun mapping';
+  byId('mappingState').textContent = !legalCase
+    ? 'Sélectionnez un dossier'
+    : legalCase.mapping?.exists
+      ? `${entries} entrée(s) · cliquez pour modifier`
+      : 'Aucun fichier — lancez « Anonymiser et mapper »';
+  button.disabled = !legalCase;
+}
+
+function mappingEntries() {
+  return byId('mappingRows').querySelectorAll('.mapping-entry');
+}
+
+function refreshMappingCount() {
+  byId('mappingDialogCount').textContent = String(mappingEntries().length);
+}
+
+function addMappingEntry(entity = '', code = '', { focus = false } = {}) {
+  const rows = byId('mappingRows');
+  const empty = rows.querySelector('.mapping-empty');
+  if (empty) empty.remove();
+  const row = document.createElement('div');
+  row.className = 'mapping-entry';
+  const entityInput = document.createElement('input');
+  entityInput.value = entity;
+  entityInput.placeholder = 'Jean Dupont';
+  entityInput.setAttribute('aria-label', 'Donnée d’origine');
+  const codeInput = document.createElement('input');
+  codeInput.className = 'code';
+  codeInput.value = code;
+  codeInput.placeholder = 'PERSON_01';
+  codeInput.setAttribute('aria-label', 'Code de remplacement');
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.title = 'Supprimer cette entrée';
+  remove.textContent = '×';
+  remove.addEventListener('click', () => {
+    row.remove();
+    refreshMappingCount();
+    if (!mappingEntries().length) renderMappingRows({});
+  });
+  for (const input of [entityInput, codeInput]) {
+    input.addEventListener('input', () => {
+      input.classList.remove('invalid');
+      setMessage(byId('mappingMessage'));
+    });
+  }
+  row.append(entityInput, codeInput, remove);
+  rows.append(row);
+  refreshMappingCount();
+  if (focus) entityInput.focus();
+}
+
+function renderMappingRows(mapping) {
+  const rows = byId('mappingRows');
+  rows.textContent = '';
+  const pairs = Object.entries(mapping || {});
+  if (!pairs.length) {
+    const empty = document.createElement('p');
+    empty.className = 'mapping-empty';
+    empty.textContent = 'Aucune entrée. Ajoutez-en une ou régénérez depuis les scans PII.';
+    rows.append(empty);
+    refreshMappingCount();
+    return;
+  }
+  for (const [entity, code] of pairs) addMappingEntry(entity, code);
+}
+
+/** Le mapping saisi, validé : pas de doublon d'entité, pas de code partagé. */
+function collectMapping() {
+  const mapping = {};
+  const codes = new Map();
+  for (const row of mappingEntries()) {
+    const [entityInput, codeInput] = row.querySelectorAll('input');
+    const entity = entityInput.value.trim();
+    const code = codeInput.value.trim();
+    if (!entity && !code) continue;
+    if (!entity || !code) {
+      (entity ? codeInput : entityInput).classList.add('invalid');
+      throw new Error('Chaque entrée demande une donnée d’origine et un code.');
+    }
+    if (mapping[entity]) {
+      entityInput.classList.add('invalid');
+      throw new Error(`« ${entity} » apparaît deux fois.`);
+    }
+    if (codes.has(code) && codes.get(code) !== entity) {
+      codeInput.classList.add('invalid');
+      throw new Error(`Le code « ${code} » est déjà utilisé par une autre donnée.`);
+    }
+    mapping[entity] = code;
+    codes.set(code, entity);
+  }
+  return mapping;
+}
+
+/**
+ * Le sens inverse est reconstruit à partir de celui chargé : un code peut
+ * couvrir plusieurs variantes d'écriture, et les variantes qui ne sont plus
+ * dans le mapping direct sont abandonnées avec lui.
+ */
+function buildReverseMapping(mapping) {
+  const previous = mappingDocument?.reverse_mapping || {};
+  const reverse = {};
+  for (const [entity, code] of Object.entries(mapping)) {
+    const variants = new Set([entity]);
+    for (const variant of previous[code] || []) {
+      if (!Object.prototype.hasOwnProperty.call(mapping, variant) || mapping[variant] === code) variants.add(variant);
+    }
+    reverse[code] = [...variants];
+  }
+  return reverse;
+}
+
+async function openMappingDialog() {
+  if (!selectedFolder) return;
+  const dialog = byId('mappingDialog');
+  setMessage(byId('mappingMessage'), 'Chargement…');
+  byId('mappingRows').textContent = '';
+  dialog.showModal();
+  try {
+    const data = await api(`/api/admin/mapping?case=${encodeURIComponent(selectedFolder)}`);
+    mappingDocument = { mapping: data.mapping, reverse_mapping: data.reverse_mapping };
+    byId('mappingDialogTitle').textContent = data.name;
+    renderMappingRows(data.mapping);
+    setMessage(byId('mappingMessage'), data.exists ? '' : 'Ce dossier n’a pas encore de fichier de mapping.');
+  } catch (error) {
+    setMessage(byId('mappingMessage'), error.message, 'error');
+  }
+}
+
+async function saveMapping() {
+  const button = byId('saveMapping');
+  button.disabled = true;
+  try {
+    const mapping = collectMapping();
+    const data = await api('/api/admin/mapping', {
+      method: 'PUT',
+      body: JSON.stringify({ case: selectedFolder, mapping, reverse_mapping: buildReverseMapping(mapping) }),
+    });
+    mappingDocument = { mapping: data.mapping, reverse_mapping: data.reverse_mapping };
+    renderMappingRows(data.mapping);
+    setMessage(byId('mappingMessage'), '');
+    toast(`Mapping enregistré · ${Object.keys(data.mapping).length} entrée(s)`);
+    await loadRepositoryHistory({ quiet: true });
+  } catch (error) {
+    setMessage(byId('mappingMessage'), error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function rebuildMapping() {
+  const button = byId('rebuildMapping');
+  button.disabled = true;
+  setMessage(byId('mappingMessage'), 'Régénération depuis les scans PII…');
+  try {
+    const data = await api('/api/admin/mapping/rebuild', {
+      method: 'POST',
+      body: JSON.stringify({ case: selectedFolder }),
+    });
+    mappingDocument = { mapping: data.mapping, reverse_mapping: data.reverse_mapping };
+    byId('mappingDialogTitle').textContent = data.name;
+    renderMappingRows(data.mapping);
+    setMessage(byId('mappingMessage'), `${data.added} entrée(s) ajoutée(s), ${data.total} au total.`);
+    await loadRepositoryHistory({ quiet: true });
+  } catch (error) {
+    setMessage(byId('mappingMessage'), error.message, 'error');
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -1016,6 +1337,8 @@ async function loadRepositoryHistory({ quiet = false } = {}) {
 async function selectHistoryFolder(folder) {
   selectedFolder = folder;
   selectedRevision = null;
+  selectedOriginals = new Set();
+  if (originalsJob?.case !== folder) showOriginalsProgress('');
   updateCaseToolbar();
   renderFolders();
   await loadHistoryItems();
@@ -1129,6 +1452,17 @@ byId('openTerminal').addEventListener('click', (event) => revealCaseFolder('term
 labelFolderActions();
 byId('createCommit').addEventListener('click', createManualCommit);
 byId('restoreRevision').addEventListener('click', restoreSelectedRevision);
+byId('selectAllOriginals').addEventListener('change', (event) => {
+  selectedOriginals = event.currentTarget.checked ? new Set(caseOriginals().map((original) => original.path)) : new Set();
+  renderOriginals();
+});
+byId('convertOriginals').addEventListener('click', () => startOriginalsPipeline('convert'));
+byId('anonymizeOriginals').addEventListener('click', () => startOriginalsPipeline('anonymize'));
+byId('openMapping').addEventListener('click', openMappingDialog);
+byId('addMappingRow').addEventListener('click', () => addMappingEntry('', '', { focus: true }));
+byId('rebuildMapping').addEventListener('click', rebuildMapping);
+byId('saveMapping').addEventListener('click', saveMapping);
+byId('closeMapping').addEventListener('click', () => byId('mappingDialog').close());
 
 function applyEditorCommand(button) {
   byId('fileEditor').focus();

@@ -59,8 +59,29 @@
                   <span>Pièces originales</span>
                   <span id="originalCount" class="count-badge">0</span>
                 </div>
+                <div class="originals-toolbar">
+                  <label class="originals-select-all"><input id="selectAllOriginals" type="checkbox"><span>Tout sélectionner</span></label>
+                  <div class="originals-actions">
+                    <button id="convertOriginals" class="button ghost compact" type="button" disabled>Convertir en Markdown</button>
+                    <button id="anonymizeOriginals" class="button secondary compact" type="button" disabled>Anonymiser et mapper</button>
+                  </div>
+                </div>
+                <p id="originalsProgress" class="originals-progress" hidden></p>
                 <div id="originalList" class="original-list"></div>
                 <p class="originals-note">Seules les métadonnées sont affichées. Le contenu original reste interdit à l’IA.</p>
+              </div>
+              <div class="mapping-section">
+                <div class="column-title">
+                  <span>Mapping d’anonymisation</span>
+                  <span id="mappingCount" class="count-badge">0</span>
+                </div>
+                <button id="openMapping" class="mapping-row" type="button" disabled>
+                  <span class="mapping-body">
+                    <strong id="mappingName">Aucun mapping</strong>
+                    <span id="mappingState">Sélectionnez un dossier</span>
+                  </span>
+                  <span class="mapping-open">Modifier</span>
+                </button>
               </div>
             </aside>
 
@@ -354,6 +375,29 @@
         <button class="button primary" type="submit">Créer et rédiger</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="mappingDialog">
+    <div class="dialog-card mapping-dialog">
+      <div class="mapping-dialog-head">
+        <div><p class="eyebrow">MAPPING D’ANONYMISATION</p><h2 id="mappingDialogTitle">mapping_dossier.json</h2></div>
+        <span id="mappingDialogCount" class="count-badge">0</span>
+      </div>
+      <p class="hint">Chaque ligne associe une donnée d’origine au code qui la remplace. L’enregistrement réordonne les entrées de la plus longue à la plus courte, l’ordre exigé par la substitution ; une entrée supprimée ici n’est plus réintroduite par les scans PII suivants.</p>
+      <div class="mapping-editor">
+        <div class="mapping-editor-head"><span>Donnée d’origine</span><span>Code</span><span></span></div>
+        <div id="mappingRows" class="mapping-rows"></div>
+      </div>
+      <div class="mapping-dialog-actions">
+        <button id="addMappingRow" class="button ghost compact" type="button">+ Entrée</button>
+        <button id="rebuildMapping" class="button ghost compact" type="button">Régénérer depuis les scans PII</button>
+      </div>
+      <span id="mappingMessage" class="message"></span>
+      <div class="actions">
+        <button id="closeMapping" class="button secondary" type="button">Fermer</button>
+        <button id="saveMapping" class="button primary" type="button">Enregistrer</button>
+      </div>
+    </div>
   </dialog>
 
   <div id="toast" role="status" aria-live="polite"></div>

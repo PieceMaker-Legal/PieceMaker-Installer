@@ -14,6 +14,14 @@ const {
   worktreeDetails,
 } = require('../piecemaker-plugin/scripts/lib/commits.cjs');
 const {
+  cancelOriginalsJob,
+  getJob,
+  readCaseMapping,
+  rebuildCaseMapping,
+  saveCaseMapping,
+  startOriginalsJob,
+} = require('./originals-pipeline.cjs');
+const {
   claudeAssetStatus,
   registerClaudeAsset,
   syncClaudeAssets,
@@ -637,7 +645,22 @@ function createAdminRouter({
 
   router.get('/repository', async (req, res) => {
     try {
-      res.json(await repositoryOverview(casesRoot(), homeDir));
+      const overview = await repositoryOverview(casesRoot(), homeDir);
+      // Le résumé du mapping accompagne le dossier : l'administration l'affiche
+      // à côté des pièces originales, sans second aller-retour. Seul le nombre
+      // d'entrées circule ici — leur contenu passe par `/mapping`.
+      for (const folder of overview.folders) {
+        // Le cadre « Pièces originales » ne montre que les pièces déposées :
+        // le Markdown issu de la conversion vit déjà dans l'historique.
+        folder.originals = folder.originals.filter((file) => file.extension !== '.md');
+        const mapping = readCaseMapping(path.join(overview.root, folder.path));
+        folder.mapping = {
+          exists: mapping.exists,
+          name: path.basename(mapping.file),
+          entries: Object.keys(mapping.mapping).length,
+        };
+      }
+      res.json(overview);
     } catch (error) {
       res.status(503).json({ error: error.message });
     }
@@ -654,6 +677,101 @@ function createAdminRouter({
       const absolute = caseName ? resolveCase(casesRoot(), caseName).root : resolveCasesRoot(casesRoot());
       await revealLocalFolder(process.platform, target, absolute);
       res.json({ ok: true, target, path: absolute });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // ── Pièces originales : conversion Markdown et pipeline d'anonymisation ──
+  // Les deux traitements sont longs (OCR, modèles NER) : la route rend la main
+  // avec un identifiant de travail que l'administration interroge ensuite.
+
+  router.post('/originals/pipeline', async (req, res) => {
+    try {
+      const job = await startOriginalsJob({
+        casesRoot: casesRoot(),
+        caseName: String(req.body?.case || '').trim(),
+        action: String(req.body?.action || ''),
+        files: Array.isArray(req.body?.files) ? req.body.files : [],
+        options: {
+          engine: String(req.body?.engine || '').trim() || undefined,
+          mode: String(req.body?.mode || '').trim() || undefined,
+          lang: String(req.body?.lang || '').trim() || undefined,
+        },
+      });
+      res.status(202).json({ ok: true, job });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  router.get('/originals/job', (req, res) => {
+    const job = getJob(req.query.id);
+    if (!job) return res.status(404).json({ error: 'Travail inconnu ou expiré.' });
+    res.json({ job });
+  });
+
+  router.delete('/originals/job', (req, res) => {
+    const job = cancelOriginalsJob(req.query.id);
+    if (!job) return res.status(404).json({ error: 'Aucun traitement en cours pour cet identifiant.' });
+    res.json({ ok: true, job });
+  });
+
+  // Le mapping du dossier est le seul fichier de l'administration qui contient
+  // des données personnelles en clair : il n'est jamais journalisé, seulement
+  // rendu au navigateur local qui l'a demandé.
+  router.get('/mapping', (req, res) => {
+    try {
+      const legalCase = resolveCase(casesRoot(), String(req.query.case || '').trim());
+      const mapping = readCaseMapping(legalCase.root);
+      res.json({
+        case: legalCase.name,
+        name: path.basename(mapping.file),
+        exists: mapping.exists,
+        mapping: mapping.mapping,
+        reverse_mapping: mapping.reverse_mapping,
+      });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  router.put('/mapping', (req, res) => {
+    try {
+      if (!req.body?.mapping || typeof req.body.mapping !== 'object' || Array.isArray(req.body.mapping)) {
+        throw new Error('Le mapping doit être un objet { entité: code }.');
+      }
+      const legalCase = resolveCase(casesRoot(), String(req.body?.case || '').trim());
+      const saved = saveCaseMapping(legalCase.root, {
+        mapping: req.body.mapping,
+        reverse_mapping: req.body.reverse_mapping,
+      });
+      res.json({
+        ok: true,
+        case: legalCase.name,
+        name: path.basename(saved.file),
+        exists: true,
+        mapping: saved.mapping,
+        reverse_mapping: saved.reverse_mapping,
+      });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  router.post('/mapping/rebuild', async (req, res) => {
+    try {
+      const legalCase = resolveCase(casesRoot(), String(req.body?.case || '').trim());
+      const rebuilt = await rebuildCaseMapping(legalCase.root);
+      res.json({
+        ok: true,
+        case: legalCase.name,
+        name: path.basename(rebuilt.file),
+        added: rebuilt.added,
+        total: rebuilt.total,
+        mapping: rebuilt.mapping,
+        reverse_mapping: rebuilt.reverse_mapping,
+      });
     } catch (error) {
       res.status(400).json({ error: error.message });
     }
