@@ -18,7 +18,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const { pathToFileURL } = require('url');
 
 const A4 = { width: 595.28, height: 841.89 };
@@ -93,31 +93,65 @@ function sofficeArgs(sourcePath, outDir, profileDir) {
   ];
 }
 
+/**
+ * LibreOffice tourne en processus séparé et asynchrone : une conversion prend
+ * plusieurs secondes, et `spawnSync` bloquerait la boucle d'événements de
+ * `server.cjs` pendant tout ce temps — plus aucune réponse HTTP ni WebSocket,
+ * le navigateur perd la connexion en plein tamponnage.
+ */
 function officeToPdf(sourcePath, workDir, { timeout = 180000 } = {}) {
   const soffice = findSoffice();
   if (!soffice) {
     const kind = isSpreadsheet(sourcePath) ? 'Un classeur Excel' : 'Ce format bureautique';
-    throw new Error(`${kind} exige LibreOffice pour être converti en PDF. ${SOFFICE_HINT}`);
+    return Promise.reject(new Error(`${kind} exige LibreOffice pour être converti en PDF. ${SOFFICE_HINT}`));
   }
 
   const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-lo-'));
-  try {
-    const result = spawnSync(soffice, sofficeArgs(sourcePath, workDir, profileDir), {
-      encoding: 'utf8',
-      timeout,
-    });
-    const produced = path.join(workDir, `${path.basename(sourcePath, path.extname(sourcePath))}.pdf`);
-    if (result.status === 0 && fs.existsSync(produced)) return produced;
+  return execFilePromise(soffice, sofficeArgs(sourcePath, workDir, profileDir), { timeout })
+    .then((result) => {
+      const produced = path.join(workDir, `${path.basename(sourcePath, path.extname(sourcePath))}.pdf`);
+      if (result.status === 0 && fs.existsSync(produced)) return produced;
 
-    const detail = (result.stderr || result.stdout || '').trim() || `code ${result.status}`;
-    throw new Error(`Conversion LibreOffice échouée (${detail})`);
-  } finally {
-    try {
-      fs.rmSync(profileDir, { recursive: true, force: true });
-    } catch {
-      // profil temporaire : échec de nettoyage sans conséquence
-    }
-  }
+      const detail = (result.stderr || result.stdout || '').trim()
+        || (result.timedOut ? `interrompu après ${Math.round(timeout / 1000)} s` : `code ${result.status}`);
+      throw new Error(`Conversion LibreOffice échouée (${detail})`);
+    })
+    .finally(() => {
+      try {
+        fs.rmSync(profileDir, { recursive: true, force: true });
+      } catch {
+        // profil temporaire : échec de nettoyage sans conséquence
+      }
+    });
+}
+
+/** `spawn` + collecte de la sortie, avec la sémantique de timeout de spawnSync. */
+function execFilePromise(command, args, { timeout }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args);
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+
+    const timer = timeout ? setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, timeout) : null;
+
+    child.on('error', (error) => {
+      if (timer) clearTimeout(timer);
+      reject(error);
+    });
+    child.on('close', (status) => {
+      if (timer) clearTimeout(timer);
+      resolve({ status, stdout, stderr, timedOut });
+    });
+  });
 }
 
 // Caractères représentables par l'encodage WinAnsi de pdf-lib : tout le reste
@@ -221,7 +255,7 @@ async function convertToPdf(sourcePath, workDir) {
   const target = path.join(workDir, `${path.basename(sourcePath, ext)}.pdf`);
 
   if (kind === 'office') {
-    return { pdfPath: officeToPdf(sourcePath, workDir), engine: 'libreoffice', converted: true };
+    return { pdfPath: await officeToPdf(sourcePath, workDir), engine: 'libreoffice', converted: true };
   }
 
   if (kind === 'image') {

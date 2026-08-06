@@ -83,6 +83,7 @@ function readFileStripBOM(filePath, encoding = 'utf8') {
 // contient. Tous ses fichiers (Markdown, mappings, compilations, conversions,
 // brouillons et pièces tamponnées) sont ensuite écrits dans ce même dossier.
 const PIECES_SUBFOLDER = 'Pièces';
+const ORIGINALS_SUBFOLDER = 'pièces originales';
 const DOSSIER_FOLDERS_FILE = 'dossier_folders.json';
 
 function getSystemDataPath(...segments) {
@@ -774,7 +775,7 @@ app.post('/api/anonymize/process', async (req, res) => {
       fs.mkdirSync(outputDir, { recursive: true });
 
       // ✅ SAUVEGARDER LES FICHIERS SOURCES
-      const filesSourceDir = path.join(outputDir, 'pièces originales');
+      const filesSourceDir = path.join(outputDir, ORIGINALS_SUBFOLDER);
       fs.mkdirSync(filesSourceDir, { recursive: true });
 
       if (filesData && Array.isArray(filesData)) {
@@ -2925,6 +2926,25 @@ app.delete('/api/tampon/delete', (req, res) => {
 // ========================================
 // ENDPOINT POUR LE TAMPONNAGE DE PIÈCES
 // ========================================
+/**
+ * Chemin réel de l'original d'une pièce. Les compilations écrites par la
+ * version courante stockent le chemin complet, mais celles d'avant n'ont que
+ * le nom du fichier : on le retrouve là où les originales ont été déposées au
+ * fil des versions, sans jamais sortir du dossier juridique (`basename`).
+ */
+function resolvePieceFile(declaredPath, workingFolder, documentId) {
+  const declared = String(declaredPath || '').trim();
+  if (!declared) return null;
+  if (path.isAbsolute(declared) && fs.existsSync(declared)) return declared;
+
+  const name = path.basename(declared);
+  return [
+    path.join(workingFolder, ORIGINALS_SUBFOLDER, name),
+    path.join(workingFolder, `fichiers_sources_${documentId}`, name),
+    path.join(workingFolder, name),
+  ].find((candidate) => fs.existsSync(candidate)) || null;
+}
+
 app.post('/api/stamping', async (req, res) => {
   try {
     const { pieces, documentId, folder } = req.body;
@@ -2935,42 +2955,6 @@ app.post('/api/stamping', async (req, res) => {
 
     if (!documentId) {
       return res.status(400).json({ error: 'ID du document requis' });
-    }
-
-    const outputDir = getOutputPath(documentId);
-
-    // Charger le tampon depuis le fichier sauvegardé
-    const tamponPath = getSystemDataPath('tampon.png');
-    if (!fs.existsSync(tamponPath)) {
-      return res.status(400).json({
-        error: 'Aucun tampon configuré. Veuillez d\'abord configurer un tampon via le menu "🖼️ Configurer le tampon".'
-      });
-    }
-
-    // Lire le tampon et le convertir en base64
-    const tamponBuffer = fs.readFileSync(tamponPath);
-    const tamponBase64 = tamponBuffer.toString('base64');
-    const tamponImage = `data:image/png;base64,${tamponBase64}`;
-
-    const compilationPath = path.join(outputDir, `compilation_dossier_${documentId}.json`);
-
-    // Vérifier que le fichier de compilation existe
-    if (!fs.existsSync(compilationPath)) {
-      return res.status(404).json({
-        error: 'Fichier compilation_dossier non trouvé. Veuillez d\'abord charger des fichiers.'
-      });
-    }
-
-    // Charger la compilation
-    const compilationData = JSON.parse(readFileStripBOM(compilationPath, 'utf8'));
-
-    // Extraire le tableau de documents de la structure
-    const documentsArray = compilationData.documents || [];
-
-    if (!Array.isArray(documentsArray)) {
-      return res.status(500).json({
-        error: 'Structure de compilation invalide : documents doit être un tableau'
-      });
     }
 
     // Les pièces tamponnées vont TOUJOURS dans le dossier de travail (celui du
@@ -2993,6 +2977,45 @@ app.post('/api/stamping', async (req, res) => {
       workingFolder = rememberDossierFolder(documentId, requestedFolder);
     } catch (error) {
       return res.status(400).json({ error: error.message });
+    }
+
+    // Charger le tampon depuis le fichier sauvegardé
+    const tamponPath = getSystemDataPath('tampon.png');
+    if (!fs.existsSync(tamponPath)) {
+      return res.status(400).json({
+        error: 'Aucun tampon configuré. Veuillez d\'abord configurer un tampon via le menu "🖼️ Configurer le tampon".'
+      });
+    }
+
+    // Lire le tampon et le convertir en base64
+    const tamponBuffer = fs.readFileSync(tamponPath);
+    const tamponBase64 = tamponBuffer.toString('base64');
+    const tamponImage = `data:image/png;base64,${tamponBase64}`;
+
+    const compilationPath = path.join(workingFolder, `compilation_dossier_${documentId}.json`);
+
+    // Vérifier que le fichier de compilation existe
+    if (!fs.existsSync(compilationPath)) {
+      return res.status(404).json({
+        error: 'Fichier compilation_dossier non trouvé. Veuillez d\'abord charger des fichiers.'
+      });
+    }
+
+    // Charger la compilation
+    const compilationData = JSON.parse(readFileStripBOM(compilationPath, 'utf8'));
+
+    // Deux formes de compilation coexistent sur disque : un objet
+    // `{ informations_dossier, documents }` et, pour les plus anciennes, le
+    // tableau nu. `listDossiers` accepte déjà les deux — l'administration
+    // proposerait sinon des pièces que le tamponnage dit introuvables.
+    const documentsArray = Array.isArray(compilationData)
+      ? compilationData
+      : compilationData.documents || [];
+
+    if (!Array.isArray(documentsArray)) {
+      return res.status(500).json({
+        error: 'Structure de compilation invalide : documents doit être un tableau'
+      });
     }
 
     const tamponnedDir = path.join(workingFolder, PIECES_SUBFOLDER);
@@ -3023,15 +3046,15 @@ app.post('/api/stamping', async (req, res) => {
       }
 
       try {
-        const filePath = document.filename;  // filename contient maintenant le chemin complet
+        const filePath = resolvePieceFile(document.filename, workingFolder, documentId);
 
-        if (!filePath || !fs.existsSync(filePath)) {
+        if (!filePath) {
           results.push({
             pieceNumber,
             id: pieceId,
             filename: document.filename,
             success: false,
-            error: `Fichier introuvable : ${filePath || 'path non défini'}`
+            error: `Fichier introuvable : ${document.filename || 'nom de fichier absent'}`
           });
           continue;
         }
@@ -4023,7 +4046,7 @@ app.post('/api/python/upload', express.raw({ type: 'application/octet-stream', l
     const documentId = sanitizeDocumentId(req.headers['x-document-id']);
 
     if (!documentId) return res.status(400).json({ error: 'X-Document-Id requis pour rattacher le fichier à un dossier juridique.' });
-    const destDir = path.join(getOutputPath(documentId), 'pièces originales');
+    const destDir = path.join(getOutputPath(documentId), ORIGINALS_SUBFOLDER);
     fs.mkdirSync(destDir, { recursive: true });
 
     const dest = path.join(destDir, safeName);
@@ -4282,6 +4305,14 @@ function checkModelCacheStatus() {
 
 // Démarrer le serveur HTTPS
 const server = https.createServer(options, app);
+
+// Node ferme les sockets keep-alive inactives au bout de 5 s par défaut : le
+// navigateur qui réutilise la sienne après une pause (l'administration passe
+// des minutes sans requête) voit alors « The network connection was lost ».
+// On tient la socket plus longtemps que l'inactivité typique de l'UI, et
+// headersTimeout reste au-dessus pour ne pas couper une requête en cours.
+server.keepAliveTimeout = 120000;
+server.headersTimeout = 125000;
 
 // Configurer WebSocket
 const wss = new WebSocketServer({ server });
