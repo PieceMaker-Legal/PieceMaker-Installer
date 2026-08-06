@@ -39,7 +39,7 @@ h2 { margin-bottom: 8px; font-size: 1.15rem; }
 .metric { padding: 20px; }
 .metric span { display: block; margin-bottom: 8px; color: var(--muted); font-size: .8rem; }
 .metric strong { font-size: 1.15rem; }
-#dashboard > .card:last-child { padding: 22px; }
+.location-card { margin-bottom: 14px; padding: 22px; }
 code { border-radius: 5px; background: #edf1ef; padding: 2px 5px; color: #27423d; overflow-wrap: anywhere; }
 .form-card { margin-bottom: 14px; padding: 24px; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
@@ -210,13 +210,7 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .revision-heading-line { display: flex; align-items: center; gap: 8px; }
 .revision-kind { border-radius: 10px; background: #ddf4ff; padding: 3px 7px; color: #0969da; font-size: .63rem; font-weight: 800; text-transform: uppercase; }
 .sha { color: #6e7781; font: .68rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-.revision-content { display: grid; min-height: 540px; flex: 1; grid-template-columns: 260px minmax(0, 1fr); }
-.changed-files-pane { min-width: 0; border-right: 1px solid #d8dee4; background: #f6f8fa; }
-.changed-file-list { overflow: auto; }
-.changed-file-row { display: grid; width: 100%; min-width: 0; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: 4px; border: 0; border-top: 1px solid #eaeef2; padding: 9px 10px; background: transparent; color: #24292f; cursor: pointer; font-size: .7rem; text-align: left; }
-.changed-file-row span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.changed-file-row:hover { background: #eaeef2; }
-.changed-file-row.active { background: #ddf4ff; box-shadow: inset 3px 0 #0969da; }
+.revision-content { display: grid; min-height: 540px; flex: 1; grid-template-columns: minmax(0, 1fr); }
 .diff-pane { display: flex; min-width: 0; flex-direction: column; background: #fff; }
 .diff-toolbar { display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid #d8dee4; padding: 8px 13px; background: #f6f8fa; font-size: .72rem; }
 .diff-toolbar strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

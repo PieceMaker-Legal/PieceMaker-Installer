@@ -101,16 +101,14 @@ test('les secrets .env peuvent être remplacés ou effacés sans perdre les comm
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
   const envFile = path.join(data.repo, '.env');
-  fs.writeFileSync(envFile, '# PieceMaker\nMCP_API_KEY=ancien\nMCP_URL=https://example.test\n');
-  updateEnvFile(envFile, { MCP_REMOTE_URL: 'https://mcp.test', MCP_API_KEY: 'nouveau' });
+  fs.writeFileSync(envFile, '# PieceMaker\nLEGIFRANCE_CLIENT_SECRET=ancien\n');
+  updateEnvFile(envFile, { LEGIFRANCE_CLIENT_SECRET: 'nouveau' });
   let content = fs.readFileSync(envFile, 'utf8');
   assert.match(content, /^# PieceMaker/m);
-  assert.match(content, /^MCP_API_KEY=nouveau$/m);
-  assert.match(content, /^MCP_REMOTE_URL=https:\/\/mcp\.test$/m);
-  assert.match(content, /^MCP_URL=https:\/\/mcp\.test$/m);
-  updateEnvFile(envFile, {}, ['MCP_API_KEY']);
+  assert.match(content, /^LEGIFRANCE_CLIENT_SECRET=nouveau$/m);
+  updateEnvFile(envFile, {}, ['LEGIFRANCE_CLIENT_SECRET']);
   content = fs.readFileSync(envFile, 'utf8');
-  assert.doesNotMatch(content, /^MCP_API_KEY=/m);
+  assert.doesNotMatch(content, /^LEGIFRANCE_CLIENT_SECRET=/m);
 });
 
 test('l’administration refuse les origines web non locales', () => {

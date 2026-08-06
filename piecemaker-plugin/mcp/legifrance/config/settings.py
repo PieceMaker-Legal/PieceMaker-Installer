@@ -40,7 +40,7 @@ LEGIFRANCE_CLIENT_SECRET = _credential('LEGIFRANCE_CLIENT_SECRET')
 # Une application PISTE porte des identifiants DIFFÉRENTS en sandbox et en
 # production : l'installateur laisse choisir, le serveur doit viser le même
 # environnement, sinon l'authentification échoue en 401 sans raison visible.
-# Défaut : production, comportement du serveur distant d'origine.
+# Défaut : production, comme l’environnement configuré par l’installateur.
 LEGIFRANCE_ENV = (os.getenv('LEGIFRANCE_ENV') or 'production').strip().lower()
 _SANDBOX = LEGIFRANCE_ENV == 'sandbox'
 

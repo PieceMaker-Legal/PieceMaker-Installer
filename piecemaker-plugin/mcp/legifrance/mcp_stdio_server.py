@@ -3,12 +3,10 @@
 """
 Serveur MCP PieceMaker - Légifrance (transport stdio local)
 
-Port de mcp_http_wrapper.py (Flask/WSGI, hébergement mutualisé distant) vers
-JSON-RPC 2.0 sur stdio, pour un lancement local par le plugin PieceMaker.
-
-La logique métier (handlers d'outils, clients Légifrance/BODACC, définitions
-MCP) est reprise telle quelle depuis le serveur distant ; seul le transport
-change ici : plus de Flask/HTTP/X-API-Key, une boucle stdin/stdout à la place.
+Serveur JSON-RPC 2.0 sur stdio lancé localement par le plugin PieceMaker.
+La logique métier (handlers d'outils, clients Légifrance/BODACC et définitions
+MCP) reste entièrement locale ; seules les API juridiques officielles sont
+appelées par les clients dédiés.
 
 IMPORTANT : stdout est réservé aux messages JSON-RPC. Tout log doit aller sur
 stderr — un simple print() égaré sur stdout corromprait le protocole.
@@ -40,13 +38,9 @@ from resources import (
     get_exemples_dispositif
 )
 
-# Le serveur HTTP distant identifiait l'appelant via X-API-Key -> user_id
-# (session_manager), pour un usage multi-utilisateurs. En local, le plugin
-# est lancé par Claude Code pour un seul opérateur : il n'y a ni login ni
-# session à établir. handle_tool_call() garde néanmoins un paramètre
-# positionnel user_id (signature inchangée par rapport à la version HTTP),
-# donc on lui passe une constante fixe. Aucun des 8 outils exposés ici ne
-# se comporte différemment selon cette valeur.
+# Le plugin est lancé pour un seul opérateur : il n'y a ni login ni session à
+# établir. handle_tool_call() conserve un paramètre positionnel user_id ; une
+# constante locale suffit, car aucun outil ne varie selon cette valeur.
 LOCAL_USER_ID = "local-stdio-user"
 
 

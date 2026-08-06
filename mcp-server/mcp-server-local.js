@@ -2,7 +2,7 @@
 
 /**
  * Serveur MCP local pour exposer les outils Word à Claude Desktop
- * Utilise le SDK officiel MCP v1.x + intégration avec MCP Remote
+ * Utilise le SDK officiel MCP v1.x et uniquement les outils locaux PieceMaker.
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -22,10 +22,6 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Configuration MCP (chargée depuis server.js)
-let MCP_URL = null;
-let MCP_API_KEY = null;
-
 // Chemin de sortie configuré (passé via variable d'environnement)
 const OUTPUT_PATH = process.env.OUTPUT_PATH;
 if (OUTPUT_PATH) {
@@ -37,28 +33,6 @@ if (OUTPUT_PATH) {
 // Désactiver la vérification SSL pour localhost
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
-// Fonction pour charger la config MCP depuis le serveur local
-async function loadMcpConfig() {
-  try {
-    console.error('[MCP Local] Chargement de la configuration depuis server.js...');
-
-    const response = await fetch('https://localhost:43098/api/mcp-config');
-    const mcpConfig = await response.json();
-
-    MCP_URL = mcpConfig.url;
-    MCP_API_KEY = mcpConfig.apiKey;
-
-    console.error('[MCP Local] Configuration MCP chargée:');
-    console.error(`  MCP_URL: ${MCP_URL}`);
-    console.error(`  MCP_API_KEY: ${MCP_API_KEY ? '***' + MCP_API_KEY.slice(-8) : 'non définie'}`);
-
-    return true;
-  } catch (error) {
-    console.error('[MCP Local] Erreur chargement config MCP:', error.message);
-    console.error('[MCP Local] Vérifiez que server.js est démarré sur https://localhost:43098');
-    return false;
-  }
-}
 // Outils proxy Word disponibles
 const LOCAL_TOOLS = [
         {
@@ -413,8 +387,6 @@ Use it if analysis is empty`,
 }
 ];
 
-let mcpRemoteTools = [];
-
 // ============================================================================
 // PROMPTS MANAGEMENT
 // ============================================================================
@@ -545,43 +517,6 @@ const StampingSchema = z.object({
 
 const CallOllamaSchema = z.object({});
 
-// Initialisation: récupérer les outils MCP Remote
-async function initializeMCPRemote() {
-  if (!MCP_URL || !MCP_API_KEY) {
-    console.error('[MCP Local] Config MCP non chargée, tentative de rechargement...');
-    await loadMcpConfig();
-
-    if (!MCP_URL || !MCP_API_KEY) {
-      console.error('[MCP Local] Impossible de charger la config MCP, MCP Remote désactivé');
-      return;
-    }
-  }
-  try {
-    const response = await fetch(MCP_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-API-Key': MCP_API_KEY
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/list',
-        params: {}
-      })
-    });
-
-    const data = await response.json();
-
-    if (data.result && data.result.tools) {
-      mcpRemoteTools = data.result.tools;
-      console.error(`[MCP Local] ${mcpRemoteTools.length} outils MCP Remote chargés`);
-    }
-  } catch (error) {
-    console.error('[MCP Local] Erreur chargement MCP Remote:', error.message);
-  }
-}
-
 // Mapper des schémas Zod par outil
 const TOOL_SCHEMAS = {
   'read_doc': ReadDocSchema,
@@ -693,16 +628,8 @@ const server = new Server(
 
 // Handler pour tools/list
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  // Charger les outils MCP Remote si pas encore fait
-  if (mcpRemoteTools.length === 0) {
-    await initializeMCPRemote();
-  }
-
-  // Combiner outils locaux + MCP Remote
-  const allTools = [...LOCAL_TOOLS, ...mcpRemoteTools];
-
   return {
-    tools: allTools
+    tools: LOCAL_TOOLS
   };
 });
 
@@ -737,66 +664,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     editRequestCache.set(requestKey, now);
   }
 
-  // Vérifier si c'est un outil local Word
   const isLocalTool = LOCAL_TOOLS.some(t => t.name === toolName);
+  if (!isLocalTool) {
+    return {
+      content: [{ type: 'text', text: `❌ Outil MCP local inconnu : ${toolName}` }],
+      isError: true
+    };
+  }
 
-  if (isLocalTool) {
-    try {
-      const result = await callLocalTool(toolName, toolArgs);
-      return {
-        content: [
-          {
-            type: 'text',
-            text: result
-          }
-        ]
-      };
-    } catch (error) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `❌ ${error.message}`
-          }
-        ],
-        isError: true
-      };
-    }
-  } else {
-    // Rediriger vers MCP Remote
-    try {
-      const response = await fetch(MCP_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-Key': MCP_API_KEY
-        },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'tools/call',
-          params: request.params
-        })
-      });
-
-      const data = await response.json();
-
-      if (data.error) {
-        throw new Error(data.error.message);
-      }
-
-      return data.result;
-    } catch (error) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `❌ Erreur MCP Remote: ${error.message}`
-          }
-        ],
-        isError: true
-      };
-    }
+  try {
+    const result = await callLocalTool(toolName, toolArgs);
+    return {
+      content: [{ type: 'text', text: result }]
+    };
+  } catch (error) {
+    return {
+      content: [{ type: 'text', text: `❌ ${error.message}` }],
+      isError: true
+    };
   }
 });
 

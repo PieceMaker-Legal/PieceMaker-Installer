@@ -77,7 +77,6 @@ async function loadSettings() {
     byId('workspacePath').value = data.config.workspacePath || '';
     byId('port').value = data.config.port || 43098;
     byId('pythonPath').value = data.config.pythonPath || data.env.PYTHON_PATH || '';
-    byId('mcpRemoteUrl').value = data.env.MCP_REMOTE_URL || data.env.MCP_URL || '';
     byId('legifranceEnv').value = 'production';
     document.querySelectorAll('[data-secret-state]').forEach((element) => {
       const state = data.secrets[element.dataset.secretState];
@@ -97,11 +96,10 @@ async function saveSettings(event) {
   setMessage(message, 'Enregistrement…');
   const form = new FormData(event.currentTarget);
   const env = {};
-  for (const key of ['MCP_API_KEY', 'LEGIFRANCE_CLIENT_ID', 'LEGIFRANCE_CLIENT_SECRET']) {
+  for (const key of ['LEGIFRANCE_CLIENT_ID', 'LEGIFRANCE_CLIENT_SECRET']) {
     const value = String(form.get(key) || '').trim();
     if (value) env[key] = value;
   }
-  env.MCP_REMOTE_URL = String(form.get('MCP_REMOTE_URL') || '').trim();
   env.LEGIFRANCE_ENV = 'production';
 
   try {
@@ -625,8 +623,6 @@ function showRevisionPlaceholder(title) {
   byId('revisionSha').textContent = '';
   byId('revisionTitle').textContent = title;
   byId('revisionMeta').textContent = 'Les fichiers et leur diff apparaîtront ici.';
-  byId('revisionFiles').textContent = '';
-  byId('revisionFileCount').textContent = '0';
   byId('diffFile').textContent = 'Aucun fichier sélectionné';
   byId('diffStats').textContent = '';
   byId('diffContent').className = 'diff-content empty-state';
@@ -675,27 +671,16 @@ async function loadRevision(hash, filePath = '') {
       : `${revision.author} · ${new Date(revision.timestamp).toLocaleString('fr-FR')}`;
     byId('restoreRevision').hidden = revision.kind === 'worktree';
 
-    const fileList = byId('revisionFiles');
-    fileList.textContent = '';
-    byId('revisionFileCount').textContent = String(revision.files.length);
-    for (const file of revision.files) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = `changed-file-row${file.path === revision.selectedPath ? ' active' : ''}`;
-      const badge = document.createElement('span');
-      badge.className = `file-status ${file.kind || 'modified'}`;
-      badge.textContent = statusLetter(file);
-      const name = document.createElement('span');
-      name.textContent = file.path;
-      button.append(badge, name);
-      button.addEventListener('click', () => loadRevision(hash, file.path));
-      fileList.append(button);
-    }
-
     const selected = revision.files.find((file) => file.path === revision.selectedPath);
-    byId('diffFile').textContent = revision.selectedPath || 'Aucun fichier sélectionné';
+    const totals = revision.files.reduce((sum, file) => ({
+      added: sum.added + (Number.isFinite(file.added) ? file.added : 0),
+      deleted: sum.deleted + (Number.isFinite(file.deleted) ? file.deleted : 0),
+    }), { added: 0, deleted: 0 });
+    byId('diffFile').textContent = revision.selectedPath || `${revision.files.length} fichier${revision.files.length > 1 ? 's' : ''}`;
     byId('diffStats').textContent = selected && selected.added != null
       ? `+${selected.added}  −${selected.deleted}`
+      : !revision.selectedPath && (totals.added || totals.deleted)
+        ? `+${totals.added}  −${totals.deleted}`
       : revision.truncated ? 'Diff tronqué' : '';
     renderPatch(revision.patch);
   } catch (error) {
@@ -886,7 +871,7 @@ window.addEventListener('beforeunload', (event) => {
 });
 
 const requestedTab = location.hash.slice(1);
-setActiveTab(['dashboard', 'history', 'settings', 'telegram', 'files'].includes(requestedTab) ? requestedTab : 'dashboard');
+setActiveTab(['history', 'settings', 'telegram', 'files'].includes(requestedTab) ? requestedTab : 'history');
 loadStatus();
 
 setInterval(() => {

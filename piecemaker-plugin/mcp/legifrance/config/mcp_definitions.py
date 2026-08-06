@@ -1,5 +1,5 @@
 #/config/mcp_definitions.py 
-#! MCP SERVEUR REMOTE
+#! MCP SERVEUR LOCAL
 """Définition des outils MCP disponibles"""
 
 MCP_TOOLS = [
@@ -524,4 +524,3 @@ MCP_PROMPTS = [
 # ============================================================================
 # MAPPING FILTRES PAR FOND
 # ============================================================================
-

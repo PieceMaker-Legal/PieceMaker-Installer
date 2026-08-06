@@ -20,14 +20,10 @@ const {
 
 const MAX_MARKDOWN_BYTES = 1024 * 1024;
 const SECRET_KEYS = new Set([
-  'MCP_API_KEY',
   'LEGIFRANCE_CLIENT_ID',
   'LEGIFRANCE_CLIENT_SECRET',
 ]);
 const ENV_KEYS = new Set([
-  'MCP_URL',
-  'MCP_REMOTE_URL',
-  'MCP_API_KEY',
   'LEGIFRANCE_CLIENT_ID',
   'LEGIFRANCE_CLIENT_SECRET',
   'LEGIFRANCE_ENV',
@@ -78,9 +74,6 @@ function readEnvFile(file) {
 }
 
 function updateEnvFile(file, updates, clearKeys = []) {
-  if (updates?.MCP_REMOTE_URL && !updates.MCP_URL) {
-    updates = { ...updates, MCP_URL: updates.MCP_REMOTE_URL };
-  }
   const clear = new Set(clearKeys.filter((key) => SECRET_KEYS.has(key)));
   const cleanUpdates = new Map();
   for (const [key, rawValue] of Object.entries(updates || {})) {

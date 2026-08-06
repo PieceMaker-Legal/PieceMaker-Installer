@@ -1,5 +1,5 @@
 #/tools/handlers.py 
-#! MCP SERVEUR REMOTE
+#! MCP SERVEUR LOCAL
 """Handlers pour les outils MCP"""
 
 import json

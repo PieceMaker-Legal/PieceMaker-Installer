@@ -420,7 +420,7 @@ function revisionDetails(casesRoot, homeDir, caseName, hash, filePath = '') {
   const stats = fileStats(legalCase, gitDir, meta.commit);
   const files = parseNameStatus(runGit(legalCase.root, ['diff-tree', '--root', '--no-commit-id', '--name-status', '-r', meta.commit], { gitDir }).stdout)
     .map((file) => ({ ...file, kind: statusKind(file.status), ...(stats.get(file.path) || {}) }));
-  const selectedPath = filePath ? validateRelativeSafePath(legalCase, filePath) : files[0]?.path || '';
+  const selectedPath = filePath ? validateRelativeSafePath(legalCase, filePath) : '';
   if (selectedPath && !files.some((file) => file.path === selectedPath)) throw new Error('Ce fichier ne fait pas partie de cette révision.');
   const args = ['show', '--format=', '--no-ext-diff', '--unified=3', meta.commit, ...(selectedPath ? ['--', selectedPath] : [])];
   const patchRaw = runGit(legalCase.root, args, { gitDir }).stdout;
@@ -436,14 +436,14 @@ function revisionDetails(casesRoot, homeDir, caseName, hash, filePath = '') {
 
 function worktreeDetails(casesRoot, homeDir, caseName, filePath = '') {
   const state = workingState(casesRoot, homeDir, caseName);
-  const selectedPath = filePath ? validateRelativeSafePath(state.legalCase, filePath) : state.changes[0]?.path || '';
+  const selectedPath = filePath ? validateRelativeSafePath(state.legalCase, filePath) : '';
   if (selectedPath && !state.changes.some((file) => file.path === selectedPath)) {
     throw new Error('Ce fichier ne fait pas partie des modifications actuelles.');
   }
-  let patchRaw = '';
-  if (selectedPath) {
-    patchRaw = runGit(state.legalCase.root, ['diff', '--no-ext-diff', '--unified=3', state.base, state.current.tree, '--', selectedPath], { gitDir: state.gitDir }).stdout;
-  }
+  const patchRaw = runGit(state.legalCase.root, [
+    'diff', '--no-ext-diff', '--unified=3', state.base, state.current.tree,
+    ...(selectedPath ? ['--', selectedPath] : []),
+  ], { gitDir: state.gitDir }).stdout;
   return {
     hash: 'WORKTREE',
     shortHash: '',

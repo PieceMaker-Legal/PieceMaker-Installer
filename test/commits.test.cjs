@@ -101,6 +101,7 @@ test('les modifications sont calculées par rapport au dernier commit complet du
   assert.equal(history[0].subject, 'Version 2');
   const details = revisionDetails(data.casesRoot, data.home, 'Dossier Alpha', version2.commit);
   assert.equal(details.kind, 'commit');
+  assert.equal(details.selectedPath, '');
   assert.match(details.patch, /Contrat anonymisé v2/);
 });
 
