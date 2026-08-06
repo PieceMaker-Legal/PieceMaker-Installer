@@ -20,6 +20,7 @@
       <button class="tab active" data-tab="dashboard">Vue d’ensemble</button>
       <button class="tab" data-tab="history">Historique</button>
       <button class="tab" data-tab="settings">Paramètres</button>
+      <button class="tab" data-tab="telegram">Telegram</button>
       <button class="tab" data-tab="files">Skills et agents</button>
     </nav>
 
@@ -155,10 +156,78 @@
         </form>
       </section>
 
+      <section id="telegram" class="panel">
+        <form id="telegramForm">
+          <div class="telegram-intro card">
+            <div>
+              <p class="eyebrow">DEUX BOTS SÉPARÉS</p>
+              <h2>Assistant et surveillance Telegram</h2>
+              <p>L’Assistant ouvre une session Claude conversationnelle. Le bot de surveillance est déterministe, sans LLM, et utilise obligatoirement un autre token.</p>
+            </div>
+            <button id="refreshTelegram" class="button secondary" type="button">Actualiser les états</button>
+          </div>
+
+          <div class="telegram-grid">
+            <article class="card bot-card">
+              <div class="bot-heading">
+                <div><p class="eyebrow">CONVERSATIONNEL</p><h2>Assistant PieceMaker</h2></div>
+                <span id="assistantStatus" class="status-pill pending">Chargement…</span>
+              </div>
+              <div class="form-grid one-column">
+                <label>Nom d’affichage choisi<input id="assistantName" name="assistantName" maxlength="64" required><small>Nom local dans PieceMaker. Le nom public du bot se règle dans BotFather.</small></label>
+                <label>Token BotFather<span id="assistantTokenState" class="secret-state"></span><input name="assistantToken" type="password" autocomplete="new-password" placeholder="Laisser vide pour conserver"></label>
+              </div>
+              <p id="assistantLifecycle" class="muted lifecycle"></p>
+              <div class="bot-actions">
+                <button id="startAssistant" class="button secondary" type="button">Démarrer</button>
+                <button id="stopAssistant" class="button subtle-danger" type="button">Arrêter</button>
+              </div>
+            </article>
+
+            <article class="card bot-card">
+              <div class="bot-heading">
+                <div><p class="eyebrow">SANS LLM</p><h2>Bot de surveillance</h2></div>
+                <span id="monitorStatus" class="status-pill pending">Chargement…</span>
+              </div>
+              <div class="form-grid one-column">
+                <label>Nom du bot de surveillance<input id="monitorName" name="monitorName" maxlength="64" required><small>Nom affiché dans les rapports et commandes d’orchestration.</small></label>
+                <label>Token BotFather séparé<span id="monitorTokenState" class="secret-state"></span><input name="monitorToken" type="password" autocomplete="new-password" placeholder="Laisser vide pour conserver"></label>
+              </div>
+              <p id="monitorLifecycle" class="muted lifecycle"></p>
+              <div class="bot-actions">
+                <button id="startMonitor" class="button secondary" type="button">Démarrer</button>
+                <button id="stopMonitor" class="button subtle-danger" type="button">Arrêter</button>
+              </div>
+            </article>
+          </div>
+
+          <div class="actions telegram-save">
+            <span id="telegramMessage" class="message"></span>
+            <button class="button primary" type="submit">Enregistrer les deux configurations</button>
+          </div>
+        </form>
+
+        <article class="card dossier-bots-card">
+          <div class="section-heading dossier-heading">
+            <div>
+              <p class="eyebrow">UN ASSISTANT PAR DOSSIER</p>
+              <h2>Dossiers juridiques</h2>
+              <p class="muted">Chaque dossier peut être lié à son propre bot conversationnel. L’IA ne lit jamais le contenu des pièces originales ; l’interface ne présente leurs noms qu’après anonymisation par le mapping, avec un libellé générique si aucun remplacement ne s’applique.</p>
+            </div>
+            <code id="dossiersRoot">—</code>
+          </div>
+          <div id="dossierBotList" class="dossier-bot-list">Chargement…</div>
+        </article>
+      </section>
+
       <section id="files" class="panel">
         <div class="editor-layout card">
           <aside class="file-sidebar">
-            <div class="section-heading"><div><p class="eyebrow">MARKDOWN</p><h2>Fichiers</h2></div></div>
+            <div class="section-heading"><div><p class="eyebrow">MARKDOWN VISUEL</p><h2>Fichiers</h2></div></div>
+            <div class="new-file-actions">
+              <button class="button secondary compact" type="button" data-create-kind="skill">+ Skill</button>
+              <button class="button secondary compact" type="button" data-create-kind="agent">+ Agent</button>
+            </div>
             <div id="fileList" class="file-list"></div>
           </aside>
           <div class="editor-pane">
@@ -166,7 +235,28 @@
               <div><strong id="fileTitle">Sélectionnez un fichier</strong><code id="filePath"></code></div>
               <span id="dirtyBadge" class="dirty-badge" hidden>Non enregistré</span>
             </div>
-            <textarea id="fileEditor" spellcheck="false" disabled placeholder="Choisissez un skill ou un agent dans la liste."></textarea>
+            <div id="metadataEditor" class="metadata-editor" hidden>
+              <label>Nom<input id="metadataName" maxlength="100"></label>
+              <label class="wide">Description<input id="metadataDescription" maxlength="1000"></label>
+              <label>Modèle<input id="metadataModel" placeholder="sonnet"></label>
+              <label>Outils<input id="metadataTools" placeholder="Read, Grep, Glob"></label>
+            </div>
+            <div id="editorToolbar" class="editor-toolbar" hidden aria-label="Mise en forme">
+              <select id="blockFormat" aria-label="Style du paragraphe">
+                <option value="p">Texte</option>
+                <option value="h1">Titre principal</option>
+                <option value="h2">Titre de section</option>
+                <option value="h3">Sous-titre</option>
+              </select>
+              <button type="button" data-command="bold" title="Gras"><strong>G</strong></button>
+              <button type="button" data-command="italic" title="Italique"><em>I</em></button>
+              <button type="button" data-command="insertUnorderedList" title="Liste à puces">• Liste</button>
+              <button type="button" data-command="insertOrderedList" title="Liste numérotée">1. Liste</button>
+              <button type="button" data-block="blockquote" title="Citation">Citation</button>
+              <button type="button" data-block="pre" title="Bloc de code">Code</button>
+              <button type="button" data-command="createLink" title="Lien">Lien</button>
+            </div>
+            <div id="fileEditor" class="visual-editor empty" contenteditable="false" role="textbox" aria-multiline="true" data-placeholder="Choisissez un skill, un agent ou un rapport de facturation."></div>
             <div class="actions">
               <span id="fileMessage" class="message"></span>
               <button id="saveFile" class="button primary" type="button" disabled>Enregistrer</button>
@@ -177,7 +267,22 @@
     </main>
   </div>
 
+  <dialog id="createFileDialog">
+    <form id="createFileForm" method="dialog" class="dialog-card">
+      <div><p class="eyebrow">NOUVEAU FICHIER</p><h2 id="createFileTitle">Créer un skill</h2></div>
+      <input id="createFileKind" name="kind" type="hidden">
+      <label>Identifiant<input id="createFileSlug" name="slug" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" placeholder="analyse-contrat" required><small>Minuscules, chiffres et tirets.</small></label>
+      <label>Nom affiché<input name="name" placeholder="Analyse de contrat" required></label>
+      <label>Description<textarea name="description" rows="4" required placeholder="Quand et pourquoi l’agent doit utiliser ce fichier."></textarea></label>
+      <span id="createFileMessage" class="message error"></span>
+      <div class="actions">
+        <button id="cancelCreateFile" class="button secondary" type="button">Annuler</button>
+        <button class="button primary" type="submit">Créer et rédiger</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="toast" role="status" aria-live="polite"></div>
-  <script src="app.js" defer></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>

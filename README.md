@@ -71,11 +71,17 @@ et au sous-menu d’installation/réparation :
 piecemaker
 ```
 
-L’interface graphique locale permet de modifier les paramètres, les skills et
-les agents Markdown, mais aussi d’inspecter chaque dossier juridique indépendant,
-ses pièces originales et leur état de protection GLiNER, ainsi que ses commits
-automatiques représentant chacun l’état complet du dossier. La commande suivante démarre le serveur si nécessaire et
-ouvre directement cette interface dans le navigateur :
+L’interface graphique locale permet de modifier les paramètres, configurer
+séparément l’Assistant Telegram général et son bot de surveillance sans LLM,
+puis lier chaque sous-dossier juridique à son propre Assistant Telegram. Elle
+permet aussi de rédiger les skills et agents dans un éditeur Markdown visuel
+(sans afficher les marqueurs `#`). Les synthèses de facturation y sont
+consultables en lecture seule. Les noms des pièces originales n’y sont affichés
+qu’après application du mapping d’anonymisation ; à défaut, un nom générique est
+utilisé. L’interface permet enfin d’inspecter chaque dossier juridique
+indépendant, l’état de protection GLiNER de ses pièces originales et ses commits
+automatiques représentant chacun l’état complet du dossier. La commande suivante démarre le serveur si
+nécessaire et ouvre directement cette interface dans le navigateur :
 
 ```bash
 piecemaker open
@@ -131,7 +137,7 @@ Légifrance. Voir [`piecemaker-plugin/README.md`](./piecemaker-plugin/README.md)
 - `piecemaker-plugin/` — plugin Claude Code : skills, agents, hooks, MCP
 - `orchestrator/` — Assistant Bot Telegram et daemon de surveillance sans LLM
 - `websocket-server/` — serveur HTTPS/WebSocket, API REST et scripts Python
-- `admin/` — interface web locale pour les paramètres, skills et agents
+- `admin/` — interface web locale : Telegram, paramètres, éditeur visuel des skills/agents et aperçus de facturation
 - `taskpane/` — volet Office du complément Word
 - `mcp-server/` — serveur MCP exposant les outils document
 - `electron/` — ancien client de bureau, conservé comme archive mais désactivé

@@ -3,11 +3,13 @@
  *
  * Porté depuis « Lord of the bots », où la liste des projets et leurs chemins
  * étaient codés en dur. Ici tout vient de ~/.piecemaker/orchestrator/projects.json,
- * écrit par l'installateur. L'Assistant Bot PieceMaker pointe toujours vers la
- * racine du dépôt ; le daemon reste un processus déterministe sans LLM.
+ * écrit par l'installateur et l'interface locale. L'Assistant général pointe
+ * vers la racine des dossiers ; chaque sous-dossier peut ensuite recevoir son
+ * propre Assistant. Le daemon reste un processus déterministe sans LLM.
  *
  * Format :
  * {
+ *   "assistantName": "Assistant PieceMaker",
  *   "daemonName": "PieceMaker Monitor",
  *   "projects": [
  *     { "name": "piecemaker", "workdir": "/chemin/vers/le/projet",

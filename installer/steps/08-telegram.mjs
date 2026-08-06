@@ -44,6 +44,7 @@ const GENERIC_STATE_DIR = path.join(CHANNEL_ROOT, 'telegram');
 const ASSISTANT_STATE_DIR = path.join(CHANNEL_ROOT, 'telegram-piecemaker');
 // Conservé pour migrer sans casser les installations « Lord of the bots ».
 const DAEMON_STATE_DIR = path.join(CHANNEL_ROOT, 'telegram-piecemaker-lord');
+const LEGACY_DAEMON_STATE_DIR = path.join(CHANNEL_ROOT, 'telegram-lord');
 
 const ORCHESTRATOR_SRC = path.join(REPO_ROOT, 'orchestrator');
 const ORCHESTRATOR_DIR = path.join(HOME_DIR, 'orchestrator');
@@ -54,6 +55,7 @@ const DAEMON_ENTRY = path.join(ORCHESTRATOR_SRC, 'piecemaker-daemon.mjs');
 const DAEMON_LABEL = 'com.piecemaker.telegram-monitor';
 const DAEMON_PLIST = path.join(os.homedir(), 'Library', 'LaunchAgents', `${DAEMON_LABEL}.plist`);
 const DAEMON_LOG = path.join(ORCHESTRATOR_DIR, 'telegram-monitor.log');
+const DEFAULT_ASSISTANT_NAME = 'Assistant PieceMaker';
 const DEFAULT_DAEMON_NAME = 'PieceMaker Monitor';
 
 function parseJson(raw, fallback = null) {
@@ -161,7 +163,7 @@ function writeAccess(stateDir, ids, { pairing = false } = {}) {
 }
 
 function configuredIds() {
-  for (const stateDir of [ASSISTANT_STATE_DIR, DAEMON_STATE_DIR, GENERIC_STATE_DIR]) {
+  for (const stateDir of [ASSISTANT_STATE_DIR, DAEMON_STATE_DIR, LEGACY_DAEMON_STATE_DIR, GENERIC_STATE_DIR]) {
     const ids = readAccess(stateDir).allowFrom;
     if (Array.isArray(ids) && ids.length) return ids.map(String);
   }
@@ -184,7 +186,12 @@ function normalizeDaemonName(value) {
     || DEFAULT_DAEMON_NAME;
 }
 
-function writeOrchestratorConfig(daemonName) {
+function normalizeAssistantName(value) {
+  return String(value || DEFAULT_ASSISTANT_NAME).replace(/[\r\n]+/g, ' ').trim().slice(0, 64)
+    || DEFAULT_ASSISTANT_NAME;
+}
+
+function writeOrchestratorConfig(assistantName, daemonName, assistantRoot) {
   const config = readOrchestratorConfig();
   const projects = Array.isArray(config.projects) ? [...config.projects] : [];
   const index = projects.findIndex((project) => project?.name === 'piecemaker');
@@ -192,7 +199,8 @@ function writeOrchestratorConfig(daemonName) {
   const piecemaker = {
     ...existing,
     name: 'piecemaker',
-    workdir: REPO_ROOT,
+    displayName: assistantName,
+    workdir: assistantRoot,
     aliases: [...new Set([...(existing.aliases || []), 'pm'])],
     permissionMode: existing.permissionMode || 'auto',
   };
@@ -203,7 +211,7 @@ function writeOrchestratorConfig(daemonName) {
   ensureDir(ORCHESTRATOR_DIR);
   fs.writeFileSync(
     PROJECTS_FILE,
-    `${JSON.stringify({ ...config, daemonName, projects }, null, 2)}\n`,
+    `${JSON.stringify({ ...config, assistantName, daemonName, projects }, null, 2)}\n`,
     'utf8',
   );
   return projects;
@@ -313,21 +321,21 @@ async function configureToken({ title, purpose, stateDir, migrateFrom = null }) 
   return value;
 }
 
-async function launchAssistant() {
+async function launchAssistant(assistantRoot) {
   if (!IS_MAC) {
     log.info('Démarrage manuel de l’Assistant Bot :');
-    log.detail(`cd "${REPO_ROOT}" && TELEGRAM_STATE_DIR="${ASSISTANT_STATE_DIR}" claude --channels plugin:${PLUGIN_SPEC}`);
+    log.detail(`cd "${assistantRoot}" && TELEGRAM_STATE_DIR="${ASSISTANT_STATE_DIR}" claude --channels plugin:${PLUGIN_SPEC}`);
     return true;
   }
 
-  if (!await confirm('Ouvrir maintenant la session de l’Assistant Bot à la racine de PieceMaker ?', true)) {
+  if (!await confirm(`Ouvrir maintenant la session de l’Assistant général dans ${assistantRoot} ?`, true)) {
     log.info(`Lancement reporté : /bin/bash ${ASSISTANT_LAUNCHER} piecemaker`);
     return true;
   }
 
   const result = runCapture('/bin/bash', [ASSISTANT_LAUNCHER, 'piecemaker'], { timeout: 30000 });
   if (result.code === 0) {
-    log.ok(result.stdout || `Assistant Bot ouvert dans ${REPO_ROOT}`);
+    log.ok(result.stdout || `Assistant général ouvert dans ${assistantRoot}`);
     return true;
   }
   log.warn(result.stderr || result.stdout || 'Impossible d’ouvrir la session de l’Assistant Bot.');
@@ -344,10 +352,11 @@ export async function install(ctx) {
   if (!fs.existsSync(ORCHESTRATOR_SRC)) {
     return { status: 'failed', note: `Dossier orchestrator/ introuvable : ${ORCHESTRATOR_SRC}` };
   }
+  const assistantRoot = path.resolve(ctx.config?.workspacePath || ctx.config?.dossiersRoot || ctx.config?.outputPath || REPO_ROOT);
 
   if (ctx.dryRun) {
     log.info(`[simulation] Installation de ${PLUGIN_SPEC}`);
-    log.info(`[simulation] Assistant Bot dans ${ASSISTANT_STATE_DIR}, session ouverte dans ${REPO_ROOT}`);
+    log.info(`[simulation] Assistant général dans ${ASSISTANT_STATE_DIR}, session ouverte dans ${assistantRoot}`);
     log.info(`[simulation] Daemon de surveillance nommé et configuré dans ${DAEMON_STATE_DIR}`);
     if (IS_MAC) log.info(`[simulation] Service utilisateur ${DAEMON_PLIST}`);
     return { status: 'skipped', note: 'Mode simulation — aucune modification effectuée.' };
@@ -365,14 +374,19 @@ Vérifiez la connexion réseau et le marketplace Claude Code.`,
   log.detail('Dans @BotFather, utilisez /newbot deux fois : un bot conversationnel et un bot de surveillance.');
   log.detail('Leurs tokens doivent être différents : le daemon ne dialogue jamais avec Claude et ne consomme aucun LLM.');
 
+  const existingConfig = readOrchestratorConfig();
+  const currentAssistantName = normalizeAssistantName(existingConfig.assistantName);
+  const assistantName = nonInteractive
+    ? currentAssistantName
+    : normalizeAssistantName(await ask('Nom de l’Assistant général', { def: currentAssistantName }));
+
   const assistantToken = await configureToken({
-    title: '1/2 — Assistant Bot conversationnel',
-    purpose: `Sa session Claude est toujours ouverte à la racine de PieceMaker : ${REPO_ROOT}`,
+    title: `1/2 — ${assistantName}, Assistant général conversationnel`,
+    purpose: `Sa session Claude est ouverte à la racine des dossiers : ${assistantRoot}`,
     stateDir: ASSISTANT_STATE_DIR,
     migrateFrom: GENERIC_STATE_DIR,
   });
 
-  const existingConfig = readOrchestratorConfig();
   const currentName = normalizeDaemonName(existingConfig.daemonName);
   const daemonName = nonInteractive
     ? currentName
@@ -382,6 +396,7 @@ Vérifiez la connexion réseau et le marketplace Claude Code.`,
     title: `2/2 — ${daemonName}, daemon de surveillance`,
     purpose: 'Outil déterministe sans assistant : état, usage, lancement, arrêt et redémarrage de la session.',
     stateDir: DAEMON_STATE_DIR,
+    migrateFrom: LEGACY_DAEMON_STATE_DIR,
   });
 
   const previousIds = configuredIds();
@@ -395,8 +410,9 @@ Vérifiez la connexion réseau et le marketplace Claude Code.`,
   if (ids.length) log.ok(`Allowlist commune enregistrée : ${ids.join(', ')}`);
   else log.warn('Aucun identifiant autorisé : le daemon refusera tous les messages.');
 
-  const projects = writeOrchestratorConfig(daemonName);
-  log.ok(`Assistant « piecemaker » fixé à la racine : ${REPO_ROOT}`);
+  ensureDir(assistantRoot);
+  const projects = writeOrchestratorConfig(assistantName, daemonName, assistantRoot);
+  log.ok(`Assistant général « ${assistantName} » fixé à la racine : ${assistantRoot}`);
 
   const issues = [];
   if (!assistantToken) issues.push('token de l’Assistant Bot absent');
@@ -419,17 +435,17 @@ Vérifiez la connexion réseau et le marketplace Claude Code.`,
   }
 
   let assistantStarted = true;
-  if (assistantToken) assistantStarted = await launchAssistant();
+  if (assistantToken) assistantStarted = await launchAssistant(assistantRoot);
   if (!assistantStarted) issues.push('session de l’Assistant Bot non ouverte');
 
   if (issues.length) return { status: 'partial', note: issues.join(' ; ') };
   return {
     status: 'done',
-    note: `${projects.length} projet(s) ; Assistant Bot à la racine ; daemon « ${daemonName} »${daemonStarted ? ' actif' : ' configuré'}.`,
+    note: `${projects.length} projet(s) ; Assistant général « ${assistantName} » à la racine ; daemon « ${daemonName} »${daemonStarted ? ' actif' : ' configuré'}.`,
   };
 }
 
-export async function check() {
+export async function check(ctx = {}) {
   if (!commandExists('claude', ['--version'])) {
     return { status: 'skipped', note: 'CLI « claude » introuvable.' };
   }
@@ -443,10 +459,11 @@ export async function check() {
   const assistantToken = readToken(ASSISTANT_STATE_DIR);
   const daemonToken = readToken(DAEMON_STATE_DIR);
   const config = readOrchestratorConfig();
+  const assistantRoot = path.resolve(ctx.config?.workspacePath || ctx.config?.dossiersRoot || ctx.config?.outputPath || REPO_ROOT);
   const rootConfigured = Array.isArray(config.projects) && config.projects.some((project) => (
     project?.name === 'piecemaker'
       && typeof project.workdir === 'string'
-      && path.resolve(project.workdir) === REPO_ROOT
+      && path.resolve(project.workdir) === assistantRoot
   ));
   const ids = readAccess(DAEMON_STATE_DIR).allowFrom || [];
   const serviceReady = !IS_MAC || daemonServiceRunning();
@@ -461,5 +478,5 @@ export async function check() {
   if (!serviceReady) missing.push('service du daemon arrêté');
 
   if (missing.length) return { status: 'partial', note: missing.join(' ; ') };
-  return { status: 'done', note: `Assistant Bot + daemon « ${normalizeDaemonName(config.daemonName)} »` };
+  return { status: 'done', note: `Assistant général « ${normalizeAssistantName(config.assistantName)} » + daemon « ${normalizeDaemonName(config.daemonName)} »` };
 }

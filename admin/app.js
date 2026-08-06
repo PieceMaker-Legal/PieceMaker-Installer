@@ -1,3 +1,10 @@
+import {
+  joinMarkdownDocument,
+  markdownToHtml,
+  splitMarkdownDocument,
+  visualEditorToMarkdown,
+} from './markdown.mjs';
+
 const api = async (url, options = {}) => {
   const response = await fetch(url, {
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
@@ -10,7 +17,8 @@ const api = async (url, options = {}) => {
 
 const byId = (id) => document.getElementById(id);
 let selectedFile = null;
-let originalContent = '';
+let currentFrontMatter = '';
+let editorTouched = false;
 let filesLoaded = false;
 let historyLoaded = false;
 let repositoryData = null;
@@ -36,8 +44,11 @@ function setActiveTab(name) {
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === name));
   document.querySelectorAll('.panel').forEach((panel) => panel.classList.toggle('active', panel.id === name));
   if (name === 'settings') loadSettings();
-  if (name === 'files' && !filesLoaded) loadFiles();
   if (name === 'history' && !historyLoaded) loadRepositoryHistory();
+  if (name === 'telegram') loadTelegram();
+  if (name === 'files' && !filesLoaded) {
+    loadFiles({ selectPath: new URLSearchParams(location.search).get('file') });
+  }
 }
 
 async function loadStatus() {
@@ -116,17 +127,220 @@ async function saveSettings(event) {
   }
 }
 
-function fileGroupLabel(kind) {
-  return { instructions: 'Instructions', skill: 'Skills', agent: 'Agents' }[kind] || kind;
+function renderTelegram(data) {
+  byId('assistantName').value = data.assistant.name;
+  byId('monitorName').value = data.monitor.name;
+  byId('assistantTokenState').textContent = data.assistant.token.configured
+    ? `Déjà configuré (${data.assistant.token.hint})`
+    : 'Non configuré';
+  byId('monitorTokenState').textContent = data.monitor.token.configured
+    ? `Déjà configuré (${data.monitor.token.hint})`
+    : 'Non configuré';
+
+  const assistantStatus = byId('assistantStatus');
+  assistantStatus.textContent = data.assistant.running ? `Actif · PID ${data.assistant.pid}` : 'Arrêté';
+  assistantStatus.className = `status-pill ${data.assistant.running ? 'ok' : 'pending'}`;
+  byId('assistantLifecycle').textContent = data.assistant.running
+    ? 'La session s’arrêtera à l’extinction de l’ordinateur et ne redémarrera pas seule.'
+    : 'Démarrage manuel : la session ne revient pas automatiquement après une extinction.';
+
+  const monitorStatus = byId('monitorStatus');
+  monitorStatus.textContent = data.monitor.running
+    ? `Actif · PID ${data.monitor.pid}`
+    : data.monitor.installed ? 'Service arrêté' : 'Non installé';
+  monitorStatus.className = `status-pill ${data.monitor.running ? 'ok' : data.monitor.installed ? 'pending' : 'error'}`;
+  byId('monitorLifecycle').textContent = data.monitor.autoStart
+    ? 'Service macOS : il s’arrête à l’extinction et redémarre à la prochaine ouverture de session.'
+    : 'Relancez l’étape Telegram de l’installateur pour créer le service de démarrage automatique.';
+
+  byId('startAssistant').disabled = !data.capabilities.assistantControl || data.assistant.running || !data.assistant.token.configured;
+  byId('stopAssistant').disabled = !data.capabilities.assistantControl || !data.assistant.running;
+  byId('startMonitor').disabled = !data.capabilities.monitorControl || data.monitor.running || !data.monitor.token.configured;
+  byId('stopMonitor').disabled = !data.capabilities.monitorControl || !data.monitor.running;
+  byId('dossiersRoot').textContent = data.dossiersRoot;
+  renderDossierBots(data.dossiers, data.capabilities);
 }
 
-async function loadFiles() {
+function makeElement(tag, className = '', text = '') {
+  const element = document.createElement(tag);
+  if (className) element.className = className;
+  if (text) element.textContent = text;
+  return element;
+}
+
+function dossierBadge(text, kind = '') {
+  return makeElement('span', `mini-badge ${kind}`.trim(), text);
+}
+
+function renderDossierBots(dossiers, capabilities) {
+  const list = byId('dossierBotList');
+  list.textContent = '';
+  if (!dossiers.length) {
+    list.append(makeElement('div', 'empty-state', 'Aucun sous-dossier juridique détecté dans cette racine.'));
+    return;
+  }
+
+  for (const dossier of dossiers) {
+    const card = makeElement('div', 'dossier-bot');
+    const top = makeElement('div', 'dossier-bot-top');
+    const identity = makeElement('div');
+    const title = makeElement('div', 'dossier-bot-title');
+    title.append(makeElement('strong', '', dossier.directoryName));
+    title.append(dossierBadge(dossier.mappingConfigured ? 'Mapping présent' : 'Mapping absent', dossier.mappingConfigured ? 'ok' : ''));
+    title.append(dossierBadge(`${dossier.markdownFiles} fichier(s) MD`, dossier.markdownFiles ? 'ok' : ''));
+    if (dossier.originalsProtected) {
+      const label = dossier.mappingConfigured
+        ? `${dossier.originalFiles} original(aux) isolé(s) · noms anonymisés par mapping`
+        : `${dossier.originalFiles} original(aux) isolé(s) · mapping requis avant les noms`;
+      title.append(dossierBadge(label, 'protected'));
+    }
+    identity.append(title, makeElement('code', 'dossier-bot-path', dossier.workdir));
+    if (dossier.mappingConfigured && dossier.mappedOriginalNames?.length) {
+      const names = makeElement('ul', 'mapped-original-names');
+      for (const name of dossier.mappedOriginalNames) names.append(makeElement('li', '', name));
+      if (dossier.originalNamesTruncated) names.append(makeElement('li', 'muted', 'Liste limitée aux 100 premiers fichiers.'));
+      identity.append(names);
+    }
+    const status = makeElement('span', `status-pill ${dossier.running ? 'ok' : dossier.linked ? 'pending' : 'error'}`);
+    status.textContent = dossier.running
+      ? `Actif · PID ${dossier.pid}`
+      : dossier.linked ? 'Lié · arrêté' : dossier.projectConfigured ? 'Token manquant' : 'Non lié';
+    top.append(identity, status);
+
+    const editor = makeElement('div', 'dossier-link-editor');
+    const nameLabel = makeElement('label', '', 'Nom de l’Assistant');
+    const nameInput = document.createElement('input');
+    nameInput.value = dossier.name;
+    nameInput.maxLength = 64;
+    nameLabel.append(nameInput);
+    const tokenLabel = makeElement('label', '', 'Token BotFather');
+    const tokenState = makeElement('span', 'secret-state', dossier.token.configured ? `Configuré (${dossier.token.hint})` : 'Non configuré');
+    const tokenInput = document.createElement('input');
+    tokenInput.type = 'password';
+    tokenInput.autocomplete = 'new-password';
+    tokenInput.placeholder = dossier.token.configured ? 'Laisser vide pour conserver' : 'Token requis pour lier';
+    tokenLabel.append(tokenState, tokenInput);
+    const controls = makeElement('div', 'dossier-controls');
+    const save = makeElement('button', 'button primary compact', dossier.linked ? 'Enregistrer' : 'Lier ce bot');
+    save.type = 'button';
+    save.addEventListener('click', () => saveDossierBot(dossier.id, nameInput, tokenInput, save));
+    const start = makeElement('button', 'button secondary compact', 'Démarrer');
+    start.type = 'button';
+    start.disabled = !capabilities.dossierControl || !dossier.linked || dossier.running;
+    start.addEventListener('click', () => controlDossierBot(dossier.id, 'start', start));
+    const stop = makeElement('button', 'button subtle-danger compact', 'Arrêter');
+    stop.type = 'button';
+    stop.disabled = !capabilities.dossierControl || !dossier.running;
+    stop.addEventListener('click', () => controlDossierBot(dossier.id, 'stop', stop));
+    controls.append(save, start, stop);
+    editor.append(nameLabel, tokenLabel, controls);
+    card.append(top, editor);
+    list.append(card);
+  }
+}
+
+async function saveDossierBot(id, nameInput, tokenInput, button) {
+  const message = byId('telegramMessage');
+  button.disabled = true;
+  setMessage(message, 'Liaison du dossier…');
+  try {
+    await api(`/api/admin/telegram/dossiers/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ name: nameInput.value, token: tokenInput.value }),
+    });
+    tokenInput.value = '';
+    setMessage(message, 'Assistant du dossier lié. La configuration d’accès du bot général a été reprise.', 'success');
+    await loadTelegram({ quiet: true });
+  } catch (error) {
+    setMessage(message, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function controlDossierBot(id, action, button) {
+  const message = byId('telegramMessage');
+  button.disabled = true;
+  setMessage(message, `${action === 'start' ? 'Démarrage' : 'Arrêt'} de l’Assistant du dossier…`);
+  try {
+    const result = await api(`/api/admin/telegram/dossiers/${encodeURIComponent(id)}/${action}`, { method: 'POST', body: '{}' });
+    setMessage(message, result.message, 'success');
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    await loadTelegram({ quiet: true });
+  } catch (error) {
+    setMessage(message, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function loadTelegram({ quiet = false } = {}) {
+  const message = byId('telegramMessage');
+  if (!quiet) setMessage(message, 'Chargement…');
+  try {
+    const data = await api('/api/admin/telegram');
+    renderTelegram(data);
+    if (!quiet) setMessage(message);
+  } catch (error) {
+    setMessage(message, error.message, 'error');
+  }
+}
+
+async function saveTelegram(event) {
+  event.preventDefault();
+  const button = event.submitter || event.currentTarget.querySelector('button[type="submit"]');
+  const message = byId('telegramMessage');
+  const form = new FormData(event.currentTarget);
+  button.disabled = true;
+  setMessage(message, 'Enregistrement sécurisé…');
+  try {
+    const data = await api('/api/admin/telegram', {
+      method: 'PUT',
+      body: JSON.stringify({
+        assistantName: form.get('assistantName'),
+        assistantToken: form.get('assistantToken'),
+        monitorName: form.get('monitorName'),
+        monitorToken: form.get('monitorToken'),
+      }),
+    });
+    event.currentTarget.querySelectorAll('input[type="password"]').forEach((input) => { input.value = ''; });
+    renderTelegram(data);
+    setMessage(message, 'Configurations enregistrées. Les tokens complets restent uniquement sur cet ordinateur.', 'success');
+    toast('Configuration Telegram enregistrée');
+  } catch (error) {
+    setMessage(message, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function controlTelegram(role, action, button) {
+  const message = byId('telegramMessage');
+  button.disabled = true;
+  setMessage(message, `${action === 'start' ? 'Démarrage' : 'Arrêt'} en cours…`);
+  try {
+    const result = await api(`/api/admin/telegram/${role}/${action}`, { method: 'POST', body: '{}' });
+    setMessage(message, result.message, 'success');
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    await loadTelegram({ quiet: true });
+  } catch (error) {
+    setMessage(message, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function fileGroupLabel(kind) {
+  return { instructions: 'Instructions', skill: 'Skills', agent: 'Agents', billing: 'Facturation — aperçus' }[kind] || kind;
+}
+
+async function loadFiles({ selectPath = null } = {}) {
   const list = byId('fileList');
   list.textContent = 'Chargement…';
   try {
     const { files } = await api('/api/admin/files');
     list.textContent = '';
-    for (const kind of ['instructions', 'skill', 'agent']) {
+    for (const kind of ['instructions', 'skill', 'agent', 'billing']) {
       const groupFiles = files.filter((file) => file.kind === kind);
       if (!groupFiles.length) continue;
       const heading = document.createElement('div');
@@ -144,45 +358,80 @@ async function loadFiles() {
       }
     }
     filesLoaded = true;
+    const requestedPath = selectPath || (!selectedFile
+      ? files.find((item) => item.kind === 'skill')?.path || files.find((item) => item.exists)?.path
+      : null);
+    if (requestedPath) {
+      const button = Array.from(list.querySelectorAll('.file-button')).find((item) => item.dataset.path === requestedPath);
+      const file = files.find((item) => item.path === requestedPath);
+      if (button && file) await selectFile(file, button);
+    }
   } catch (error) {
     list.textContent = error.message;
   }
 }
 
+function metadataValues() {
+  return {
+    name: byId('metadataName').value,
+    description: byId('metadataDescription').value,
+    model: byId('metadataModel').value,
+    tools: byId('metadataTools').value,
+  };
+}
+
+function currentMarkdown() {
+  return joinMarkdownDocument(currentFrontMatter, metadataValues(), visualEditorToMarkdown(byId('fileEditor')));
+}
+
+function markEditorDirty() {
+  if (!selectedFile || selectedFile.readonly) return;
+  editorTouched = true;
+  byId('dirtyBadge').hidden = false;
+}
+
 async function selectFile(file, button) {
-  const editor = byId('fileEditor');
-  if (selectedFile && editor.value !== originalContent && !confirm('Abandonner les modifications non enregistrées ?')) return;
+  if (selectedFile && editorTouched && !confirm('Abandonner les modifications non enregistrées ?')) return;
   document.querySelectorAll('.file-button').forEach((item) => item.classList.toggle('active', item === button));
   setMessage(byId('fileMessage'), 'Chargement…');
   try {
     const data = await api(`/api/admin/file?path=${encodeURIComponent(file.path)}`);
+    const editor = byId('fileEditor');
+    const documentParts = splitMarkdownDocument(data.content);
     selectedFile = data;
-    originalContent = data.content;
-    editor.value = data.content;
-    editor.disabled = false;
-    byId('saveFile').disabled = false;
+    currentFrontMatter = documentParts.frontMatter;
+    editorTouched = false;
+    editor.innerHTML = markdownToHtml(documentParts.body);
+    editor.contentEditable = String(!data.readonly);
+    editor.classList.toggle('empty', !documentParts.body.trim());
+    byId('editorToolbar').hidden = data.readonly;
+    byId('saveFile').disabled = data.readonly;
+    byId('metadataEditor').hidden = !documentParts.frontMatter || data.readonly;
+    byId('metadataName').value = documentParts.metadata.name || '';
+    byId('metadataDescription').value = documentParts.metadata.description || '';
+    byId('metadataModel').value = documentParts.metadata.model || '';
+    byId('metadataTools').value = documentParts.metadata.tools || '';
     byId('fileTitle').textContent = file.name;
     byId('filePath').textContent = file.path;
     byId('dirtyBadge').hidden = true;
-    setMessage(byId('fileMessage'), data.exists ? '' : 'Ce fichier sera créé lors de l’enregistrement.');
+    setMessage(byId('fileMessage'), data.readonly ? 'Aperçu visuel en lecture seule.' : data.exists ? 'Édition visuelle — le fichier enregistré reste en Markdown.' : 'Ce fichier sera créé lors de l’enregistrement.');
   } catch (error) {
     setMessage(byId('fileMessage'), error.message, 'error');
   }
 }
 
 async function saveFile() {
-  if (!selectedFile) return;
+  if (!selectedFile || selectedFile.readonly) return;
   const button = byId('saveFile');
-  const editor = byId('fileEditor');
+  const content = currentMarkdown();
   button.disabled = true;
-  setMessage(byId('fileMessage'), 'Enregistrement…');
+  setMessage(byId('fileMessage'), 'Enregistrement du Markdown…');
   try {
     const result = await api('/api/admin/file', {
       method: 'PUT',
-      body: JSON.stringify({ path: selectedFile.path, content: editor.value }),
+      body: JSON.stringify({ path: selectedFile.path, content }),
     });
-    originalContent = editor.value.endsWith('\n') ? editor.value : `${editor.value}\n`;
-    editor.value = originalContent;
+    editorTouched = false;
     byId('dirtyBadge').hidden = true;
     setMessage(byId('fileMessage'), result.backup ? 'Enregistré avec sauvegarde.' : 'Fichier créé.', 'success');
     toast('Fichier Markdown enregistré');
@@ -557,20 +806,87 @@ async function restoreSelectedRevision() {
   }
 }
 
-document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => setActiveTab(tab.dataset.tab)));
 document.querySelectorAll('[data-history-view]').forEach((button) => button.addEventListener('click', () => setHistoryView(button.dataset.historyView)));
 byId('refreshHistory').addEventListener('click', () => loadRepositoryHistory());
 byId('createCommit').addEventListener('click', createManualCommit);
 byId('restoreRevision').addEventListener('click', restoreSelectedRevision);
+
+function applyEditorCommand(button) {
+  byId('fileEditor').focus();
+  const command = button.dataset.command;
+  if (command === 'createLink') {
+    const url = prompt('Adresse du lien (https://…)');
+    if (url) document.execCommand('createLink', false, url);
+  } else if (command) {
+    document.execCommand(command, false);
+  } else if (button.dataset.block) {
+    document.execCommand('formatBlock', false, button.dataset.block);
+  }
+  markEditorDirty();
+}
+
+function openCreateDialog(kind) {
+  const dialog = byId('createFileDialog');
+  byId('createFileForm').reset();
+  byId('createFileKind').value = kind;
+  byId('createFileTitle').textContent = kind === 'skill' ? 'Créer un skill' : 'Créer un agent';
+  setMessage(byId('createFileMessage'));
+  dialog.showModal();
+}
+
+async function createFile(event) {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  button.disabled = true;
+  setMessage(byId('createFileMessage'), 'Création…');
+  try {
+    const result = await api('/api/admin/files', {
+      method: 'POST',
+      body: JSON.stringify(Object.fromEntries(form)),
+    });
+    byId('createFileDialog').close();
+    await loadFiles({ selectPath: result.file.path });
+    toast(`${form.get('kind') === 'skill' ? 'Skill' : 'Agent'} créé`);
+  } catch (error) {
+    setMessage(byId('createFileMessage'), error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => {
+  setActiveTab(tab.dataset.tab);
+  history.replaceState(null, '', `#${tab.dataset.tab}`);
+}));
 byId('settingsForm').addEventListener('submit', saveSettings);
+byId('telegramForm').addEventListener('submit', saveTelegram);
+byId('refreshTelegram').addEventListener('click', () => loadTelegram());
+byId('startAssistant').addEventListener('click', (event) => controlTelegram('assistant', 'start', event.currentTarget));
+byId('stopAssistant').addEventListener('click', (event) => controlTelegram('assistant', 'stop', event.currentTarget));
+byId('startMonitor').addEventListener('click', (event) => controlTelegram('monitor', 'start', event.currentTarget));
+byId('stopMonitor').addEventListener('click', (event) => controlTelegram('monitor', 'stop', event.currentTarget));
 byId('saveFile').addEventListener('click', saveFile);
-byId('fileEditor').addEventListener('input', (event) => {
-  byId('dirtyBadge').hidden = event.currentTarget.value === originalContent;
+byId('fileEditor').addEventListener('input', markEditorDirty);
+document.querySelectorAll('#metadataEditor input').forEach((input) => input.addEventListener('input', markEditorDirty));
+document.querySelectorAll('#editorToolbar button').forEach((button) => {
+  button.addEventListener('mousedown', (event) => event.preventDefault());
+  button.addEventListener('click', () => applyEditorCommand(button));
 });
+byId('blockFormat').addEventListener('change', (event) => {
+  byId('fileEditor').focus();
+  document.execCommand('formatBlock', false, event.currentTarget.value);
+  markEditorDirty();
+});
+document.querySelectorAll('[data-create-kind]').forEach((button) => button.addEventListener('click', () => openCreateDialog(button.dataset.createKind)));
+byId('createFileForm').addEventListener('submit', createFile);
+byId('cancelCreateFile').addEventListener('click', () => byId('createFileDialog').close());
 window.addEventListener('beforeunload', (event) => {
-  if (selectedFile && byId('fileEditor').value !== originalContent) event.preventDefault();
+  if (selectedFile && editorTouched) event.preventDefault();
 });
 
+const requestedTab = location.hash.slice(1);
+setActiveTab(['dashboard', 'history', 'settings', 'telegram', 'files'].includes(requestedTab) ? requestedTab : 'dashboard');
 loadStatus();
 
 setInterval(() => {

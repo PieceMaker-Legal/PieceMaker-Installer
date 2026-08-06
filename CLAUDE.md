@@ -8,8 +8,12 @@ this repo — read it before touching `websocket-server/` or `taskpane/`.
 
 ## What actually runs
 
-- **`admin/`** — local browser administration UI for settings, skills and
-  agent Markdown files, served at `/admin/`.
+- **`admin/`** — local browser administration UI for settings, the general
+  Telegram assistant, one assistant per legal-case directory, the global
+  non-LLM monitor, visual skill/agent Markdown editing, and read-only billing
+  previews, served at `/admin/`.
+  Original-document contents must never be read by this UI; original filenames
+  are returned only after mapping substitution, with a generic fallback.
 - **`electron/`** — legacy desktop shell, retained as source history but
   disabled in `package.json`; do not add new functionality to it.
 - **`websocket-server/server.cjs`** (4449 lines) — single Express server that
@@ -40,7 +44,7 @@ as a map of current file paths — trust the paths in this file instead.
 ```
 Word (task pane)  ──wss://localhost:43098──►  server.cjs (WebSocket)
 Word (task pane)  ──https://localhost:43098──► server.cjs (REST, same server)
-Browser (admin)   ──https://localhost:43098/admin/──► admin API + allowlisted Markdown files
+Browser (admin)   ──https://localhost:43098/admin/──► admin API + Telegram state + allowlisted Markdown/billing files
 Claude Desktop (MCP client) ──stdio──► mcp-server/ ──HTTPS──► server.cjs ──WS──► task pane ──Office.js──► Word doc
 ```
 

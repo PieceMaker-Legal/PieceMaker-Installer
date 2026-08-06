@@ -3,7 +3,12 @@
 > **Current runtime note (August 2026):** the Electron shell described in
 > historical sections below is disabled. The `piecemaker` CLI now manages the
 > local server and the administration UI is served at
-> `https://localhost:43098/admin/`.
+> `https://localhost:43098/admin/`. Elle comprend la configuration séparée
+> de l’Assistant général et du bot de surveillance, la liaison d’un Assistant
+> distinct par sous-dossier juridique, un éditeur Markdown visuel pour les
+> skills/agents et les aperçus en lecture seule de
+> `~/.piecemaker/billing/synthese/*.md` et des journaux mensuels
+> `~/.piecemaker/billing/YYYY-MM.jsonl`.
 
 ## Introduction
 
