@@ -13,6 +13,7 @@ const {
   normalizeAgentModel,
   normalizeAgentTools,
   readManagedFile,
+  revealCommands,
   saveManagedFile,
   updateEnvFile,
 } = require('../websocket-server/admin-routes.cjs');
@@ -176,4 +177,28 @@ test('les dossiers tamponnables sont listés par dossier juridique, sans le text
   assert.deepEqual(dossiers[0].documents, [
     { id: '0001', filename: 'contrat.pdf', type_document: 'Contrat', date_document: '' },
   ]);
+});
+
+test('les dossiers s’ouvrent avec les commandes du système, sans passer par un shell', () => {
+  const mac = revealCommands('darwin', 'files', '/Users/me/Dossiers/Martin');
+  assert.deepEqual(mac, [{ command: 'open', args: ['-R', '/Users/me/Dossiers/Martin'] }]);
+  assert.deepEqual(revealCommands('darwin', 'terminal', '/Users/me/Dossiers/Martin'), [
+    { command: 'open', args: ['-a', 'Terminal', '/Users/me/Dossiers/Martin'] },
+  ]);
+
+  const explorer = revealCommands('win32', 'files', 'C:\\Dossiers\\Martin Dupont');
+  assert.deepEqual(explorer, [{ command: 'explorer.exe', args: ['/select,C:\\Dossiers\\Martin Dupont'] }]);
+
+  const terminals = revealCommands('win32', 'terminal', "C:\\Dossiers\\O'Neil");
+  assert.equal(terminals[0].command, 'wt.exe');
+  assert.deepEqual(terminals[0].args, ['-d', "C:\\Dossiers\\O'Neil"]);
+  // L’apostrophe du dossier est doublée pour rester dans la chaîne PowerShell.
+  assert.match(terminals[1].args[2], /-WorkingDirectory 'C:\\Dossiers\\O''Neil'$/);
+
+  assert.equal(revealCommands('linux', 'files', '/home/me/Dossiers')[0].command, 'xdg-open');
+});
+
+test('une action de dossier inconnue ou un chemin relatif sont refusés', () => {
+  assert.throws(() => revealCommands('darwin', 'browser', '/Users/me'), /Action de dossier inconnue/);
+  assert.throws(() => revealCommands('darwin', 'files', 'Dossiers/Martin'), /Chemin de dossier invalide/);
 });

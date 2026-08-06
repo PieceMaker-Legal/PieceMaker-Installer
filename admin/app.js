@@ -989,7 +989,11 @@ async function loadHistoryItems() {
   renderHistoryItems();
 }
 
+let repositoryRefreshInFlight = false;
+
 async function loadRepositoryHistory({ quiet = false } = {}) {
+  if (repositoryRefreshInFlight) return;
+  repositoryRefreshInFlight = true;
   if (!quiet) byId('historyList').textContent = 'Chargement…';
   try {
     repositoryData = await api('/api/admin/repository');
@@ -1004,6 +1008,8 @@ async function loadRepositoryHistory({ quiet = false } = {}) {
   } catch (error) {
     byId('historyList').textContent = error.message;
     if (!quiet) toast(error.message);
+  } finally {
+    repositoryRefreshInFlight = false;
   }
 }
 
@@ -1015,6 +1021,42 @@ async function selectHistoryFolder(folder) {
   await loadHistoryItems();
 }
 
+// L'administration n'est servie qu'en local (cf. isLocalOrigin côté serveur) :
+// le poste du navigateur est celui du serveur, la détection sert donc juste à
+// nommer les boutons comme le système de l'utilisateur.
+function desktopPlatform() {
+  const platform = String(navigator.userAgentData?.platform || navigator.platform || '');
+  if (/mac|iphone|ipad/i.test(platform)) return 'mac';
+  if (/win/i.test(platform)) return 'windows';
+  return 'other';
+}
+
+const FILE_MANAGER_LABELS = { mac: 'Afficher dans le Finder', windows: 'Afficher dans l’Explorateur', other: 'Afficher le dossier' };
+const TERMINAL_LABELS = { mac: 'Ouvrir dans le Terminal', windows: 'Ouvrir dans le terminal', other: 'Ouvrir dans le terminal' };
+
+function labelFolderActions() {
+  const platform = desktopPlatform();
+  byId('revealFolder').textContent = FILE_MANAGER_LABELS[platform];
+  byId('openTerminal').textContent = TERMINAL_LABELS[platform];
+}
+
+async function revealCaseFolder(target, button) {
+  const previous = button.textContent;
+  button.disabled = true;
+  try {
+    const result = await api('/api/admin/reveal', {
+      method: 'POST',
+      body: JSON.stringify({ target, case: selectedFolder || '' }),
+    });
+    toast(target === 'terminal' ? `Terminal ouvert · ${result.path}` : `Dossier affiché · ${result.path}`);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = previous;
+  }
+}
+
 function updateCaseToolbar() {
   const legalCase = currentCase();
   byId('repositoryName').textContent = legalCase?.name || 'Aucun dossier';
@@ -1022,6 +1064,12 @@ function updateCaseToolbar() {
   byId('repositoryBranch').textContent = 'Commits du dossier';
   byId('repositoryHead').textContent = legalCase?.shortHead || 'Aucun';
   byId('createCommit').disabled = !legalCase;
+  const hasRoot = Boolean(repositoryData?.root);
+  byId('revealFolder').disabled = !hasRoot;
+  byId('openTerminal').disabled = !hasRoot;
+  const scope = legalCase ? `le dossier « ${legalCase.name} »` : 'la racine PieceMaker';
+  byId('revealFolder').title = `Afficher ${scope} dans le gestionnaire de fichiers`;
+  byId('openTerminal').title = `Ouvrir un terminal dans ${scope}`;
 }
 
 async function setHistoryView(view) {
@@ -1076,6 +1124,9 @@ async function restoreSelectedRevision() {
 
 document.querySelectorAll('[data-history-view]').forEach((button) => button.addEventListener('click', () => setHistoryView(button.dataset.historyView)));
 byId('refreshHistory').addEventListener('click', () => loadRepositoryHistory());
+byId('revealFolder').addEventListener('click', (event) => revealCaseFolder('files', event.currentTarget));
+byId('openTerminal').addEventListener('click', (event) => revealCaseFolder('terminal', event.currentTarget));
+labelFolderActions();
 byId('createCommit').addEventListener('click', createManualCommit);
 byId('restoreRevision').addEventListener('click', restoreSelectedRevision);
 
@@ -1187,8 +1238,13 @@ const requestedTab = location.hash.slice(1);
 setActiveTab(['history', 'settings', 'pieces', 'telegram', 'files'].includes(requestedTab) ? requestedTab : 'history');
 loadStatus();
 
-setInterval(() => {
+const REPOSITORY_REFRESH_MS = 30000;
+
+async function scheduleRepositoryRefresh() {
   if (document.visibilityState === 'visible' && byId('history').classList.contains('active')) {
-    loadRepositoryHistory({ quiet: true });
+    await loadRepositoryHistory({ quiet: true });
   }
-}, 6000);
+  setTimeout(scheduleRepositoryRefresh, REPOSITORY_REFRESH_MS);
+}
+
+setTimeout(scheduleRepositoryRefresh, REPOSITORY_REFRESH_MS);

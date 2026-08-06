@@ -42,7 +42,7 @@ async function main() {
   }
   if (!located?.safe || located.protected) return null;
 
-  createCommit({
+  await createCommit({
     casesRoot,
     caseName: located.name,
     homeDir: HOME_DIR,

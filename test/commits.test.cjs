@@ -47,12 +47,12 @@ function writeConfig(data) {
   fs.writeFileSync(path.join(data.home, 'config.json'), `${JSON.stringify({ workspacePath: data.casesRoot })}\n`);
 }
 
-test('chaque dossier juridique possède un historique indépendant sans pièces originales', (t) => {
+test('chaque dossier juridique possède un historique indépendant sans pièces originales', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
 
-  const alpha = createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'État Alpha' });
-  const beta = createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Beta', homeDir: data.home, label: 'État Beta' });
+  const alpha = await createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'État Alpha' });
+  const beta = await createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Beta', homeDir: data.home, label: 'État Beta' });
   assert.equal(alpha.created, true);
   assert.equal(beta.created, true);
   assert.notEqual(alpha.commit, beta.commit);
@@ -62,18 +62,18 @@ test('chaque dossier juridique possède un historique indépendant sans pièces 
   const files = git(alphaGit, data.caseA, ['ls-tree', '-r', '--name-only', alpha.commit]).split('\n');
   assert.deepEqual(files, ['contrat.md', 'contrat_sensitive_map.json']);
   assert.ok(!files.some((file) => file.includes('original')));
-  assert.deepEqual(safeCaseFiles(data.caseA), ['contrat_sensitive_map.json', 'contrat.md']);
+  assert.deepEqual(await safeCaseFiles(data.caseA), ['contrat_sensitive_map.json', 'contrat.md']);
   assert.equal(fs.readFileSync(path.join(data.originals, 'contrat.pdf'), 'utf8'), 'CONTENU ORIGINAL SECRET\n');
 });
 
-test('l’aperçu expose les métadonnées et le niveau de protection de chaque originale', (t) => {
+test('l’aperçu expose les métadonnées et le niveau de protection de chaque originale', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
   fs.writeFileSync(path.join(data.originals, 'conclusions.docx'), 'ORIGINAL 2');
   fs.writeFileSync(path.join(data.caseA, 'conclusions.md'), '# Conclusions\n');
   fs.writeFileSync(path.join(data.originals, 'annexe.png'), 'ORIGINAL 3');
 
-  const overview = repositoryOverview(data.casesRoot, data.home);
+  const overview = await repositoryOverview(data.casesRoot, data.home);
   assert.deepEqual(overview.folders.map((folder) => folder.name), ['Dossier Alpha', 'Dossier Beta']);
   const alpha = overview.folders[0];
   assert.equal(alpha.originals.length, 3);
@@ -84,47 +84,47 @@ test('l’aperçu expose les métadonnées et le niveau de protection de chaque 
   assert.ok(alpha.originals.every((file) => !Object.hasOwn(file, 'content')));
 });
 
-test('les modifications sont calculées par rapport au dernier commit complet du dossier', (t) => {
+test('les modifications sont calculées par rapport au dernier commit complet du dossier', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
-  createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'Version 1' });
+  await createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'Version 1' });
   fs.writeFileSync(path.join(data.caseA, 'contrat.md'), '# Contrat anonymisé v2\n');
 
-  const worktree = worktreeDetails(data.casesRoot, data.home, 'Dossier Alpha', 'contrat.md');
+  const worktree = await worktreeDetails(data.casesRoot, data.home, 'Dossier Alpha', 'contrat.md');
   assert.equal(worktree.kind, 'worktree');
   assert.deepEqual(worktree.files.map((file) => file.path), ['contrat.md']);
   assert.match(worktree.patch, /Contrat anonymisé v2/);
 
-  const version2 = createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'Version 2' });
-  const history = listHistory(data.casesRoot, data.home, { caseName: 'Dossier Alpha' });
+  const version2 = await createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'Version 2' });
+  const history = await listHistory(data.casesRoot, data.home, { caseName: 'Dossier Alpha' });
   assert.equal(history[0].hash, version2.commit);
   assert.equal(history[0].subject, 'Version 2');
-  const details = revisionDetails(data.casesRoot, data.home, 'Dossier Alpha', version2.commit);
+  const details = await revisionDetails(data.casesRoot, data.home, 'Dossier Alpha', version2.commit);
   assert.equal(details.kind, 'commit');
   assert.equal(details.selectedPath, '');
   assert.match(details.patch, /Contrat anonymisé v2/);
 });
 
-test('les noms de fichiers français restent lisibles dans l’historique', (t) => {
+test('les noms de fichiers français restent lisibles dans l’historique', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
   fs.writeFileSync(path.join(data.caseA, 'mémoire spécial.md'), '# Mémoire\n');
 
-  const overview = repositoryOverview(data.casesRoot, data.home);
+  const overview = await repositoryOverview(data.casesRoot, data.home);
   const paths = overview.folders.find((folder) => folder.name === 'Dossier Alpha').workingChanges.map((file) => file.path);
   assert.ok(paths.includes('mémoire spécial.md'));
   assert.ok(paths.every((file) => !file.includes('\\303')));
 });
 
-test('la restauration crée un retour de sécurité et préserve toutes les originales', (t) => {
+test('la restauration crée un retour de sécurité et préserve toutes les originales', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
-  const version1 = createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'Version 1' });
+  const version1 = await createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'Version 1' });
   fs.writeFileSync(path.join(data.caseA, 'contrat.md'), '# Contrat anonymisé v2\n');
-  const version2 = createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'Version 2' });
+  const version2 = await createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'Version 2' });
   fs.writeFileSync(path.join(data.caseB, 'memoire.md'), '# Beta inchangé\n');
 
-  const restored = restoreRevision({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, hash: version1.commit });
+  const restored = await restoreRevision({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, hash: version1.commit });
   assert.equal(restored.restored, true);
   assert.equal(restored.safetyCommit, version2.commit);
   assert.ok(restored.restorationCommit);
@@ -133,11 +133,11 @@ test('la restauration crée un retour de sécurité et préserve toutes les orig
   assert.equal(fs.readFileSync(path.join(data.originals, 'contrat.pdf'), 'utf8'), 'CONTENU ORIGINAL SECRET\n');
   assert.equal(fs.readFileSync(path.join(data.caseB, 'memoire.md'), 'utf8'), '# Beta inchangé\n');
 
-  restoreRevision({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, hash: restored.safetyCommit });
+  await restoreRevision({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, hash: restored.safetyCommit });
   assert.equal(fs.readFileSync(path.join(data.caseA, 'contrat.md'), 'utf8'), '# Contrat anonymisé v2\n');
 });
 
-test('le PostToolUse alimente uniquement l’historique du dossier juridique concerné', (t) => {
+test('le PostToolUse alimente uniquement l’historique du dossier juridique concerné', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
   writeConfig(data);
@@ -156,13 +156,13 @@ test('le PostToolUse alimente uniquement l’historique du dossier juridique con
     env: { ...process.env, HOME: path.dirname(data.home) },
   });
   assert.equal(result.status, 0, result.stderr);
-  const history = listHistory(data.casesRoot, data.home, { caseName: 'Dossier Alpha' });
+  const history = await listHistory(data.casesRoot, data.home, { caseName: 'Dossier Alpha' });
   assert.equal(history.length, 1);
   assert.match(history[0].subject, /Modification de contrat\.md/);
-  assert.deepEqual(listHistory(data.casesRoot, data.home, { caseName: 'Dossier Beta' }), []);
+  assert.deepEqual(await listHistory(data.casesRoot, data.home, { caseName: 'Dossier Beta' }), []);
 });
 
-test('le garde-fou refuse une originale et autorise le Markdown converti', (t) => {
+test('le garde-fou refuse une originale et autorise le Markdown converti', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
   writeConfig(data);

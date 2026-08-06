@@ -3,7 +3,9 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { spawn } = require('node:child_process');
+
+const fsp = fs.promises;
 
 const MAX_GIT_BUFFER = 16 * 1024 * 1024;
 const MAX_PATCH_BYTES = 768 * 1024;
@@ -13,7 +15,7 @@ const HISTORY_REF = 'refs/heads/main';
 const LEGACY_HISTORY_REF = 'refs/heads/checkpoints';
 const SAFE_EXTENSIONS = new Set(['.md', '.json']);
 
-function runGit(cwd, args, { gitDir, workTree, env = {}, input, allowFailure = false, encoding = 'utf8' } = {}) {
+async function runGit(cwd, args, { gitDir, workTree, env = {}, input, allowFailure = false, encoding = 'utf8' } = {}) {
   const command = [
     ...(gitDir ? [`--git-dir=${gitDir}`] : []),
     ...(workTree ? [`--work-tree=${workTree}`] : []),
@@ -21,20 +23,49 @@ function runGit(cwd, args, { gitDir, workTree, env = {}, input, allowFailure = f
     'core.quotePath=false',
     ...args,
   ];
-  const result = spawnSync('git', command, {
-    cwd,
-    encoding,
-    windowsHide: true,
-    maxBuffer: MAX_GIT_BUFFER,
-    env: { ...process.env, ...env },
-    ...(input === undefined ? {} : { input }),
+  // `spawn` plutôt que `spawnSync` : le serveur d'administration sert aussi le
+  // task pane et le WebSocket depuis la même boucle d'événements, qu'un git
+  // synchrone bloquerait le temps du parcours complet du dossier.
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', command, {
+      cwd,
+      windowsHide: true,
+      env: { ...process.env, ...env },
+    });
+    const outChunks = [];
+    const errChunks = [];
+    let outBytes = 0;
+    let failure = null;
+
+    child.stdout.on('data', (chunk) => {
+      outBytes += chunk.length;
+      if (outBytes > MAX_GIT_BUFFER) {
+        if (!failure) {
+          failure = new Error(`git ${args[0]} a produit une sortie trop volumineuse`);
+          child.kill();
+        }
+        return;
+      }
+      outChunks.push(chunk);
+    });
+    child.stderr.on('data', (chunk) => errChunks.push(chunk));
+    child.on('error', (error) => { failure = failure || error; });
+    child.on('close', (code) => {
+      const rawStdout = Buffer.concat(outChunks);
+      const rawStderr = Buffer.concat(errChunks).toString('utf8');
+      const stdout = encoding === null ? rawStdout : rawStdout.toString('utf8').trimEnd();
+      const stderr = encoding === null ? rawStderr : rawStderr.trim();
+      const status = failure ? null : code;
+      if (!allowFailure && ((status ?? 1) !== 0 || failure)) {
+        reject(new Error(stderr.trim() || rawStdout.toString('utf8') || failure?.message || `git ${args[0]} a échoué`));
+        return;
+      }
+      resolve({ code: status ?? 1, stdout, stderr, error: failure });
+    });
+
+    child.stdin.on('error', () => {});
+    child.stdin.end(input === undefined ? undefined : input);
   });
-  const stdout = encoding === null ? result.stdout : String(result.stdout || '').trimEnd();
-  const stderr = encoding === null ? String(result.stderr || '') : String(result.stderr || '').trim();
-  if (!allowFailure && ((result.status ?? 1) !== 0 || result.error)) {
-    throw new Error(stderr || String(stdout || '') || result.error?.message || `git ${args[0]} a échoué`);
-  }
-  return { code: result.status ?? 1, stdout, stderr, error: result.error };
 }
 
 function normalizeOriginalName(value) {
@@ -112,22 +143,22 @@ function locateCaseFile(casesRoot, filePath) {
   return { ...legalCase, absolute, protected: false, safe: SAFE_EXTENSIONS.has(path.extname(relative).toLowerCase()), relative };
 }
 
-function safeCaseFiles(caseRoot) {
-  const root = fs.realpathSync(caseRoot);
+async function safeCaseFiles(caseRoot) {
+  const root = await fsp.realpath(caseRoot);
   const files = [];
   let bytes = 0;
 
-  function visit(directory, prefix = '') {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+  async function visit(directory, prefix = '') {
+    for (const entry of await fsp.readdir(directory, { withFileTypes: true })) {
       if (entry.name.startsWith('.') || isOriginalDirectoryName(entry.name) || entry.isSymbolicLink()) continue;
       const absolute = path.join(directory, entry.name);
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
-        visit(absolute, relative);
+        await visit(absolute, relative);
         continue;
       }
       if (!entry.isFile() || !SAFE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue;
-      const size = fs.statSync(absolute).size;
+      const size = (await fsp.stat(absolute)).size;
       bytes += size;
       files.push(relative);
       if (files.length > MAX_SAFE_FILES) throw new Error('Ce dossier contient trop de fichiers Markdown/JSON pour un commit sûr.');
@@ -135,7 +166,7 @@ function safeCaseFiles(caseRoot) {
     }
   }
 
-  visit(root);
+  await visit(root);
   return files.sort((a, b) => a.localeCompare(b, 'fr'));
 }
 
@@ -143,9 +174,9 @@ function documentKey(filePath) {
   return normalizeOriginalName(path.basename(filePath, path.extname(filePath))).replaceAll(' ', '-');
 }
 
-function originalFilesOverview(caseRoot) {
-  const root = fs.realpathSync(caseRoot);
-  const safeFiles = safeCaseFiles(root);
+async function originalFilesOverview(caseRoot) {
+  const root = await fsp.realpath(caseRoot);
+  const safeFiles = await safeCaseFiles(root);
   const markdownKeys = new Set(safeFiles.filter((file) => path.extname(file).toLowerCase() === '.md').map(documentKey));
   const scanKeys = new Set(
     safeFiles
@@ -154,17 +185,17 @@ function originalFilesOverview(caseRoot) {
   );
   const originals = [];
 
-  function visit(directory, prefix = '') {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+  async function visit(directory, prefix = '') {
+    for (const entry of await fsp.readdir(directory, { withFileTypes: true })) {
       if (entry.name.startsWith('.') || entry.isSymbolicLink()) continue;
       const absolute = path.join(directory, entry.name);
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
-        visit(absolute, relative);
+        await visit(absolute, relative);
         continue;
       }
       if (!entry.isFile()) continue;
-      const stat = fs.statSync(absolute);
+      const stat = await fsp.stat(absolute);
       const key = documentKey(entry.name);
       const converted = markdownKeys.has(key);
       const scanned = converted && scanKeys.has(key);
@@ -182,9 +213,9 @@ function originalFilesOverview(caseRoot) {
     }
   }
 
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+  for (const entry of await fsp.readdir(root, { withFileTypes: true })) {
     if (entry.isDirectory() && !entry.isSymbolicLink() && isOriginalDirectoryName(entry.name)) {
-      visit(path.join(root, entry.name));
+      await visit(path.join(root, entry.name));
     }
   }
   return originals.sort((a, b) => a.path.localeCompare(b.path, 'fr'));
@@ -209,26 +240,26 @@ function historyRepo(homeDir, legalCase) {
   return path.join(historyDirectory(homeDir), `${historyId(legalCase)}.git`);
 }
 
-function ensureHistoryRepo(homeDir, legalCase) {
+async function ensureHistoryRepo(homeDir, legalCase) {
   const gitDir = historyRepo(homeDir, legalCase);
   if (!fs.existsSync(gitDir)) {
     fs.mkdirSync(path.dirname(gitDir), { recursive: true });
-    runGit(legalCase.root, ['init', '--bare', gitDir]);
+    await runGit(legalCase.root, ['init', '--bare', gitDir]);
   }
-  const main = runGit(legalCase.root, ['rev-parse', '--verify', HISTORY_REF], { gitDir, allowFailure: true });
+  const main = await runGit(legalCase.root, ['rev-parse', '--verify', HISTORY_REF], { gitDir, allowFailure: true });
   if (main.code !== 0) {
-    const legacy = runGit(legalCase.root, ['rev-parse', '--verify', LEGACY_HISTORY_REF], { gitDir, allowFailure: true });
-    if (legacy.code === 0) runGit(legalCase.root, ['update-ref', HISTORY_REF, legacy.stdout], { gitDir });
+    const legacy = await runGit(legalCase.root, ['rev-parse', '--verify', LEGACY_HISTORY_REF], { gitDir, allowFailure: true });
+    if (legacy.code === 0) await runGit(legalCase.root, ['update-ref', HISTORY_REF, legacy.stdout], { gitDir });
   }
   return gitDir;
 }
 
-function latestCommit(legalCase, gitDir) {
-  const result = runGit(legalCase.root, ['rev-parse', '--verify', HISTORY_REF], { gitDir, allowFailure: true });
+async function latestCommit(legalCase, gitDir) {
+  const result = await runGit(legalCase.root, ['rev-parse', '--verify', HISTORY_REF], { gitDir, allowFailure: true });
   return result.code === 0 ? result.stdout : '';
 }
 
-function withCaseLock(homeDir, legalCase, callback) {
+async function withCaseLock(homeDir, legalCase, callback) {
   const directory = historyDirectory(homeDir);
   fs.mkdirSync(directory, { recursive: true });
   const lock = path.join(directory, `${historyId(legalCase)}.lock`);
@@ -244,7 +275,7 @@ function withCaseLock(homeDir, legalCase, callback) {
       fd = fs.openSync(lock, 'wx');
     }
     fs.writeFileSync(fd, `${process.pid}\n`, 'utf8');
-    return callback();
+    return await callback();
   } finally {
     if (fd !== undefined) {
       try { fs.closeSync(fd); } catch {}
@@ -253,24 +284,24 @@ function withCaseLock(homeDir, legalCase, callback) {
   }
 }
 
-function buildCurrentTree(legalCase, gitDir, homeDir) {
+async function buildCurrentTree(legalCase, gitDir, homeDir) {
   const temporaryIndex = path.join(historyDirectory(homeDir), `index-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   const env = { GIT_INDEX_FILE: temporaryIndex };
-  const files = safeCaseFiles(legalCase.root);
+  const files = await safeCaseFiles(legalCase.root);
   try {
-    runGit(legalCase.root, ['read-tree', '--empty'], { gitDir, workTree: legalCase.root, env });
+    await runGit(legalCase.root, ['read-tree', '--empty'], { gitDir, workTree: legalCase.root, env });
     for (let index = 0; index < files.length; index += 100) {
-      runGit(legalCase.root, ['add', '-f', '--', ...files.slice(index, index + 100)], { gitDir, workTree: legalCase.root, env });
+      await runGit(legalCase.root, ['add', '-f', '--', ...files.slice(index, index + 100)], { gitDir, workTree: legalCase.root, env });
     }
-    const tree = runGit(legalCase.root, ['write-tree'], { gitDir, workTree: legalCase.root, env }).stdout;
+    const tree = (await runGit(legalCase.root, ['write-tree'], { gitDir, workTree: legalCase.root, env })).stdout;
     return { tree, files };
   } finally {
     try { fs.unlinkSync(temporaryIndex); } catch {}
   }
 }
 
-function emptyTree(legalCase, gitDir) {
-  return runGit(legalCase.root, ['mktree'], { gitDir, input: '' }).stdout;
+async function emptyTree(legalCase, gitDir) {
+  return (await runGit(legalCase.root, ['mktree'], { gitDir, input: '' })).stdout;
 }
 
 function parseNameStatus(raw) {
@@ -288,21 +319,21 @@ function statusKind(code) {
   return 'modified';
 }
 
-function diffTrees(legalCase, gitDir, from, to) {
-  return parseNameStatus(runGit(legalCase.root, ['diff-tree', '--no-commit-id', '--name-status', '-r', from, to], { gitDir }).stdout)
-    .map((file) => ({ ...file, kind: statusKind(file.status) }));
+async function diffTrees(legalCase, gitDir, from, to) {
+  const raw = (await runGit(legalCase.root, ['diff-tree', '--no-commit-id', '--name-status', '-r', from, to], { gitDir })).stdout;
+  return parseNameStatus(raw).map((file) => ({ ...file, kind: statusKind(file.status) }));
 }
 
-function workingState(casesRoot, homeDir, caseName) {
+async function workingState(casesRoot, homeDir, caseName) {
   const legalCase = resolveCase(casesRoot, caseName);
-  const gitDir = ensureHistoryRepo(homeDir, legalCase);
-  const latest = latestCommit(legalCase, gitDir);
-  const current = buildCurrentTree(legalCase, gitDir, homeDir);
-  const base = latest || emptyTree(legalCase, gitDir);
-  return { legalCase, gitDir, latest, current, base, changes: diffTrees(legalCase, gitDir, base, current.tree) };
+  const gitDir = await ensureHistoryRepo(homeDir, legalCase);
+  const latest = await latestCommit(legalCase, gitDir);
+  const current = await buildCurrentTree(legalCase, gitDir, homeDir);
+  const base = latest || await emptyTree(legalCase, gitDir);
+  return { legalCase, gitDir, latest, current, base, changes: await diffTrees(legalCase, gitDir, base, current.tree) };
 }
 
-function createCommit({
+async function createCommit({
   casesRoot,
   caseName,
   homeDir = path.join(os.homedir(), '.piecemaker'),
@@ -312,13 +343,13 @@ function createCommit({
 } = {}) {
   const legalCase = resolveCase(casesRoot, caseName);
   const safeLabel = String(label || 'Commit PieceMaker').replace(/[\r\n]+/g, ' ').trim().slice(0, 140);
-  return withCaseLock(homeDir, legalCase, () => {
-    const gitDir = ensureHistoryRepo(homeDir, legalCase);
-    const parent = latestCommit(legalCase, gitDir);
-    const current = buildCurrentTree(legalCase, gitDir, homeDir);
+  return withCaseLock(homeDir, legalCase, async () => {
+    const gitDir = await ensureHistoryRepo(homeDir, legalCase);
+    const parent = await latestCommit(legalCase, gitDir);
+    const current = await buildCurrentTree(legalCase, gitDir, homeDir);
     const parentTree = parent
-      ? runGit(legalCase.root, ['rev-parse', `${parent}^{tree}`], { gitDir }).stdout
-      : emptyTree(legalCase, gitDir);
+      ? (await runGit(legalCase.root, ['rev-parse', `${parent}^{tree}`], { gitDir })).stdout
+      : await emptyTree(legalCase, gitDir);
     if (current.tree === parentTree) {
       return { created: false, commit: parent || null, caseName: legalCase.name, files: [] };
     }
@@ -334,9 +365,9 @@ function createCommit({
       GIT_COMMITTER_DATE: timestamp,
     };
     const args = ['commit-tree', current.tree, ...(parent ? ['-p', parent] : [])];
-    const commit = runGit(legalCase.root, args, { gitDir, env: identity, input: message }).stdout;
-    runGit(legalCase.root, ['update-ref', HISTORY_REF, commit, ...(parent ? [parent] : [])], { gitDir });
-    const files = diffTrees(legalCase, gitDir, parentTree, current.tree);
+    const commit = (await runGit(legalCase.root, args, { gitDir, env: identity, input: message })).stdout;
+    await runGit(legalCase.root, ['update-ref', HISTORY_REF, commit, ...(parent ? [parent] : [])], { gitDir });
+    const files = await diffTrees(legalCase, gitDir, parentTree, current.tree);
     return {
       created: true,
       commit,
@@ -368,15 +399,15 @@ function parseLog(raw) {
   }).filter((entry) => entry.hash);
 }
 
-function listHistory(casesRoot, homeDir, { caseName, limit = 120 } = {}) {
+async function listHistory(casesRoot, homeDir, { caseName, limit = 120 } = {}) {
   const legalCase = resolveCase(casesRoot, caseName);
-  const gitDir = ensureHistoryRepo(homeDir, legalCase);
-  if (!latestCommit(legalCase, gitDir)) return [];
+  const gitDir = await ensureHistoryRepo(homeDir, legalCase);
+  if (!await latestCommit(legalCase, gitDir)) return [];
   const safeLimit = Math.min(Math.max(Number(limit) || 120, 1), 250);
-  const raw = runGit(legalCase.root, [
+  const raw = (await runGit(legalCase.root, [
     'log', `--max-count=${safeLimit}`, '--date=iso-strict', '--no-renames',
     '--pretty=format:%x1e%H%x1f%h%x1f%an%x1f%aI%x1f%s', '--name-only', HISTORY_REF,
-  ], { gitDir }).stdout;
+  ], { gitDir })).stdout;
   return parseLog(raw);
 }
 
@@ -392,20 +423,20 @@ function validateRelativeSafePath(legalCase, relativePath) {
   return normalized;
 }
 
-function revisionMetadata(legalCase, gitDir, hash) {
+async function revisionMetadata(legalCase, gitDir, hash) {
   if (!/^[0-9a-f]{7,64}$/i.test(String(hash || ''))) throw new Error('Identifiant de révision invalide.');
-  const commit = runGit(legalCase.root, ['rev-parse', '--verify', `${hash}^{commit}`], { gitDir }).stdout;
-  if (runGit(legalCase.root, ['merge-base', '--is-ancestor', commit, HISTORY_REF], { gitDir, allowFailure: true }).code !== 0) {
+  const commit = (await runGit(legalCase.root, ['rev-parse', '--verify', `${hash}^{commit}`], { gitDir })).stdout;
+  if ((await runGit(legalCase.root, ['merge-base', '--is-ancestor', commit, HISTORY_REF], { gitDir, allowFailure: true })).code !== 0) {
     throw new Error('Cette révision ne fait pas partie de ce dossier juridique.');
   }
-  const raw = runGit(legalCase.root, ['show', '-s', '--date=iso-strict', '--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s', commit], { gitDir }).stdout;
+  const raw = (await runGit(legalCase.root, ['show', '-s', '--date=iso-strict', '--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s', commit], { gitDir })).stdout;
   const [fullHash, shortHash, author, timestamp, ...subject] = raw.split('\x1f');
   return { commit, hash: fullHash, shortHash, author, timestamp, subject: subject.join(' ') };
 }
 
-function fileStats(legalCase, gitDir, commit) {
+async function fileStats(legalCase, gitDir, commit) {
   const stats = new Map();
-  const raw = runGit(legalCase.root, ['diff-tree', '--root', '--no-commit-id', '--numstat', '-r', commit], { gitDir }).stdout;
+  const raw = (await runGit(legalCase.root, ['diff-tree', '--root', '--no-commit-id', '--numstat', '-r', commit], { gitDir })).stdout;
   for (const line of raw.split(/\r?\n/)) {
     const [added, deleted, changedPath] = line.split('\t');
     if (changedPath) stats.set(changedPath, { added: added === '-' ? null : Number(added), deleted: deleted === '-' ? null : Number(deleted) });
@@ -413,17 +444,18 @@ function fileStats(legalCase, gitDir, commit) {
   return stats;
 }
 
-function revisionDetails(casesRoot, homeDir, caseName, hash, filePath = '') {
+async function revisionDetails(casesRoot, homeDir, caseName, hash, filePath = '') {
   const legalCase = resolveCase(casesRoot, caseName);
-  const gitDir = ensureHistoryRepo(homeDir, legalCase);
-  const meta = revisionMetadata(legalCase, gitDir, hash);
-  const stats = fileStats(legalCase, gitDir, meta.commit);
-  const files = parseNameStatus(runGit(legalCase.root, ['diff-tree', '--root', '--no-commit-id', '--name-status', '-r', meta.commit], { gitDir }).stdout)
+  const gitDir = await ensureHistoryRepo(homeDir, legalCase);
+  const meta = await revisionMetadata(legalCase, gitDir, hash);
+  const stats = await fileStats(legalCase, gitDir, meta.commit);
+  const nameStatus = (await runGit(legalCase.root, ['diff-tree', '--root', '--no-commit-id', '--name-status', '-r', meta.commit], { gitDir })).stdout;
+  const files = parseNameStatus(nameStatus)
     .map((file) => ({ ...file, kind: statusKind(file.status), ...(stats.get(file.path) || {}) }));
   const selectedPath = filePath ? validateRelativeSafePath(legalCase, filePath) : '';
   if (selectedPath && !files.some((file) => file.path === selectedPath)) throw new Error('Ce fichier ne fait pas partie de cette révision.');
   const args = ['show', '--format=', '--no-ext-diff', '--unified=3', meta.commit, ...(selectedPath ? ['--', selectedPath] : [])];
-  const patchRaw = runGit(legalCase.root, args, { gitDir }).stdout;
+  const patchRaw = (await runGit(legalCase.root, args, { gitDir })).stdout;
   return {
     ...meta,
     kind: 'commit',
@@ -434,16 +466,16 @@ function revisionDetails(casesRoot, homeDir, caseName, hash, filePath = '') {
   };
 }
 
-function worktreeDetails(casesRoot, homeDir, caseName, filePath = '') {
-  const state = workingState(casesRoot, homeDir, caseName);
+async function worktreeDetails(casesRoot, homeDir, caseName, filePath = '') {
+  const state = await workingState(casesRoot, homeDir, caseName);
   const selectedPath = filePath ? validateRelativeSafePath(state.legalCase, filePath) : '';
   if (selectedPath && !state.changes.some((file) => file.path === selectedPath)) {
     throw new Error('Ce fichier ne fait pas partie des modifications actuelles.');
   }
-  const patchRaw = runGit(state.legalCase.root, [
+  const patchRaw = (await runGit(state.legalCase.root, [
     'diff', '--no-ext-diff', '--unified=3', state.base, state.current.tree,
     ...(selectedPath ? ['--', selectedPath] : []),
-  ], { gitDir: state.gitDir }).stdout;
+  ], { gitDir: state.gitDir })).stdout;
   return {
     hash: 'WORKTREE',
     shortHash: '',
@@ -458,29 +490,32 @@ function worktreeDetails(casesRoot, homeDir, caseName, filePath = '') {
   };
 }
 
-function repositoryOverview(casesRoot, homeDir = path.join(os.homedir(), '.piecemaker')) {
+async function repositoryOverview(casesRoot, homeDir = path.join(os.homedir(), '.piecemaker')) {
   const requestedRoot = path.resolve(String(casesRoot || ''));
   if (!fs.existsSync(requestedRoot)) {
     return { name: 'PieceMaker', root: requestedRoot, branch: 'Dossiers indépendants', head: '', shortHead: '', folders: [], changes: [] };
   }
   const root = resolveCasesRoot(requestedRoot);
-  const folders = fs.readdirSync(root, { withFileTypes: true })
+  const entries = fs.readdirSync(root, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink() && !entry.name.startsWith('.') && !isOriginalDirectoryName(entry.name))
-    .sort((a, b) => a.name.localeCompare(b.name, 'fr'))
-    .map((entry) => {
-      const state = workingState(root, homeDir, entry.name);
-      const originals = originalFilesOverview(state.legalCase.root);
-      return {
-        name: entry.name,
-        path: entry.name,
-        changes: state.changes.length,
-        workingChanges: state.changes,
-        head: state.latest,
-        shortHead: state.latest.slice(0, 7),
-        originals,
-        protectedOriginals: originals.filter((file) => file.protected).length,
-      };
+    .sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  // Séquentiel : chaque dossier lance déjà une série de processus git, les
+  // paralléliser en ferait exploser le nombre sur un poste de travail.
+  const folders = [];
+  for (const entry of entries) {
+    const state = await workingState(root, homeDir, entry.name);
+    const originals = await originalFilesOverview(state.legalCase.root);
+    folders.push({
+      name: entry.name,
+      path: entry.name,
+      changes: state.changes.length,
+      workingChanges: state.changes,
+      head: state.latest,
+      shortHead: state.latest.slice(0, 7),
+      originals,
+      protectedOriginals: originals.filter((file) => file.protected).length,
     });
+  }
   return { name: path.basename(root), root, branch: 'Dossiers indépendants', head: '', shortHead: '', folders, changes: [] };
 }
 
@@ -495,11 +530,11 @@ function safeDestination(legalCase, relativePath) {
   return { normalized, absolute: path.join(legalCase.root, ...parts) };
 }
 
-function restoreRevision({ casesRoot, caseName, homeDir = path.join(os.homedir(), '.piecemaker'), hash } = {}) {
+async function restoreRevision({ casesRoot, caseName, homeDir = path.join(os.homedir(), '.piecemaker'), hash } = {}) {
   const legalCase = resolveCase(casesRoot, caseName);
-  const gitDir = ensureHistoryRepo(homeDir, legalCase);
-  const meta = revisionMetadata(legalCase, gitDir, hash);
-  const safety = createCommit({
+  const gitDir = await ensureHistoryRepo(homeDir, legalCase);
+  const meta = await revisionMetadata(legalCase, gitDir, hash);
+  const safety = await createCommit({
     casesRoot: legalCase.casesRoot,
     caseName: legalCase.name,
     homeDir,
@@ -508,21 +543,21 @@ function restoreRevision({ casesRoot, caseName, homeDir = path.join(os.homedir()
   });
   if (safety.skipped === 'busy') throw new Error('Un commit est déjà en cours. Réessayez dans quelques secondes.');
 
-  const targetFiles = runGit(legalCase.root, ['ls-tree', '-r', '--name-only', meta.commit], { gitDir }).stdout.split(/\r?\n/).filter(Boolean);
+  const targetFiles = (await runGit(legalCase.root, ['ls-tree', '-r', '--name-only', meta.commit], { gitDir })).stdout.split(/\r?\n/).filter(Boolean);
   const targetSet = new Set(targetFiles);
-  for (const relative of safeCaseFiles(legalCase.root)) {
+  for (const relative of await safeCaseFiles(legalCase.root)) {
     if (!targetSet.has(relative)) fs.unlinkSync(safeDestination(legalCase, relative).absolute);
   }
   for (const relative of targetFiles) {
     const destination = safeDestination(legalCase, relative);
     fs.mkdirSync(path.dirname(destination.absolute), { recursive: true });
-    const content = runGit(legalCase.root, ['show', `${meta.commit}:${destination.normalized}`], { gitDir, encoding: null }).stdout;
+    const content = (await runGit(legalCase.root, ['show', `${meta.commit}:${destination.normalized}`], { gitDir, encoding: null })).stdout;
     const temporary = `${destination.absolute}.piecemaker-${process.pid}.tmp`;
     fs.writeFileSync(temporary, content);
     fs.renameSync(temporary, destination.absolute);
   }
 
-  const restoredState = createCommit({
+  const restoredState = await createCommit({
     casesRoot: legalCase.casesRoot,
     caseName: legalCase.name,
     homeDir,
@@ -534,7 +569,7 @@ function restoreRevision({ casesRoot, caseName, homeDir = path.join(os.homedir()
     revision: meta.commit,
     safetyCommit: safety.commit || null,
     restorationCommit: restoredState.commit || null,
-    changes: workingState(legalCase.casesRoot, homeDir, legalCase.name).changes,
+    changes: (await workingState(legalCase.casesRoot, homeDir, legalCase.name)).changes,
     originalsPreserved: true,
   };
 }

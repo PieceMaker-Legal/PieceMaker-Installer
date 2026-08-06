@@ -1,11 +1,14 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawn } = require('child_process');
 const { configuredWorkspacePath } = require('./workspace-paths.cjs');
 const {
   createCommit,
   listHistory,
   repositoryOverview,
+  resolveCase,
+  resolveCasesRoot,
   restoreRevision,
   revisionDetails,
   worktreeDetails,
@@ -432,6 +435,71 @@ function listDossiers(repoRoot, homeDir) {
     .filter((dossier) => dossier.documents.length > 0);
 }
 
+const REVEAL_TARGETS = new Set(['files', 'terminal']);
+
+/**
+ * Commandes candidates pour montrer un dossier du poste de travail, essayées
+ * dans l'ordre jusqu'à ce que l'une démarre. Fonction pure : `platform` suit la
+ * convention de `process.platform`, aucun chemin n'est concaténé dans une
+ * chaîne de shell (les arguments partent tels quels à `spawn`, sans `shell`).
+ */
+function revealCommands(platform, target, absolutePath) {
+  if (!REVEAL_TARGETS.has(target)) throw new Error('Action de dossier inconnue.');
+  const isAbsolute = platform === 'win32' ? path.win32.isAbsolute : path.posix.isAbsolute;
+  if (!isAbsolute(String(absolutePath || ''))) throw new Error('Chemin de dossier invalide.');
+  if (platform === 'darwin') {
+    return target === 'terminal'
+      ? [{ command: 'open', args: ['-a', 'Terminal', absolutePath] }]
+      // `-R` révèle le dossier dans sa fenêtre parente, comme « Afficher dans le Finder ».
+      : [{ command: 'open', args: ['-R', absolutePath] }];
+  }
+  if (platform === 'win32') {
+    return target === 'terminal'
+      ? [
+        { command: 'wt.exe', args: ['-d', absolutePath] },
+        // Repli sans Windows Terminal : PowerShell ouvre l'invite de commandes
+        // dans le dossier, `-WorkingDirectory` évite tout `cd` à échapper.
+        { command: 'powershell.exe', args: ['-NoProfile', '-Command', `Start-Process -FilePath cmd.exe -WorkingDirectory '${absolutePath.replace(/'/g, "''")}'`] },
+      ]
+      : [{ command: 'explorer.exe', args: [`/select,${absolutePath}`] }];
+  }
+  return target === 'terminal'
+    ? [
+      { command: 'x-terminal-emulator', args: [`--working-directory=${absolutePath}`] },
+      { command: 'gnome-terminal', args: [`--working-directory=${absolutePath}`] },
+      { command: 'konsole', args: ['--workdir', absolutePath] },
+      { command: 'xterm', args: ['-e', 'sh', '-c', 'cd "$0" && exec "${SHELL:-/bin/sh}"', absolutePath] },
+    ]
+    : [{ command: 'xdg-open', args: [absolutePath] }];
+}
+
+function spawnDetached({ command, args }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { detached: true, stdio: 'ignore' });
+    child.once('error', reject);
+    // `spawn` confirme le démarrage : le processus survit ensuite à PieceMaker.
+    child.once('spawn', () => {
+      child.unref();
+      resolve(command);
+    });
+  });
+}
+
+async function revealLocalFolder(platform, target, absolutePath) {
+  const candidates = revealCommands(platform, target, absolutePath);
+  let lastError = null;
+  for (const candidate of candidates) {
+    try {
+      return await spawnDetached(candidate);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw new Error(target === 'terminal'
+    ? `Aucun terminal n’a pu être ouvert sur ce poste (${lastError?.message || 'commande introuvable'}).`
+    : `Le gestionnaire de fichiers n’a pas pu être ouvert (${lastError?.message || 'commande introuvable'}).`);
+}
+
 function createAdminRouter({
   repoRoot = path.resolve(__dirname, '..'),
   homeDir = path.join(os.homedir(), '.piecemaker'),
@@ -567,41 +635,57 @@ function createAdminRouter({
     }
   });
 
-  router.get('/repository', (req, res) => {
+  router.get('/repository', async (req, res) => {
     try {
-      res.json(repositoryOverview(casesRoot(), homeDir));
+      res.json(await repositoryOverview(casesRoot(), homeDir));
     } catch (error) {
       res.status(503).json({ error: error.message });
     }
   });
 
-  router.get('/history', (req, res) => {
+  // Ouvre le dossier juridique sélectionné (ou la racine PieceMaker) dans le
+  // gestionnaire de fichiers ou le terminal du poste. Le chemin est toujours
+  // résolu par `resolveCase`, jamais reçu du navigateur.
+  router.post('/reveal', async (req, res) => {
     try {
-      const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 250);
-      const caseName = String(req.query.case || '').trim();
-      res.json({ history: listHistory(casesRoot(), homeDir, { limit, caseName }) });
+      const target = String(req.body?.target || '');
+      if (!REVEAL_TARGETS.has(target)) throw new Error('Action de dossier inconnue.');
+      const caseName = String(req.body?.case || '').trim();
+      const absolute = caseName ? resolveCase(casesRoot(), caseName).root : resolveCasesRoot(casesRoot());
+      await revealLocalFolder(process.platform, target, absolute);
+      res.json({ ok: true, target, path: absolute });
     } catch (error) {
       res.status(400).json({ error: error.message });
     }
   });
 
-  router.get('/revision', (req, res) => {
+  router.get('/history', async (req, res) => {
+    try {
+      const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 250);
+      const caseName = String(req.query.case || '').trim();
+      res.json({ history: await listHistory(casesRoot(), homeDir, { limit, caseName }) });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  router.get('/revision', async (req, res) => {
     try {
       const hash = String(req.query.hash || '');
       const filePath = String(req.query.path || '');
       const caseName = String(req.query.case || '').trim();
       res.json(hash === 'WORKTREE'
-        ? worktreeDetails(casesRoot(), homeDir, caseName, filePath)
-        : revisionDetails(casesRoot(), homeDir, caseName, hash, filePath));
+        ? await worktreeDetails(casesRoot(), homeDir, caseName, filePath)
+        : await revisionDetails(casesRoot(), homeDir, caseName, hash, filePath));
     } catch (error) {
       res.status(400).json({ error: error.message });
     }
   });
 
-  router.post('/commits', (req, res) => {
+  router.post('/commits', async (req, res) => {
     try {
       const label = String(req.body?.label || 'Commit manuel').trim().slice(0, 140);
-      const result = createCommit({
+      const result = await createCommit({
         casesRoot: casesRoot(),
         caseName: String(req.body?.case || '').trim(),
         homeDir,
@@ -614,12 +698,12 @@ function createAdminRouter({
     }
   });
 
-  router.post('/restore', (req, res) => {
+  router.post('/restore', async (req, res) => {
     try {
       if (req.body?.confirm !== true) {
         return res.status(400).json({ error: 'La confirmation explicite de la restauration est requise.' });
       }
-      const result = restoreRevision({
+      const result = await restoreRevision({
         casesRoot: casesRoot(),
         caseName: String(req.body?.case || '').trim(),
         homeDir,
@@ -681,6 +765,7 @@ module.exports = {
   normalizeAgentModel,
   normalizeAgentTools,
   readManagedFile,
+  revealCommands,
   saveManagedFile,
   updateEnvFile,
 };
