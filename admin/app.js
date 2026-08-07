@@ -814,26 +814,31 @@ function formatBytes(size) {
 
 function renderOriginals() {
   const list = byId('originalList');
-  const originals = caseOriginals();
+  // Filtrage direct pour optimiser l'affichage : ne garder que les pièces non traitées (non converties)
+  const unhandledOriginals = caseOriginals().filter((original) => !original.converted || !original.scanned);
   list.textContent = '';
-  byId('originalCount').textContent = String(originals.length);
-  const known = new Set(originals.map((original) => original.path));
+  byId('originalCount').textContent = String(unhandledOriginals.length);
+
+  const known = new Set(unhandledOriginals.map((original) => original.path));
   for (const selected of [...selectedOriginals]) {
     if (!known.has(selected)) selectedOriginals.delete(selected);
   }
+
   if (!selectedFolder) {
     list.append(createHistoryEmpty('Sélectionnez un dossier'));
     updateOriginalsActions();
     renderMappingSummary();
     return;
   }
-  if (!originals.length) {
-    list.append(createHistoryEmpty('Aucune pièce originale', 'Déposez les pièces dans le sous-dossier « pièces originales ».'));
+  if (!unhandledOriginals.length) {
+    list.append(createHistoryEmpty('Toutes les pièces sont traitées', 'Aucune pièce originale en attente.'));
     updateOriginalsActions();
     renderMappingSummary();
     return;
   }
-  for (const original of originals) {
+
+  const fragment = document.createDocumentFragment();
+  for (const original of unhandledOriginals) {
     const row = document.createElement('label');
     row.className = `original-row${selectedOriginals.has(original.path) ? ' selected' : ''}`;
     const checkbox = document.createElement('input');
@@ -850,42 +855,22 @@ function renderOriginals() {
     const name = document.createElement('strong');
     name.textContent = original.path;
     const detail = document.createElement('span');
-    detail.textContent = `${formatBytes(original.size)} · ${original.converted
-      ? (original.scanned ? 'Markdown et scan PII à jour' : 'Markdown généré, scan PII manquant')
-      : 'Markdown non généré'}`;
+    detail.textContent = `${formatBytes(original.size)} · Non traité`;
     body.append(name, detail);
-    const badges = document.createElement('span');
-    badges.className = 'original-badges';
-    if (original.converted) {
-      const converted = document.createElement('span');
-      converted.className = 'protection-badge converted';
-      converted.textContent = 'Markdown';
-      badges.append(converted);
-    }
-    if (original.scanned) {
-      const scanned = document.createElement('span');
-      scanned.className = 'protection-badge scanned';
-      scanned.textContent = 'PII';
-      badges.append(scanned);
-    }
-    if (!original.converted) {
-      const pending = document.createElement('span');
-      pending.className = 'protection-badge not-converted';
-      pending.textContent = 'À convertir';
-      badges.append(pending);
-    }
-    row.append(checkbox, body, badges);
-    list.append(row);
+    row.append(checkbox, body);
+    fragment.append(row);
   }
+  list.append(fragment);
   updateOriginalsActions();
   renderMappingSummary();
 }
 
 /** Sans sélection explicite, les boutons agissent sur toutes les pièces. */
 function originalsToProcess() {
-  const originals = caseOriginals();
-  if (!selectedOriginals.size) return originals.map((original) => original.path);
-  return originals.filter((original) => selectedOriginals.has(original.path)).map((original) => original.path);
+  // Cibler en priorité les pièces non traitées pour accélérer le traitement du dossier
+  const unhandledOriginals = caseOriginals().filter((original) => !original.converted || !original.scanned);
+  if (!selectedOriginals.size) return unhandledOriginals.map((original) => original.path);
+  return unhandledOriginals.filter((original) => selectedOriginals.has(original.path)).map((original) => original.path);
 }
 
 function updateOriginalsActions() {
