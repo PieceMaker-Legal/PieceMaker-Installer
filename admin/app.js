@@ -1368,6 +1368,13 @@ async function loadRevision(hash, filePath = '') {
     } catch (error) {
       byId('diffContent').textContent = error.message;
       toast(error.message);
+      // showRevisionPlaceholder() resets selectedRevision to null, so call it
+      // first, then mark this hash as "attempted". Otherwise
+      // renderHistoryItems() sees selectedRevision as still unset/stale and
+      // retries the same broken hash forever (e.g. on every periodic
+      // repository refresh) — this is what causes the apparent freeze.
+      showRevisionPlaceholder('Révision indisponible');
+      selectedRevision = { hash, path: filePath || '' };
     }
   });
 }

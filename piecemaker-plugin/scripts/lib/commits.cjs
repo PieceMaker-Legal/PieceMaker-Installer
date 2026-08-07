@@ -7,7 +7,13 @@ const { spawn } = require('node:child_process');
 
 const fsp = fs.promises;
 
-const MAX_GIT_BUFFER = 16 * 1024 * 1024;
+// Root commits (first commit of a case, diffed against the empty tree) can
+// produce patches well into the tens of MB even though only MAX_PATCH_BYTES
+// of it is ever kept (see revisionDetails/worktreeDetails). This ceiling only
+// exists to bound memory on a runaway/corrupt diff, so it must stay well
+// above realistic patch sizes — a 16MB cap was killing legitimate large
+// root-commit diffs (e.g. ~33MB) and turning them into a 400 error.
+const MAX_GIT_BUFFER = 128 * 1024 * 1024;
 const MAX_PATCH_BYTES = 768 * 1024;
 const MAX_SAFE_FILES = 10_000;
 const MAX_SAFE_BYTES = 250 * 1024 * 1024;
