@@ -1,3 +1,36 @@
+// ---------------------------------------------------------------------------
+// DEBUG LOGGING — Trace de diagnostic performance Markdown
+// ---------------------------------------------------------------------------
+const DEBUG = true;
+
+function logToCentral(level, source, message, data = null) {
+  if (typeof window !== 'undefined' && Array.isArray(window.__PM_LOGS)) {
+    const timestamp = new Date().toISOString().split('T')[1].slice(0, -1);
+    const entry = { id: Date.now() + Math.random(), timestamp, level, source, message, data };
+    window.__PM_LOGS.push(entry);
+    if (window.__PM_LOGS.length > 1000) window.__PM_LOGS.shift();
+
+    const logContainer = document.getElementById('debugLogContainer');
+    if (logContainer) {
+      const row = document.createElement('div');
+      row.className = `log-row log-${level.toLowerCase()}`;
+      const payloadStr = data !== null ? ` | ${typeof data === 'object' ? JSON.stringify(data) : data}` : '';
+      row.textContent = `[${timestamp}] [${source}] [${level}] ${message}${payloadStr}`;
+      logContainer.appendChild(row);
+      if (document.getElementById('debugAutoScroll')?.checked) {
+        logContainer.scrollTop = logContainer.scrollHeight;
+      }
+    }
+  }
+  const prefix = `[PM-DEBUG][${source}]`;
+  if (level === 'WARN') console.warn(prefix, message, data || '');
+  else if (level === 'ERROR') console.error(prefix, message, data || '');
+  else if (DEBUG) console.log(prefix, message, data || '');
+}
+
+const dlog = (msg, data) => logToCentral('INFO', 'markdown.mjs', msg, data);
+const dwarn = (msg, data) => logToCentral('WARN', 'markdown.mjs', msg, data);
+
 const escapeHtml = (value) => String(value)
   .replaceAll('&', '&amp;')
   .replaceAll('<', '&lt;')
@@ -6,16 +39,25 @@ const escapeHtml = (value) => String(value)
   .replaceAll("'", '&#39;');
 
 export function splitMarkdownDocument(source = '') {
+  const t0 = performance.now();
+  const srcLen = String(source).length;
+  dlog('splitMarkdownDocument: START', { inputLength: srcLen });
   const normalized = String(source).replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
   const match = normalized.match(/^---\n([\s\S]*?)\n---(?:\n|$)/);
-  return match
+  const result = match
     ? { frontMatter: match[1], body: normalized.slice(match[0].length).replace(/^\n/, ''), metadata: parseMetadata(match[1]) }
     : { frontMatter: '', body: normalized, metadata: {} };
+  const elapsed = performance.now() - t0;
+  dlog('splitMarkdownDocument: DONE', { elapsedMs: elapsed.toFixed(2), bodyLength: result.body.length });
+  if (elapsed > 50) dwarn(`splitMarkdownDocument: SLOW CALL — took ${elapsed.toFixed(2)}ms for ${srcLen} chars`);
+  return result;
 }
 
 export function parseMetadata(frontMatter = '') {
+  const t0 = performance.now();
   const values = {};
-  for (const line of String(frontMatter).split('\n')) {
+  const lines = String(frontMatter).split('\n');
+  for (const line of lines) {
     const match = line.match(/^([A-Za-z][A-Za-z0-9_-]*):\s*(.*)$/);
     if (match) {
       let value = match[2];
@@ -27,6 +69,8 @@ export function parseMetadata(frontMatter = '') {
       values[match[1]] = value;
     }
   }
+  const elapsed = performance.now() - t0;
+  if (elapsed > 30) dwarn(`parseMetadata: SLOW parsing ${lines.length} lines took ${elapsed.toFixed(2)}ms`);
   return values;
 }
 
@@ -58,10 +102,19 @@ export function updateMetadata(frontMatter, updates = {}) {
 }
 
 export function joinMarkdownDocument(frontMatter, metadata, body) {
+  const t0 = performance.now();
   const content = String(body || '').trim();
-  if (!frontMatter) return `${content}\n`;
-  const updated = updateMetadata(frontMatter, metadata);
-  return `---\n${updated}\n---\n\n${content}\n`;
+  let result;
+  if (!frontMatter) {
+    result = `${content}\n`;
+  } else {
+    const updated = updateMetadata(frontMatter, metadata);
+    result = `---\n${updated}\n---\n\n${content}\n`;
+  }
+  const elapsed = performance.now() - t0;
+  dlog(`joinMarkdownDocument: DONE in ${elapsed.toFixed(2)}ms`);
+  if (elapsed > 40) dwarn(`joinMarkdownDocument: SLOW execution took ${elapsed.toFixed(2)}ms`);
+  return result;
 }
 
 function safeUrl(raw) {
@@ -108,11 +161,38 @@ function tableCells(line) {
   return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim());
 }
 
+let __markdownToHtmlDepth = 0;
+let __markdownToHtmlCallCount = 0;
+
 export function markdownToHtml(markdown = '') {
+  const depth = ++__markdownToHtmlDepth;
+  const callId = ++__markdownToHtmlCallCount;
+  const t0 = performance.now();
+  const srcLen = String(markdown).length;
+  dlog(`markdownToHtml#${callId}: ENTER`, { depth, inputLength: srcLen });
+  if (depth > 25) dwarn(`markdownToHtml#${callId}: Recursion depth is extremely HIGH (${depth})`);
+  try {
+    return __markdownToHtmlImpl(markdown, callId, depth, t0);
+  } finally {
+    __markdownToHtmlDepth -= 1;
+  }
+}
+
+function __markdownToHtmlImpl(markdown = '', callId, depth, t0) {
   const lines = String(markdown).replace(/\r\n?/g, '\n').split('\n');
   const html = [];
   let index = 0;
+  let __iterations = 0;
+  const __lineCount = lines.length;
   while (index < lines.length) {
+    __iterations += 1;
+    if (__iterations % 500 === 0) {
+      dwarn(`markdownToHtml#${callId}: High loop iteration count (${__iterations}) at index=${index}/${__lineCount}`);
+    }
+    if (__iterations > __lineCount * 20 + 1000) {
+      dwarn(`markdownToHtml#${callId}: ABORTED due to prospective infinite loop.`);
+      break;
+    }
     const line = lines[index];
     if (!line.trim()) { index += 1; continue; }
 
@@ -198,7 +278,11 @@ export function markdownToHtml(markdown = '') {
     while (index < lines.length && !isBlockStart(lines, index)) paragraph.push(lines[index++].trim());
     html.push(`<p>${inlineMarkdown(paragraph.join(' '))}</p>`);
   }
-  return html.join('\n') || '<p><br></p>';
+  const __result = html.join('\n') || '<p><br></p>';
+  const __elapsed = performance.now() - t0;
+  dlog(`markdownToHtml#${callId}: EXIT`, { depth, elapsedMs: __elapsed.toFixed(2), outputLength: __result.length });
+  if (__elapsed > 100) dwarn(`markdownToHtml#${callId}: SLOW EXECUTION — took ${__elapsed.toFixed(2)}ms`);
+  return __result;
 }
 
 function serializeChildren(node) {
@@ -252,8 +336,15 @@ function serializeNode(node) {
 }
 
 export function visualEditorToMarkdown(element) {
-  return serializeChildren(element)
+  const t0 = performance.now();
+  const nodeCount = element?.querySelectorAll ? element.querySelectorAll('*').length : -1;
+  dlog('visualEditorToMarkdown: START', { childNodes: element?.childNodes?.length, totalElements: nodeCount });
+  const result = serializeChildren(element)
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+  const elapsed = performance.now() - t0;
+  dlog('visualEditorToMarkdown: DONE', { elapsedMs: elapsed.toFixed(2), outputLength: result.length });
+  if (elapsed > 80) dwarn(`visualEditorToMarkdown: SLOW DOM AST serialization — took ${elapsed.toFixed(2)}ms`);
+  return result;
 }

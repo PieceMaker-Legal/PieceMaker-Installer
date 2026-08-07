@@ -5,14 +5,92 @@ import {
   visualEditorToMarkdown,
 } from './markdown.mjs';
 
+// ---------------------------------------------------------------------------
+// CENTRALIZED LOGGING SYSTEM & LOG VIEWER INTEGRATION
+// ---------------------------------------------------------------------------
+const DEBUG = true;
+const MAX_LOG_ENTRIES = 1000;
+window.__PM_LOGS = window.__PM_LOGS || [];
+
+function logToViewer(level, source, message, data = null) {
+  const timestamp = new Date().toISOString().split('T')[1].slice(0, -1);
+  const entry = { id: Date.now() + Math.random(), timestamp, level, source, message, data };
+  
+  window.__PM_LOGS.push(entry);
+  if (window.__PM_LOGS.length > MAX_LOG_ENTRIES) {
+    window.__PM_LOGS.shift();
+  }
+
+  // Render to viewer if present
+  const logContainer = document.getElementById('debugLogContainer');
+  if (logContainer) {
+    const row = document.createElement('div');
+    row.className = `log-row log-${level.toLowerCase()}`;
+    const payloadStr = data !== null ? ` | ${typeof data === 'object' ? JSON.stringify(data) : data}` : '';
+    row.textContent = `[${timestamp}] [${source}] [${level}] ${message}${payloadStr}`;
+    logContainer.appendChild(row);
+    if (document.getElementById('debugAutoScroll')?.checked) {
+      logContainer.scrollTop = logContainer.scrollHeight;
+    }
+  }
+
+  // Console output
+  const prefix = `[PM-DEBUG][${source}]`;
+  if (level === 'WARN') console.warn(prefix, message, data || '');
+  else if (level === 'ERROR') console.error(prefix, message, data || '');
+  else if (DEBUG) console.log(prefix, message, data || '');
+}
+
+const dlog = (source, msg, data) => logToViewer('INFO', source, msg, data);
+const dwarn = (source, msg, data) => logToViewer('WARN', source, msg, data);
+const derror = (source, msg, data) => logToViewer('ERROR', source, msg, data);
+
+// Helper to wrap sync/async operations with high-precision timing
+async function traceAsync(name, fn, thresholdMs = 300) {
+  const t0 = performance.now();
+  dlog(name, 'START execution');
+  try {
+    const res = await fn();
+    const elapsed = performance.now() - t0;
+    dlog(name, `FINISHED in ${elapsed.toFixed(2)}ms`);
+    if (elapsed > thresholdMs) {
+      dwarn(name, `SLOW EXECUTION DETECTED — took ${elapsed.toFixed(2)}ms (threshold: ${thresholdMs}ms)`);
+    }
+    return res;
+  } catch (err) {
+    const elapsed = performance.now() - t0;
+    derror(name, `FAILED after ${elapsed.toFixed(2)}ms — ${err.message}`, err);
+    throw err;
+  }
+}
+
+let __apiCallCount = 0;
+let __apiInFlight = 0;
+
 const api = async (url, options = {}) => {
-  const response = await fetch(url, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-    ...options,
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `Erreur HTTP ${response.status}`);
-  return data;
+  const callId = ++__apiCallCount;
+  __apiInFlight += 1;
+  const method = options.method || 'GET';
+  const t0 = performance.now();
+  dlog('api', `api#${callId}: START ${method} ${url} (inFlight=${__apiInFlight})`);
+  try {
+    const response = await fetch(url, {
+      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      ...options,
+    });
+    const data = await response.json().catch(() => ({}));
+    const elapsed = performance.now() - t0;
+    dlog('api', `api#${callId}: DONE ${method} ${url} status=${response.status} (${elapsed.toFixed(2)}ms)`);
+    if (elapsed > 800) dwarn('api', `SLOW API CALL — ${method} ${url} took ${elapsed.toFixed(2)}ms`);
+    if (!response.ok) throw new Error(data.error || `Erreur HTTP ${response.status}`);
+    return data;
+  } catch (error) {
+    const elapsed = performance.now() - t0;
+    derror('api', `api#${callId}: ERROR ${method} ${url} after ${elapsed.toFixed(2)}ms — ${error.message}`);
+    throw error;
+  } finally {
+    __apiInFlight -= 1;
+  }
 };
 
 const byId = (id) => document.getElementById(id);
@@ -26,16 +104,17 @@ let historyItems = [];
 let selectedFolder = '';
 let historyView = 'commits';
 let selectedRevision = null;
-let tamponImage = null;          // data URL du tampon courant (cf. anonymization.js)
+let tamponImage = null;
 let dossiers = [];
-let selectedPieces = [];         // IDs dans l'ordre du bordereau
-let selectedOriginals = new Set(); // chemins des pièces cochées dans le cadre « Pièces originales »
-let originalsJob = null;         // travail de conversion/anonymisation en cours
+let selectedPieces = [];
+let selectedOriginals = new Set();
+let originalsJob = null;
 let originalsJobTimer = null;
-let mappingDocument = null;      // { mapping, reverse_mapping } en cours d'édition
+let mappingDocument = null;
 
 function toast(message) {
   const element = byId('toast');
+  if (!element) return;
   element.textContent = message;
   element.classList.add('visible');
   clearTimeout(toast.timer);
@@ -43,11 +122,13 @@ function toast(message) {
 }
 
 function setMessage(element, message = '', kind = '') {
+  if (!element) return;
   element.textContent = message;
   element.className = `message ${kind}`.trim();
 }
 
 function setActiveTab(name) {
+  dlog('ui', `setActiveTab triggered -> '${name}'`);
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === name));
   document.querySelectorAll('.panel').forEach((panel) => panel.classList.toggle('active', panel.id === name));
   if (name === 'settings') loadSettings();
@@ -58,12 +139,6 @@ function setActiveTab(name) {
     loadFiles({ selectPath: new URLSearchParams(location.search).get('file') });
   }
 }
-
-// ---------------------------------------------------------------------------
-// Tampon et tamponnage des pièces
-// Reprend les endpoints déjà servis par server.cjs (/api/tampon/*, /api/stamping)
-// et la logique du volet Word (taskpane/modules/anonymization.js).
-// ---------------------------------------------------------------------------
 
 function showTampon(dataUrl) {
   tamponImage = dataUrl;
@@ -78,15 +153,17 @@ function showTampon(dataUrl) {
 }
 
 async function loadTampon() {
-  try {
-    const response = await fetch('/api/tampon/load');
-    if (!response.ok) return showTampon(null);
-    const result = await response.json();
-    showTampon(result.tamponImage || null);
-    byId('saveTamponBtn').disabled = true;
-  } catch (error) {
-    showTampon(null);
-  }
+  return traceAsync('loadTampon', async () => {
+    try {
+      const response = await fetch('/api/tampon/load');
+      if (!response.ok) return showTampon(null);
+      const result = await response.json();
+      showTampon(result.tamponImage || null);
+      byId('saveTamponBtn').disabled = true;
+    } catch (error) {
+      showTampon(null);
+    }
+  });
 }
 
 function handleTamponImageUpload(event) {
@@ -104,8 +181,9 @@ function handleTamponImageUpload(event) {
   reader.readAsDataURL(file);
 }
 
-/** Dessine un tampon à partir des champs du formulaire (PNG 300×300). */
 function buildTampon() {
+  const t0 = performance.now();
+  dlog('buildTampon', 'Generating canvas tampon');
   const size = 300;
   const canvas = document.createElement('canvas');
   canvas.width = size;
@@ -132,6 +210,7 @@ function buildTampon() {
 
   showTampon(canvas.toDataURL('image/png'));
   setMessage(byId('tamponMessage'), 'Tampon généré — le numéro de pièce s’imprimera au centre.');
+  dlog('buildTampon', `Completed in ${(performance.now() - t0).toFixed(2)}ms`);
 }
 
 async function saveTampon() {
@@ -163,6 +242,7 @@ function currentDossier() {
 }
 
 function renderPieces() {
+  const t0 = performance.now();
   const dossier = currentDossier();
   const list = byId('piecesList');
   const folderInput = byId('workingFolder');
@@ -178,6 +258,7 @@ function renderPieces() {
     return;
   }
 
+  const docCount = dossier.documents?.length || 0;
   for (const piece of dossier.documents) {
     const rank = selectedPieces.indexOf(String(piece.id));
     const row = document.createElement('button');
@@ -192,6 +273,9 @@ function renderPieces() {
   }
 
   byId('stampPiecesBtn').disabled = selectedPieces.length === 0 || !tamponImage;
+  const elapsed = performance.now() - t0;
+  dlog('renderPieces', `Rendered ${docCount} pieces in ${elapsed.toFixed(2)}ms`);
+  if (elapsed > 100) dwarn('renderPieces', `Slow pieces DOM rendering: ${elapsed.toFixed(2)}ms`);
 }
 
 function togglePiece(id) {
@@ -202,25 +286,27 @@ function togglePiece(id) {
 }
 
 async function loadDossiers() {
-  try {
-    const result = await api('/api/admin/dossiers');
-    dossiers = result.dossiers || [];
-    const select = byId('dossierSelect');
-    const previous = select.value;
-    select.innerHTML = '';
-    for (const dossier of dossiers) {
-      const option = document.createElement('option');
-      option.value = dossier.documentId;
-      const label = dossier.informations?.intitule || dossier.informations?.nom || dossier.documentId;
-      option.textContent = `${label} — ${dossier.documents.length} pièce(s)`;
-      select.appendChild(option);
+  return traceAsync('loadDossiers', async () => {
+    try {
+      const result = await api('/api/admin/dossiers');
+      dossiers = result.dossiers || [];
+      const select = byId('dossierSelect');
+      const previous = select.value;
+      select.innerHTML = '';
+      for (const dossier of dossiers) {
+        const option = document.createElement('option');
+        option.value = dossier.documentId;
+        const label = dossier.informations?.intitule || dossier.informations?.nom || dossier.documentId;
+        option.textContent = `${label} — ${dossier.documents.length} pièce(s)`;
+        select.appendChild(option);
+      }
+      if (previous && dossiers.some((dossier) => dossier.documentId === previous)) select.value = previous;
+      else selectedPieces = [];
+      renderPieces();
+    } catch (error) {
+      setMessage(byId('piecesMessage'), error.message, 'error');
     }
-    if (previous && dossiers.some((dossier) => dossier.documentId === previous)) select.value = previous;
-    else selectedPieces = [];
-    renderPieces();
-  } catch (error) {
-    setMessage(byId('piecesMessage'), error.message, 'error');
-  }
+  });
 }
 
 function loadPieces() {
@@ -275,48 +361,52 @@ function renderStampResults(result) {
 }
 
 async function loadStatus() {
-  const badge = byId('serverBadge');
-  try {
-    const status = await api('/api/admin/status');
-    badge.textContent = '● Serveur local actif';
-    badge.className = 'status-pill ok';
-    byId('version').textContent = status.version;
-    byId('wordStatus').textContent = status.wordClients > 0 ? `Oui (${status.wordClients})` : 'Non';
-    byId('certStatus').textContent = status.certificatesReady ? 'Prêts' : 'À installer';
-    const total = status.files.skills + status.files.agents;
-    const assetCount = byId('assetCount');
-    assetCount.textContent = `${status.files.skills} / ${status.files.agents}`;
-    assetCount.title = `${status.files.registered ?? 0} sur ${total} enregistré(s) dans Claude Code`;
-    byId('assetRegistered').textContent = `${status.files.registered ?? 0}/${total} dans Claude Code`;
-    const office = byId('officeState');
-    office.hidden = status.libreOffice !== false;
-    office.textContent = 'LibreOffice introuvable : les pièces Excel et Word ne pourront pas être converties en PDF. '
-      + 'Installez LibreOffice (ou renseignez SOFFICE_PATH) puis redémarrez le serveur.';
-    byId('repoRoot').textContent = status.repoRoot;
-  } catch (error) {
-    badge.textContent = 'Serveur indisponible';
-    badge.className = 'status-pill error';
-    toast(error.message);
-  }
+  return traceAsync('loadStatus', async () => {
+    const badge = byId('serverBadge');
+    try {
+      const status = await api('/api/admin/status');
+      badge.textContent = '● Serveur local actif';
+      badge.className = 'status-pill ok';
+      byId('version').textContent = status.version;
+      byId('wordStatus').textContent = status.wordClients > 0 ? `Oui (${status.wordClients})` : 'Non';
+      byId('certStatus').textContent = status.certificatesReady ? 'Prêts' : 'À installer';
+      const total = status.files.skills + status.files.agents;
+      const assetCount = byId('assetCount');
+      assetCount.textContent = `${status.files.skills} / ${status.files.agents}`;
+      assetCount.title = `${status.files.registered ?? 0} sur ${total} enregistré(s) dans Claude Code`;
+      byId('assetRegistered').textContent = `${status.files.registered ?? 0}/${total} dans Claude Code`;
+      const office = byId('officeState');
+      office.hidden = status.libreOffice !== false;
+      office.textContent = 'LibreOffice introuvable : les pièces Excel et Word ne pourront pas être converties en PDF. '
+        + 'Installez LibreOffice (ou renseignez SOFFICE_PATH) puis redémarrez le serveur.';
+      byId('repoRoot').textContent = status.repoRoot;
+    } catch (error) {
+      badge.textContent = 'Serveur indisponible';
+      badge.className = 'status-pill error';
+      toast(error.message);
+    }
+  });
 }
 
 async function loadSettings() {
-  const message = byId('settingsMessage');
-  setMessage(message, 'Chargement…');
-  try {
-    const data = await api('/api/admin/settings');
-    byId('workspacePath').value = data.config.workspacePath || '';
-    byId('port').value = data.config.port || 43098;
-    byId('pythonPath').value = data.config.pythonPath || data.env.PYTHON_PATH || '';
-    byId('legifranceEnv').value = 'production';
-    document.querySelectorAll('[data-secret-state]').forEach((element) => {
-      const state = data.secrets[element.dataset.secretState];
-      element.textContent = state?.configured ? `Déjà configurée (${state.hint})` : 'Non configurée';
-    });
-    setMessage(message);
-  } catch (error) {
-    setMessage(message, error.message, 'error');
-  }
+  return traceAsync('loadSettings', async () => {
+    const message = byId('settingsMessage');
+    setMessage(message, 'Chargement…');
+    try {
+      const data = await api('/api/admin/settings');
+      byId('workspacePath').value = data.config.workspacePath || '';
+      byId('port').value = data.config.port || 43098;
+      byId('pythonPath').value = data.config.pythonPath || data.env.PYTHON_PATH || '';
+      byId('legifranceEnv').value = 'production';
+      document.querySelectorAll('[data-secret-state]').forEach((element) => {
+        const state = data.secrets[element.dataset.secretState];
+        element.textContent = state?.configured ? `Déjà configurée (${state.hint})` : 'Non configurée';
+      });
+      setMessage(message);
+    } catch (error) {
+      setMessage(message, error.message, 'error');
+    }
+  });
 }
 
 async function saveSettings(event) {
@@ -402,6 +492,7 @@ function dossierBadge(text, kind = '') {
 }
 
 function renderDossierBots(dossiers, capabilities) {
+  const t0 = performance.now();
   const list = byId('dossierBotList');
   list.textContent = '';
   if (!dossiers.length) {
@@ -466,6 +557,7 @@ function renderDossierBots(dossiers, capabilities) {
     card.append(top, editor);
     list.append(card);
   }
+  dlog('renderDossierBots', `Rendered ${dossiers.length} dossiers in ${(performance.now() - t0).toFixed(2)}ms`);
 }
 
 async function saveDossierBot(id, nameInput, tokenInput, button) {
@@ -504,15 +596,17 @@ async function controlDossierBot(id, action, button) {
 }
 
 async function loadTelegram({ quiet = false } = {}) {
-  const message = byId('telegramMessage');
-  if (!quiet) setMessage(message, 'Chargement…');
-  try {
-    const data = await api('/api/admin/telegram');
-    renderTelegram(data);
-    if (!quiet) setMessage(message);
-  } catch (error) {
-    setMessage(message, error.message, 'error');
-  }
+  return traceAsync('loadTelegram', async () => {
+    const message = byId('telegramMessage');
+    if (!quiet) setMessage(message, 'Chargement…');
+    try {
+      const data = await api('/api/admin/telegram');
+      renderTelegram(data);
+      if (!quiet) setMessage(message);
+    } catch (error) {
+      setMessage(message, error.message, 'error');
+    }
+  });
 }
 
 async function saveTelegram(event) {
@@ -559,9 +653,6 @@ async function controlTelegram(role, action, button) {
   }
 }
 
-// Un skill / agent n'est utilisable dans Claude Code que s'il est enregistré
-// dans ~/.claude (voir websocket-server/claude-assets.cjs) : l'état est
-// affiché à côté du fichier pour que l'absence se voie tout de suite.
 const CLAUDE_ASSET_BADGES = {
   linked: { text: 'Claude Code', className: 'ok', title: 'Enregistré dans Claude Code (lien vers le dépôt).' },
   copied: { text: 'Claude Code', className: 'ok', title: 'Enregistré dans Claude Code (copie synchronisée à chaque enregistrement).' },
@@ -604,46 +695,46 @@ function fileGroupLabel(kind) {
 }
 
 async function loadFiles({ selectPath = null } = {}) {
-  const list = byId('fileList');
-  list.textContent = 'Chargement…';
-  try {
-    const { files } = await api('/api/admin/files');
-    list.textContent = '';
-    for (const kind of ['instructions', 'skill', 'agent']) {
-      const groupFiles = files.filter((file) => file.kind === kind);
-      if (!groupFiles.length) continue;
-      const heading = document.createElement('div');
-      heading.className = 'file-group';
-      heading.textContent = fileGroupLabel(kind);
-      list.append(heading);
-      for (const file of groupFiles) {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = `file-button${file.exists ? '' : ' missing'}`;
-        button.dataset.path = file.path;
-        button.append(makeElement('span', 'file-button-label', file.exists ? file.name : `${file.name} — créer`));
-        const registration = claudeAssetBadge(file);
-        if (registration) button.append(registration);
-        button.addEventListener('click', () => selectFile(file, button));
-        list.append(button);
+  return traceAsync('loadFiles', async () => {
+    const list = byId('fileList');
+    list.textContent = 'Chargement…';
+    try {
+      const { files } = await api('/api/admin/files');
+      list.textContent = '';
+      for (const kind of ['instructions', 'skill', 'agent']) {
+        const groupFiles = files.filter((file) => file.kind === kind);
+        if (!groupFiles.length) continue;
+        const heading = document.createElement('div');
+        heading.className = 'file-group';
+        heading.textContent = fileGroupLabel(kind);
+        list.append(heading);
+        for (const file of groupFiles) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = `file-button${file.exists ? '' : ' missing'}`;
+          button.dataset.path = file.path;
+          button.append(makeElement('span', 'file-button-label', file.exists ? file.name : `${file.name} — créer`));
+          const registration = claudeAssetBadge(file);
+          if (registration) button.append(registration);
+          button.addEventListener('click', () => selectFile(file, button));
+          list.append(button);
+        }
       }
+      filesLoaded = true;
+      const requestedPath = selectPath || (!selectedFile
+        ? files.find((item) => item.kind === 'skill')?.path || files.find((item) => item.exists)?.path
+        : null);
+      if (requestedPath) {
+        const button = Array.from(list.querySelectorAll('.file-button')).find((item) => item.dataset.path === requestedPath);
+        const file = files.find((item) => item.path === requestedPath);
+        if (button && file) await selectFile(file, button);
+      }
+    } catch (error) {
+      list.textContent = error.message;
     }
-    filesLoaded = true;
-    const requestedPath = selectPath || (!selectedFile
-      ? files.find((item) => item.kind === 'skill')?.path || files.find((item) => item.exists)?.path
-      : null);
-    if (requestedPath) {
-      const button = Array.from(list.querySelectorAll('.file-button')).find((item) => item.dataset.path === requestedPath);
-      const file = files.find((item) => item.path === requestedPath);
-      if (button && file) await selectFile(file, button);
-    }
-  } catch (error) {
-    list.textContent = error.message;
-  }
+  });
 }
 
-// `model` et `tools` sont du front matter d'agent : un skill n'en a pas, on
-// laisse alors ces clés intactes (undefined = non modifié).
 function metadataValues() {
   const isAgent = selectedFile?.kind === 'agent';
   return {
@@ -655,7 +746,12 @@ function metadataValues() {
 }
 
 function currentMarkdown() {
-  return joinMarkdownDocument(currentFrontMatter, metadataValues(), visualEditorToMarkdown(byId('fileEditor')));
+  const t0 = performance.now();
+  const editorElem = byId('fileEditor');
+  const markdownContent = visualEditorToMarkdown(editorElem);
+  const result = joinMarkdownDocument(currentFrontMatter, metadataValues(), markdownContent);
+  dlog('currentMarkdown', `Built Markdown content (${result.length} chars) in ${(performance.now() - t0).toFixed(2)}ms`);
+  return result;
 }
 
 function markEditorDirty() {
@@ -665,44 +761,45 @@ function markEditorDirty() {
 }
 
 async function selectFile(file, button) {
-  if (selectedFile && editorTouched && !confirm('Abandonner les modifications non enregistrées ?')) return;
-  document.querySelectorAll('.file-button').forEach((item) => item.classList.toggle('active', item === button));
-  setMessage(byId('fileMessage'), 'Chargement…');
-  try {
-    const data = await api(`/api/admin/file?path=${encodeURIComponent(file.path)}`);
-    const editor = byId('fileEditor');
-    const documentParts = splitMarkdownDocument(data.content);
-    selectedFile = data;
-    currentFrontMatter = documentParts.frontMatter;
-    editorTouched = false;
-    editor.innerHTML = markdownToHtml(documentParts.body);
-    editor.contentEditable = String(!data.readonly);
-    editor.classList.toggle('empty', !documentParts.body.trim());
-    byId('editorToolbar').hidden = data.readonly;
-    byId('saveFile').disabled = data.readonly;
-    byId('metadataEditor').hidden = !documentParts.frontMatter || data.readonly;
-    byId('metadataName').value = documentParts.metadata.name || '';
-    byId('metadataDescription').value = documentParts.metadata.description || '';
-    const isAgent = data.kind === 'agent';
-    byId('metadataModelField').hidden = !isAgent;
-    byId('metadataToolsField').hidden = !isAgent;
-    // Un modèle inconnu du menu (valeur épinglée à la main) doit être conservé.
-    const model = isAgent ? documentParts.metadata.model || '' : '';
-    const modelSelect = byId('metadataModel');
-    if (model && !Array.from(modelSelect.options).some((option) => option.value === model)) {
-      const option = makeElement('option', '', model);
-      option.value = model;
-      modelSelect.append(option);
+  return traceAsync(`selectFile(${file.name})`, async () => {
+    if (selectedFile && editorTouched && !confirm('Abandonner les modifications non enregistrées ?')) return;
+    document.querySelectorAll('.file-button').forEach((item) => item.classList.toggle('active', item === button));
+    setMessage(byId('fileMessage'), 'Chargement…');
+    try {
+      const data = await api(`/api/admin/file?path=${encodeURIComponent(file.path)}`);
+      const editor = byId('fileEditor');
+      const documentParts = splitMarkdownDocument(data.content);
+      selectedFile = data;
+      currentFrontMatter = documentParts.frontMatter;
+      editorTouched = false;
+      editor.innerHTML = markdownToHtml(documentParts.body);
+      editor.contentEditable = String(!data.readonly);
+      editor.classList.toggle('empty', !documentParts.body.trim());
+      byId('editorToolbar').hidden = data.readonly;
+      byId('saveFile').disabled = data.readonly;
+      byId('metadataEditor').hidden = !documentParts.frontMatter || data.readonly;
+      byId('metadataName').value = documentParts.metadata.name || '';
+      byId('metadataDescription').value = documentParts.metadata.description || '';
+      const isAgent = data.kind === 'agent';
+      byId('metadataModelField').hidden = !isAgent;
+      byId('metadataToolsField').hidden = !isAgent;
+      const model = isAgent ? documentParts.metadata.model || '' : '';
+      const modelSelect = byId('metadataModel');
+      if (model && !Array.from(modelSelect.options).some((option) => option.value === model)) {
+        const option = makeElement('option', '', model);
+        option.value = model;
+        modelSelect.append(option);
+      }
+      modelSelect.value = model;
+      byId('metadataTools').value = isAgent ? documentParts.metadata.tools || '' : '';
+      byId('fileTitle').textContent = file.name;
+      byId('filePath').textContent = file.path;
+      byId('dirtyBadge').hidden = true;
+      setMessage(byId('fileMessage'), data.readonly ? 'Aperçu visuel en lecture seule.' : data.exists ? 'Édition visuelle — le fichier enregistré reste en Markdown.' : 'Ce fichier sera créé lors de l’enregistrement.');
+    } catch (error) {
+      setMessage(byId('fileMessage'), error.message, 'error');
     }
-    modelSelect.value = model;
-    byId('metadataTools').value = isAgent ? documentParts.metadata.tools || '' : '';
-    byId('fileTitle').textContent = file.name;
-    byId('filePath').textContent = file.path;
-    byId('dirtyBadge').hidden = true;
-    setMessage(byId('fileMessage'), data.readonly ? 'Aperçu visuel en lecture seule.' : data.exists ? 'Édition visuelle — le fichier enregistré reste en Markdown.' : 'Ce fichier sera créé lors de l’enregistrement.');
-  } catch (error) {
-    setMessage(byId('fileMessage'), error.message, 'error');
-  }
+  });
 }
 
 async function saveFile() {
@@ -768,6 +865,7 @@ function createHistoryEmpty(message, detail = '') {
 }
 
 function renderFolders() {
+  const t0 = performance.now();
   const list = byId('folderList');
   list.textContent = '';
   byId('folderCount').textContent = String(repositoryData.folders.length);
@@ -790,16 +888,8 @@ function renderFolders() {
     list.append(button);
   }
   renderOriginals();
+  dlog('renderFolders', `Rendered ${repositoryData.folders.length} folders in ${(performance.now() - t0).toFixed(2)}ms`);
 }
-
-// ---------------------------------------------------------------------------
-// Pièces originales : conversion Markdown puis pipeline d'anonymisation.
-// Le cadre ne liste que les pièces telles qu'elles ont été déposées — le
-// Markdown produit par la conversion est exclu, il apparaît déjà dans
-// l'historique du dossier. Chaque pièce porte deux badges indépendants :
-// « Markdown » quand la conversion existe, « PII » quand le scan GLiNER a
-// écrit son `_sensitive_map.json`.
-// ---------------------------------------------------------------------------
 
 function caseOriginals() {
   return currentCase()?.originals || [];
@@ -813,8 +903,8 @@ function formatBytes(size) {
 }
 
 function renderOriginals() {
+  const t0 = performance.now();
   const list = byId('originalList');
-  // Filtrage direct pour optimiser l'affichage : ne garder que les pièces non traitées (non converties)
   const unhandledOriginals = caseOriginals().filter((original) => !original.converted || !original.scanned);
   list.textContent = '';
   byId('originalCount').textContent = String(unhandledOriginals.length);
@@ -863,11 +953,10 @@ function renderOriginals() {
   list.append(fragment);
   updateOriginalsActions();
   renderMappingSummary();
+  dlog('renderOriginals', `Rendered ${unhandledOriginals.length} originals in ${(performance.now() - t0).toFixed(2)}ms`);
 }
 
-/** Sans sélection explicite, les boutons agissent sur toutes les pièces. */
 function originalsToProcess() {
-  // Cibler en priorité les pièces non traitées pour accélérer le traitement du dossier
   const unhandledOriginals = caseOriginals().filter((original) => !original.converted || !original.scanned);
   if (!selectedOriginals.size) return unhandledOriginals.map((original) => original.path);
   return unhandledOriginals.filter((original) => selectedOriginals.has(original.path)).map((original) => original.path);
@@ -912,6 +1001,7 @@ async function startOriginalsPipeline(action) {
   const files = originalsToProcess();
   if (!files.length) return;
   clearTimeout(originalsJobTimer);
+  dlog('pipeline', `Starting pipeline '${action}' on ${files.length} files`);
   try {
     const result = await api('/api/admin/originals/pipeline', {
       method: 'POST',
@@ -945,10 +1035,6 @@ async function pollOriginalsJob() {
     updateOriginalsActions();
   }
 }
-
-// ---------------------------------------------------------------------------
-// Mapping d'anonymisation du dossier — lecture et édition ligne à ligne.
-// ---------------------------------------------------------------------------
 
 function renderMappingSummary() {
   const legalCase = currentCase();
@@ -1009,6 +1095,7 @@ function addMappingEntry(entity = '', code = '', { focus = false } = {}) {
 }
 
 function renderMappingRows(mapping) {
+  const t0 = performance.now();
   const rows = byId('mappingRows');
   rows.textContent = '';
   const pairs = Object.entries(mapping || {});
@@ -1021,9 +1108,9 @@ function renderMappingRows(mapping) {
     return;
   }
   for (const [entity, code] of pairs) addMappingEntry(entity, code);
+  dlog('renderMappingRows', `Rendered ${pairs.length} rows in ${(performance.now() - t0).toFixed(2)}ms`);
 }
 
-/** Le mapping saisi, validé : pas de doublon d'entité, pas de code partagé. */
 function collectMapping() {
   const mapping = {};
   const codes = new Map();
@@ -1050,11 +1137,6 @@ function collectMapping() {
   return mapping;
 }
 
-/**
- * Le sens inverse est reconstruit à partir de celui chargé : un code peut
- * couvrir plusieurs variantes d'écriture, et les variantes qui ne sont plus
- * dans le mapping direct sont abandonnées avec lui.
- */
 function buildReverseMapping(mapping) {
   const previous = mappingDocument?.reverse_mapping || {};
   const reverse = {};
@@ -1128,6 +1210,7 @@ async function rebuildMapping() {
 }
 
 function renderHistoryItems() {
+  const t0 = performance.now();
   const list = byId('historyList');
   list.textContent = '';
   if (historyView === 'changes') {
@@ -1204,6 +1287,8 @@ function renderHistoryItems() {
   if (!selectedRevision || selectedRevision.hash === 'WORKTREE' || !historyItems.some((item) => item.hash === selectedRevision.hash)) {
     loadRevision(historyItems[0].hash);
   }
+  const elapsed = performance.now() - t0;
+  dlog('renderHistoryItems', `Rendered history items in ${elapsed.toFixed(2)}ms`);
 }
 
 function showRevisionPlaceholder(title) {
@@ -1220,6 +1305,7 @@ function showRevisionPlaceholder(title) {
 }
 
 function renderPatch(patch) {
+  const t0 = performance.now();
   const container = byId('diffContent');
   container.textContent = '';
   container.className = 'diff-content';
@@ -1228,7 +1314,9 @@ function renderPatch(patch) {
     container.textContent = 'Aucune différence textuelle à afficher.';
     return;
   }
-  for (const line of patch.split('\n')) {
+  const lines = patch.split('\n');
+  const fragment = document.createDocumentFragment();
+  for (const line of lines) {
     const row = document.createElement('div');
     row.className = 'diff-line';
     if (line.startsWith('@@')) row.classList.add('hunk');
@@ -1236,46 +1324,52 @@ function renderPatch(patch) {
     else if (line.startsWith('-') && !line.startsWith('---')) row.classList.add('deletion');
     else if (line.startsWith('diff --git') || line.startsWith('index ') || line.startsWith('---') || line.startsWith('+++')) row.classList.add('diff-header-line');
     row.textContent = line || ' ';
-    container.append(row);
+    fragment.append(row);
   }
+  container.append(fragment);
+  const elapsed = performance.now() - t0;
+  dlog('renderPatch', `Rendered ${lines.length} patch lines in ${elapsed.toFixed(2)}ms`);
+  if (elapsed > 100) dwarn('renderPatch', `Slow diff patch rendering: ${elapsed.toFixed(2)}ms for ${lines.length} lines`);
 }
 
 async function loadRevision(hash, filePath = '') {
-  byId('diffContent').className = 'diff-content empty-state';
-  byId('diffContent').textContent = 'Chargement du diff…';
-  try {
-    if (!selectedFolder) return;
-    const query = new URLSearchParams({ hash, case: selectedFolder });
-    if (filePath) query.set('path', filePath);
-    const revision = await api(`/api/admin/revision?${query}`);
-    selectedRevision = { hash, path: revision.selectedPath || '' };
-    document.querySelectorAll('.commit-row').forEach((row) => row.classList.toggle('active', row.dataset.hash === hash));
-    document.querySelectorAll('.change-row').forEach((row) => row.classList.toggle('active', hash === 'WORKTREE' && row.querySelector('.change-path')?.textContent === revision.selectedPath));
+  return traceAsync(`loadRevision(${hash}, ${filePath})`, async () => {
+    byId('diffContent').className = 'diff-content empty-state';
+    byId('diffContent').textContent = 'Chargement du diff…';
+    try {
+      if (!selectedFolder) return;
+      const query = new URLSearchParams({ hash, case: selectedFolder });
+      if (filePath) query.set('path', filePath);
+      const revision = await api(`/api/admin/revision?${query}`);
+      selectedRevision = { hash, path: revision.selectedPath || '' };
+      document.querySelectorAll('.commit-row').forEach((row) => row.classList.toggle('active', row.dataset.hash === hash));
+      document.querySelectorAll('.change-row').forEach((row) => row.classList.toggle('active', hash === 'WORKTREE' && row.querySelector('.change-path')?.textContent === revision.selectedPath));
 
-    byId('revisionKind').textContent = revision.kind === 'worktree' ? 'Modifications locales' : 'Commit';
-    byId('revisionSha').textContent = revision.shortHash || '';
-    byId('revisionTitle').textContent = revision.subject;
-    byId('revisionMeta').textContent = revision.kind === 'worktree'
-      ? `${revision.files.length} fichier${revision.files.length > 1 ? 's' : ''} modifié${revision.files.length > 1 ? 's' : ''}`
-      : `${revision.author} · ${new Date(revision.timestamp).toLocaleString('fr-FR')}`;
-    byId('restoreRevision').hidden = revision.kind === 'worktree';
+      byId('revisionKind').textContent = revision.kind === 'worktree' ? 'Modifications locales' : 'Commit';
+      byId('revisionSha').textContent = revision.shortHash || '';
+      byId('revisionTitle').textContent = revision.subject;
+      byId('revisionMeta').textContent = revision.kind === 'worktree'
+        ? `${revision.files.length} fichier${revision.files.length > 1 ? 's' : ''} modifié${revision.files.length > 1 ? 's' : ''}`
+        : `${revision.author} · ${new Date(revision.timestamp).toLocaleString('fr-FR')}`;
+      byId('restoreRevision').hidden = revision.kind === 'worktree';
 
-    const selected = revision.files.find((file) => file.path === revision.selectedPath);
-    const totals = revision.files.reduce((sum, file) => ({
-      added: sum.added + (Number.isFinite(file.added) ? file.added : 0),
-      deleted: sum.deleted + (Number.isFinite(file.deleted) ? file.deleted : 0),
-    }), { added: 0, deleted: 0 });
-    byId('diffFile').textContent = revision.selectedPath || `${revision.files.length} fichier${revision.files.length > 1 ? 's' : ''}`;
-    byId('diffStats').textContent = selected && selected.added != null
-      ? `+${selected.added}  −${selected.deleted}`
-      : !revision.selectedPath && (totals.added || totals.deleted)
-        ? `+${totals.added}  −${totals.deleted}`
-      : revision.truncated ? 'Diff tronqué' : '';
-    renderPatch(revision.patch);
-  } catch (error) {
-    byId('diffContent').textContent = error.message;
-    toast(error.message);
-  }
+      const selected = revision.files.find((file) => file.path === revision.selectedPath);
+      const totals = revision.files.reduce((sum, file) => ({
+        added: sum.added + (Number.isFinite(file.added) ? file.added : 0),
+        deleted: sum.deleted + (Number.isFinite(file.deleted) ? file.deleted : 0),
+      }), { added: 0, deleted: 0 });
+      byId('diffFile').textContent = revision.selectedPath || `${revision.files.length} fichier${revision.files.length > 1 ? 's' : ''}`;
+      byId('diffStats').textContent = selected && selected.added != null
+        ? `+${selected.added}  −${selected.deleted}`
+        : !revision.selectedPath && (totals.added || totals.deleted)
+          ? `+${totals.added}  −${totals.deleted}`
+        : revision.truncated ? 'Diff tronqué' : '';
+      renderPatch(revision.patch);
+    } catch (error) {
+      byId('diffContent').textContent = error.message;
+      toast(error.message);
+    }
+  });
 }
 
 async function loadHistoryItems() {
@@ -1298,7 +1392,10 @@ async function loadHistoryItems() {
 let repositoryRefreshInFlight = false;
 
 async function loadRepositoryHistory({ quiet = false } = {}) {
-  if (repositoryRefreshInFlight) return;
+  if (repositoryRefreshInFlight) {
+    dlog('loadRepositoryHistory', 'Skipping request: already in flight');
+    return;
+  }
   repositoryRefreshInFlight = true;
   if (!quiet) byId('historyList').textContent = 'Chargement…';
   try {
@@ -1329,9 +1426,6 @@ async function selectHistoryFolder(folder) {
   await loadHistoryItems();
 }
 
-// L'administration n'est servie qu'en local (cf. isLocalOrigin côté serveur) :
-// le poste du navigateur est celui du serveur, la détection sert donc juste à
-// nommer les boutons comme le système de l'utilisateur.
 function desktopPlatform() {
   const platform = String(navigator.userAgentData?.platform || navigator.platform || '');
   if (/mac|iphone|ipad/i.test(platform)) return 'mac';
@@ -1430,6 +1524,29 @@ async function restoreSelectedRevision() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// LOG VIEWER EVENT LISTENERS
+// ---------------------------------------------------------------------------
+function initLogViewer() {
+  byId('toggleLogConsole')?.addEventListener('click', () => {
+    const consoleElem = byId('debugConsoleDrawer');
+    if (consoleElem) {
+      consoleElem.hidden = !consoleElem.hidden;
+    }
+  });
+
+  byId('clearDebugLogs')?.addEventListener('click', () => {
+    window.__PM_LOGS = [];
+    const container = byId('debugLogContainer');
+    if (container) container.innerHTML = '';
+  });
+
+  byId('copyDebugLogs')?.addEventListener('click', () => {
+    const text = (window.__PM_LOGS || []).map((l) => `[${l.timestamp}] [${l.source}] [${l.level}] ${l.message} ${l.data ? JSON.stringify(l.data) : ''}`).join('\n');
+    navigator.clipboard.writeText(text).then(() => toast('Logs copiés dans le presse-papier'));
+  });
+}
+
 document.querySelectorAll('[data-history-view]').forEach((button) => button.addEventListener('click', () => setHistoryView(button.dataset.historyView)));
 byId('refreshHistory').addEventListener('click', () => loadRepositoryHistory());
 byId('revealFolder').addEventListener('click', (event) => revealCaseFolder('files', event.currentTarget));
@@ -1463,9 +1580,6 @@ function applyEditorCommand(button) {
   markEditorDirty();
 }
 
-// Un agent se règle autrement qu'un skill : il déclare le modèle qui
-// l'exécute et les outils auxquels il a droit, et sa description sert à
-// décider quand le déléguer.
 function openCreateDialog(kind) {
   const dialog = byId('createFileDialog');
   const isAgent = kind === 'agent';
@@ -1552,6 +1666,8 @@ byId('cancelCreateFile').addEventListener('click', () => byId('createFileDialog'
 window.addEventListener('beforeunload', (event) => {
   if (selectedFile && editorTouched) event.preventDefault();
 });
+
+initLogViewer();
 
 const requestedTab = location.hash.slice(1);
 setActiveTab(['history', 'settings', 'pieces', 'telegram', 'files'].includes(requestedTab) ? requestedTab : 'history');
