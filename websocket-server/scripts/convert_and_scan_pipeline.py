@@ -404,22 +404,18 @@ def scan_file(md_file: str, output_dir: str) -> bool:
         return False
 
 
-def load_existing_mapping(output_dir: str, document_id: str) -> Optional[Dict]:
-    """Load existing mapping_{documentId}.json if it exists.
+def load_existing_mapping(mapping_path: Path) -> Optional[Dict]:
+    """Load the case/document mapping file if it exists.
 
     This is the SAME file that the server uses (server.cjs line 2146),
     ensuring single source of truth for mappings.
 
     Args:
-        output_dir: Base output directory
-        document_id: Document ID for this session
+        mapping_path: Full path to mapping_{documentId}.json (or the case mapping)
 
     Returns:
         Existing mapping data or None if file doesn't exist
     """
-    # Use the same filename pattern as server.cjs (line 2146)
-    mapping_path = Path(output_dir) / f"mapping_{document_id}.json"
-
     if not mapping_path.exists():
         print("ℹ️  No existing mapping found, will create new one")
         return None
@@ -1106,6 +1102,11 @@ def merge_with_existing_mapping(new_mapping: Dict, existing_mapping: Optional[Di
     if not existing_mapping:
         return new_mapping
 
+    # `ignored` is written by the admin editor (originals-pipeline.cjs): entities
+    # the lawyer removed by hand are false positives and must not come back.
+    ignored = [str(text).strip() for text in existing_mapping.get('ignored', []) if str(text).strip()]
+    ignored_lower = {text.lower() for text in ignored}
+
     merged_mapping = {**existing_mapping.get('mapping', {})}
     merged_reverse = {**existing_mapping.get('reverse_mapping', {})}
     merged_extracted = {
@@ -1151,6 +1152,10 @@ def merge_with_existing_mapping(new_mapping: Dict, existing_mapping: Optional[Di
 
         # Skip if already exists (use existing code)
         if text_lower in seen_entities_lower:
+            continue
+
+        # Skip entities the lawyer discarded from the mapping
+        if text_lower in ignored_lower:
             continue
 
         # Determine category
@@ -1237,27 +1242,24 @@ def merge_with_existing_mapping(new_mapping: Dict, existing_mapping: Optional[Di
     return {
         "mapping": merged_mapping,
         "reverse_mapping": merged_reverse,
-        "extracted_data": merged_extracted
+        "extracted_data": merged_extracted,
+        **({"ignored": ignored} if ignored else {}),
     }
 
 
-def save_mapping(output_dir: str, document_id: str, mapping_data: Dict) -> Path:
-    """Save the merged mapping to mapping_{documentId}.json.
+def save_mapping(mapping_path: Path, mapping_data: Dict) -> Path:
+    """Save the merged mapping to the case/document mapping file.
 
-    Uses the SAME filename as server.cjs (line 2146), ensuring the
-    validated mapping can be read by GET /api/anonymize/mapping/:documentId.
+    Uses the SAME file as server.cjs (line 2146), ensuring the validated
+    mapping can be read by GET /api/anonymize/mapping/:documentId.
 
     Args:
-        output_dir: Base output directory
-        document_id: Document ID for this session
+        mapping_path: Full path to the mapping file to write
         mapping_data: Complete mapping data structure
 
     Returns:
         Path to saved file
     """
-    # Use the same filename pattern as server.cjs (line 2146)
-    mapping_path = Path(output_dir) / f"mapping_{document_id}.json"
-
     with open(mapping_path, 'w', encoding='utf-8') as f:
         json.dump(mapping_data, f, indent=2, ensure_ascii=False)
 
@@ -1326,6 +1328,21 @@ def main():
         default=None,
         help="Directory for mapping_{documentId}.json (default: same as --output)",
     )
+    parser.add_argument(
+        "--mapping-file",
+        default=None,
+        help="Exact mapping file to read and rewrite (overrides --mapping-dir/--document-id)",
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Reuse an existing .md / _sensitive_map.json instead of reconverting and rescanning",
+    )
+    parser.add_argument(
+        "--cleanup-scans",
+        action="store_true",
+        help="Delete the individual *_sensitive_map.json files after merging (default: keep them)",
+    )
 
     args = parser.parse_args()
 
@@ -1354,8 +1371,26 @@ def main():
         print(f"   Language: {args.lang}")
     print()
 
+    # What is left to do, decided before anything runs: the scanner worker loads
+    # ~400MB of GLiNER2 + spaCy weights, so it must only start when at least one
+    # file actually needs a PII scan.
+    def artifact_paths(input_file: str) -> Tuple[Path, Path]:
+        stem = Path(input_file).stem
+        return (
+            Path(args.output) / f"{stem}.md",
+            Path(args.output) / f"{stem}_sensitive_map.json",
+        )
+
+    scan_needed = any(
+        not (args.skip_existing and artifact_paths(f)[1].exists()) for f in input_files
+    )
+
     # Start scanner worker immediately so model loading overlaps with Phase 1.
-    scanner_worker = start_scanner_worker()
+    if scan_needed:
+        scanner_worker = start_scanner_worker()
+    else:
+        scanner_worker = None
+        print("✅ Every PII scan is already up to date — GLiNER not started")
     print()
 
     # Phase 1: Convert all files to Markdown
@@ -1369,6 +1404,15 @@ def main():
 
     for i, input_file in enumerate(input_files, start=1):
         print_progress("CONVERT", i, len(input_files))
+        existing_md, _ = artifact_paths(input_file)
+
+        if args.skip_existing and existing_md.exists():
+            print(f"📄 [{i}/{len(input_files)}] Already converted, reusing: {existing_md.name}")
+            md_files.append(str(existing_md))
+            convert_success_count += 1
+            print()
+            continue
+
         print(f"📄 [{i}/{len(input_files)}] Converting: {Path(input_file).name}")
 
         success, md_path = convert_file(
@@ -1399,18 +1443,30 @@ def main():
     print("=" * 70)
     print()
 
-    # Wait for the scanner worker to finish loading models.
-    worker_ready = wait_for_worker_ready(scanner_worker)
+    def sensitive_map_path(md_file: str) -> Path:
+        return Path(args.output) / f"{Path(md_file).stem}_sensitive_map.json"
 
-    if not worker_ready:
+    pending_scans = [
+        md_file
+        for md_file in md_files
+        if not (args.skip_existing and sensitive_map_path(md_file).exists())
+    ]
+    skipped_scans = len(md_files) - len(pending_scans)
+    if skipped_scans:
+        print(f"⏭️  {skipped_scans} file(s) already scanned, left untouched")
+
+    # Wait for the scanner worker to finish loading models.
+    worker_ready = wait_for_worker_ready(scanner_worker) if pending_scans else False
+
+    if pending_scans and not worker_ready:
         print("⚠️  Scanner worker not available, falling back to subprocess-per-file", file=sys.stderr)
     print()
 
     scan_success_count = 0
 
-    for i, md_file in enumerate(md_files, start=1):
-        print_progress("SCAN", i, len(md_files))
-        print(f"🔍 [{i}/{len(md_files)}] Scanning: {Path(md_file).name}")
+    for i, md_file in enumerate(pending_scans, start=1):
+        print_progress("SCAN", i, len(pending_scans))
+        print(f"🔍 [{i}/{len(pending_scans)}] Scanning: {Path(md_file).name}")
 
         if worker_ready:
             success = scan_file_via_worker(scanner_worker, md_file, args.output)
@@ -1429,7 +1485,7 @@ def main():
     # Shut down worker
     stop_scanner_worker(scanner_worker)
 
-    print(f"✅ Phase 2 complete: {scan_success_count}/{len(md_files)} files scanned")
+    print(f"✅ Phase 2 complete: {scan_success_count}/{len(pending_scans)} files scanned")
     print()
 
     # Phase 3: Merge & Cleanup (NEW)
@@ -1467,8 +1523,12 @@ def main():
 
     # Load existing mapping (if exists)
     print("📂 Step 3: Loading existing mapping...")
-    mapping_dir = args.mapping_dir or args.output
-    existing_mapping = load_existing_mapping(mapping_dir, args.document_id)
+    mapping_target = (
+        Path(args.mapping_file)
+        if args.mapping_file
+        else Path(args.mapping_dir or args.output) / f"mapping_{args.document_id}.json"
+    )
+    existing_mapping = load_existing_mapping(mapping_target)
 
     # Merge with existing mapping
     print("🔗 Step 4: Merging with existing mapping...")
@@ -1476,17 +1536,23 @@ def main():
 
     # Save mapping (same file server uses)
     print("💾 Step 5: Saving mapping...")
-    mapping_path = save_mapping(mapping_dir, args.document_id, final_mapping_data)
+    mapping_path = save_mapping(mapping_target, final_mapping_data)
 
     print(f"✅ Mapping saved to: {mapping_path}")
     print(f"   • Total entities: {len(final_mapping_data['mapping'])} variants")
     print(f"   • Unique codes: {len(final_mapping_data['reverse_mapping'])}")
     print(f"   • Server can read via: GET /api/anonymize/mapping/{args.document_id}")
 
-    # Cleanup individual mappings
-    print("🗑️  Step 6: Cleaning up individual mappings...")
-    deleted_count = cleanup_individual_mappings(json_files)
-    print(f"✅ Deleted {deleted_count} individual mapping file(s)")
+    # Cleanup individual mappings. Kept by default: the admin UI reads them to
+    # tell a scanned original from an unscanned one, and rebuilds the case
+    # mapping from them — deleting them makes every piece look unscanned and
+    # sends GLiNER over the whole case again on the next run.
+    if args.cleanup_scans:
+        print("🗑️  Step 6: Cleaning up individual mappings...")
+        deleted_count = cleanup_individual_mappings(json_files)
+        print(f"✅ Deleted {deleted_count} individual mapping file(s)")
+    else:
+        print(f"📎 Step 6: Keeping {len(json_files)} individual mapping file(s)")
     print()
 
     # Summary
@@ -1495,7 +1561,7 @@ def main():
     print("=" * 70)
     print(f"📊 Results:")
     print(f"   • Converted: {convert_success_count}/{len(input_files)} files")
-    print(f"   • Scanned: {scan_success_count}/{len(md_files)} files")
+    print(f"   • Scanned: {scan_success_count}/{len(pending_scans)} files")
     print(f"   • Entities mapped: {len(final_mapping_data['mapping'])} variants")
     print(f"   • Unique entities: {len(final_mapping_data['reverse_mapping'])} codes")
     print(f"📂 Output directory: {args.output}")
@@ -1503,7 +1569,7 @@ def main():
     print()
 
     # Exit with success if at least one file was fully processed
-    if scan_success_count > 0:
+    if scan_success_count > 0 or not pending_scans:
         return 0
     elif convert_success_count > 0:
         print(

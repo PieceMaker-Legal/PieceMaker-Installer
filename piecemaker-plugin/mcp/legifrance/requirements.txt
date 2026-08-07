@@ -1,6 +1,11 @@
-# Dépendances du serveur MCP Légifrance (transport stdio local).
-# Pas de Flask / flask-cors : le port stdio n'a plus de couche HTTP.
+# Dépendances du serveur MCP Légifrance (transports stdio local et HTTP
+# local partagé — mcp_stdio_server.py et mcp_http_local.py).
+# flask est utilisé uniquement par mcp_http_local.py ; le serveur stdio n'en
+# a pas besoin mais ça ne coûte rien de le partager dans un seul fichier.
+# Pas de flask-cors : mcp_http_local.py n'est jamais appelé depuis un
+# navigateur, uniquement depuis des relais mcp-remote en local.
 # Pas de spaCy / Presidio / parsing de documents : ces dépendances
 # appartiennent à l'anonymiseur, qui vit ailleurs dans PieceMaker_Claude_CLI.
 requests>=2.31.0
 python-dotenv>=1.0.0
+flask>=3.0.0

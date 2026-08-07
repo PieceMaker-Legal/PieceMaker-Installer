@@ -37,7 +37,13 @@ async function listOriginals(caseRoot) {
   return originals.filter((file) => file.extension !== '.md');
 }
 
-/** Fichier de mapping du dossier — un `mapping*.json` existant a priorité. */
+/**
+ * Fichier de mapping du dossier. `mapping_dossier.json` gagne dès qu'il existe :
+ * sans cette priorité, un `mapping_default.json` laissé par une ancienne
+ * exécution du pipeline passait devant (tri alphabétique) et éclipsait le
+ * mapping réellement tenu pour le dossier. À défaut, un `mapping*.json`
+ * existant est repris tel quel — c'est celui produit par le CLI.
+ */
 function caseMappingFile(caseRoot) {
   let entries = [];
   try {
@@ -49,6 +55,7 @@ function caseMappingFile(caseRoot) {
     .filter((entry) => entry.isFile() && /^mapping.*\.json$/i.test(entry.name))
     .map((entry) => entry.name)
     .sort((a, b) => a.localeCompare(b, 'fr'));
+  if (existing.includes(CANONICAL_MAPPING_FILE)) return path.join(caseRoot, CANONICAL_MAPPING_FILE);
   return path.join(caseRoot, existing[0] || CANONICAL_MAPPING_FILE);
 }
 
@@ -88,7 +95,26 @@ function normalizeMappingDocument(raw) {
     if (!reverse[code]) reverse[code] = [entity];
     else if (!reverse[code].includes(entity)) reverse[code].push(entity);
   }
-  return { mapping, reverse_mapping: reverse, ignored: ignored.filter((entity) => !mapping[entity]) };
+  // `extracted_data` est écrit par `convert_and_scan_pipeline.py` : c'est lui
+  // qui porte les variants d'une entité et l'analyse des adresses, dont la
+  // dé-anonymisation partielle a besoin (anonymization-server.cjs:592).
+  // L'administration ne l'édite pas, mais elle ne doit surtout pas le détruire —
+  // seules les entrées dont le code a disparu du mapping sont retirées.
+  const extracted = {};
+  const extractedSource = document.extracted_data && typeof document.extracted_data === 'object'
+    && !Array.isArray(document.extracted_data) ? document.extracted_data : {};
+  for (const [category, codes] of Object.entries(extractedSource)) {
+    if (!codes || typeof codes !== 'object' || Array.isArray(codes)) continue;
+    extracted[category] = Object.fromEntries(
+      Object.entries(codes).filter(([code]) => reverse[code])
+    );
+  }
+  return {
+    mapping,
+    reverse_mapping: reverse,
+    extracted_data: extracted,
+    ignored: ignored.filter((entity) => !mapping[entity]),
+  };
 }
 
 /** L'ordre d'écriture suit `byDescendingEntityLength` (anonymization-server.cjs). */
@@ -110,6 +136,7 @@ function writeCaseMapping(caseRoot, document) {
   const payload = {
     mapping: sortedMapping(normalized.mapping),
     reverse_mapping: normalized.reverse_mapping,
+    ...(Object.keys(normalized.extracted_data).length ? { extracted_data: normalized.extracted_data } : {}),
     ...(normalized.ignored.length ? { ignored: normalized.ignored } : {}),
   };
   const temporary = `${file}.piecemaker-${process.pid}.tmp`;
@@ -125,7 +152,9 @@ function writeCaseMapping(caseRoot, document) {
  */
 function saveCaseMapping(caseRoot, document) {
   const current = readCaseMapping(caseRoot);
-  const next = normalizeMappingDocument(document);
+  // L'éditeur n'envoie que `mapping` et `reverse_mapping` : `extracted_data`
+  // est repris du fichier, sinon un simple enregistrement perdrait les variants.
+  const next = normalizeMappingDocument({ extracted_data: current.extracted_data, ...document });
   const removed = Object.keys(current.mapping).filter((entity) => !next.mapping[entity]);
   const ignored = [...new Set([...current.ignored, ...removed])].filter((entity) => !next.mapping[entity]);
   return writeCaseMapping(caseRoot, { ...next, ignored });
@@ -134,30 +163,133 @@ function saveCaseMapping(caseRoot, document) {
 function codePrefix(entityType) {
   return String(entityType || 'ENTITE')
     .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[̀-ͯ]/g, '')
     .toUpperCase()
     .replace(/[^A-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')
     .slice(0, 32) || 'ENTITE';
 }
 
+// Vocabulaire de codes et regroupement des variantes : mêmes règles que
+// `convert_to_anonymization_format` et `consolidate_duplicate_entities` dans
+// `scripts/convert_and_scan_pipeline.py`. Les deux chemins écrivent le même
+// fichier de mapping — s'ils codaient différemment, une reconstruction depuis
+// l'administration dédoublerait les entités déjà codées par le CLI.
+
+const ENTITY_CATEGORIES = {
+  PERSON: 'personnes_physiques',
+  ORGANIZATION: 'societes',
+  LOCATION: 'adresses',
+  EMAIL: 'autres',
+  PHONE: 'autres',
+  CREDIT_CARD: 'autres',
+  IBAN: 'autres',
+  IP_ADDRESS: 'autres',
+  URL: 'autres',
+};
+
+function entityCategory(entityType) {
+  const type = String(entityType || '').toUpperCase();
+  return ENTITY_CATEGORIES[type] || (type.startsWith('ORGANIZATION_') ? 'societes' : 'autres');
+}
+
+/** Catégorie d'un code déjà attribué — sert à repartir des bons compteurs. */
+function codeCategory(code) {
+  if (code.startsWith('PERSONNE_PHYSIQUE_')) return 'personnes_physiques';
+  if (code.startsWith('SOCIETE_') || code.startsWith('PERSONNE_MORALE_')) return 'societes';
+  if (code.startsWith('ADRESSE_')) return 'adresses';
+  if (code.startsWith('SIREN_')) return 'siren';
+  return 'autres';
+}
+
+function entityCode(entityType, category, index) {
+  const number = String(index).padStart(2, '0');
+  const type = String(entityType || 'AUTRE').toUpperCase();
+  if (category === 'personnes_physiques') return `PERSONNE_PHYSIQUE_${number}`;
+  if (category === 'societes') {
+    return type.startsWith('ORGANIZATION_')
+      ? `SOCIETE_${codePrefix(type.slice('ORGANIZATION_'.length))}_${number}`
+      : `PERSONNE_MORALE_${number}`;
+  }
+  if (category === 'adresses') return `ADRESSE_${number}`;
+  return `${codePrefix(type)}_${number}`;
+}
+
+/** Forme comparable d'un nom : sans accents, sans civilité, en minuscules. */
+function normalizeEntityName(text) {
+  return String(text || '')
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/\b(mr\.?|mrs\.?|ms\.?|dr\.?|prof\.?|m\.|mme\.?|mlle\.?|maitre)\s*/g, '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+}
+
+/** Deux écritures d'une même personne : « M. Gilly » et « Bernard Gilly ». */
+function areNamesSimilar(first, second) {
+  if (!first || !second) return false;
+  if (first === second) return true;
+  if (Math.min(first.length, second.length) >= 3 && (first.includes(second) || second.includes(first))) return true;
+  const tokens = [new Set(first.split(' ')), new Set(second.split(' '))];
+  const [shorter, longer] = tokens[0].size <= tokens[1].size ? tokens : [tokens[1], tokens[0]];
+  return shorter.size > 0 && [...shorter].every((token) => longer.has(token));
+}
+
+/**
+ * Regroupe les occurrences d'un type d'entité. Seules les personnes sont
+ * consolidées : deux sociétés dont le nom se ressemble restent deux entités.
+ */
+function groupEntityHits(hits, category) {
+  const texts = [...new Set(hits.map((hit) => String(hit?.text || '').trim()).filter(Boolean))];
+  if (category !== 'personnes_physiques') return texts.map((text) => [text]);
+  const groups = [];
+  for (const text of texts) {
+    const normalized = normalizeEntityName(text);
+    const group = groups.find((candidate) => candidate.normalized.some((member) => areNamesSimilar(normalized, member)));
+    if (group) {
+      group.texts.push(text);
+      group.normalized.push(normalized);
+    } else {
+      groups.push({ texts: [text], normalized: [normalized] });
+    }
+  }
+  return groups.map((group) => group.texts);
+}
+
 /**
  * Fusionne les `*_sensitive_map.json` du dossier dans son mapping.
  * Une entrée déjà présente n'est jamais réécrite : un faux positif retiré à la
  * main ne doit pas revenir au scan suivant, et un code ne doit jamais servir
- * deux fois.
+ * deux fois. Les écritures multiples d'une même personne rejoignent le code
+ * déjà attribué au lieu d'en obtenir un second.
  */
 async function rebuildCaseMapping(caseRoot) {
   const current = readCaseMapping(caseRoot);
   const mapping = { ...current.mapping };
   const ignored = new Set(current.ignored);
   const reverse = Object.fromEntries(Object.entries(current.reverse_mapping).map(([code, list]) => [code, [...list]]));
+  const extracted = Object.fromEntries(
+    Object.entries(current.extracted_data).map(([category, codes]) => [category, { ...codes }])
+  );
+
   const counters = new Map();
-  for (const code of Object.values(mapping)) {
-    const match = /^(.*)_(\d+)$/.exec(code);
+  for (const code of new Set(Object.values(mapping))) {
+    const match = /_(\d+)$/.exec(code);
     if (!match) continue;
-    counters.set(match[1], Math.max(counters.get(match[1]) || 0, Number(match[2])));
+    const category = codeCategory(code);
+    counters.set(category, Math.max(counters.get(category) || 0, Number(match[1])));
   }
+
+  // Index des noms déjà codés : une variante détectée plus tard rejoint son
+  // code d'origine plutôt que d'en créer un nouveau.
+  const coded = Object.entries(mapping).map(([entity, code]) => ({
+    normalized: normalizeEntityName(entity),
+    category: codeCategory(code),
+    code,
+  }));
 
   let added = 0;
   for (const relative of await safeCaseFiles(caseRoot)) {
@@ -166,21 +298,51 @@ async function rebuildCaseMapping(caseRoot) {
     const entities = payload && typeof payload.entities === 'object' ? payload.entities : {};
     for (const [entityType, hits] of Object.entries(entities)) {
       if (!Array.isArray(hits)) continue;
-      const prefix = codePrefix(entityType);
-      for (const hit of hits) {
-        const text = String(hit?.text || '').trim();
-        if (!text || mapping[text] || ignored.has(text)) continue;
-        const index = (counters.get(prefix) || 0) + 1;
-        counters.set(prefix, index);
-        const code = `${prefix}_${String(index).padStart(2, '0')}`;
-        mapping[text] = code;
-        reverse[code] = [text];
-        added += 1;
+      const category = entityCategory(entityType);
+      for (const group of groupEntityHits(hits, category)) {
+        const texts = group.filter((text) => !ignored.has(text));
+        if (!texts.length) continue;
+
+        let code = texts.map((text) => mapping[text]).find(Boolean);
+        if (!code && category === 'personnes_physiques') {
+          const normalized = texts.map(normalizeEntityName);
+          code = coded.find((entry) => entry.category === category
+            && normalized.some((name) => areNamesSimilar(name, entry.normalized)))?.code;
+        }
+        const isNewCode = !code;
+        if (!code) {
+          const index = (counters.get(category) || 0) + 1;
+          counters.set(category, index);
+          code = entityCode(entityType, category, index);
+        }
+
+        // Valeur principale : la plus longue écriture, comme côté Python.
+        const principal = [...texts].sort((a, b) => b.length - a.length)[0];
+        for (const text of texts) {
+          if (mapping[text]) continue;
+          mapping[text] = code;
+          coded.push({ normalized: normalizeEntityName(text), category, code });
+          added += 1;
+        }
+        if (isNewCode) reverse[code] = [principal];
+        for (const text of texts) {
+          if (!reverse[code].includes(text)) reverse[code].push(text);
+        }
+
+        if (!extracted[category]) extracted[category] = {};
+        const entry = extracted[category][code] || { original: principal, code, variants: [] };
+        entry.variants = [...new Set([...(entry.variants || []), ...texts])];
+        extracted[category][code] = entry;
       }
     }
   }
 
-  const saved = writeCaseMapping(caseRoot, { mapping, reverse_mapping: reverse, ignored: [...ignored] });
+  const saved = writeCaseMapping(caseRoot, {
+    mapping,
+    reverse_mapping: reverse,
+    extracted_data: extracted,
+    ignored: [...ignored],
+  });
   return { ...saved, added, total: Object.keys(saved.mapping).length };
 }
 
