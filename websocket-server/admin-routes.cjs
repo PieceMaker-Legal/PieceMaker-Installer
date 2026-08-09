@@ -674,6 +674,9 @@ function createAdminRouter({
         action: String(req.body?.action || ''),
         files: Array.isArray(req.body?.files) ? req.body.files : [],
         options: {
+          // Sans `force`, un travail sans sélection ne refait que les pièces
+          // dont le Markdown ou le scan PII manque.
+          force: req.body?.force === true,
           engine: String(req.body?.engine || '').trim() || undefined,
           mode: String(req.body?.mode || '').trim() || undefined,
           lang: String(req.body?.lang || '').trim() || undefined,

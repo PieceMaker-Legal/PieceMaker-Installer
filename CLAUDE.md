@@ -183,12 +183,38 @@ then `presidio-gliner.py`), never the remote bulk anonymisation job.
   `*_sensitive_map.json` land next to the files already versioned. Only
   `PROGRESS:` lines and a short stderr tail are kept in a job's log — raw
   script stdout can carry document text.
-- The case mapping is `<case>/mapping_dossier.json` (an existing
-  `mapping*.json` wins), read/written via
+- **A job with no `files` covers the whole case and only redoes what is
+  missing** (no Markdown, or no `*_sensitive_map.json`); listing `files`
+  explicitly — or `force: true` — reprocesses exactly those. When nothing is
+  left to do the route returns an already-`done` job and spawns nothing, so
+  GLiNER's ~400MB of weights never load for an up-to-date case. The same
+  decision is taken again per file inside `convert_and_scan_pipeline.py` via
+  `--skip-existing`, which also holds the scanner worker back until it knows at
+  least one file needs scanning.
+- The individual `*_sensitive_map.json` are **kept** after the merge (the
+  script only deletes them with `--cleanup-scans`): they are what tells a
+  scanned original from an unscanned one in the admin list, and what
+  `rebuildCaseMapping` merges. Deleting them made every piece look unscanned
+  and sent GLiNER over the whole case on every run.
+- The case mapping is `<case>/mapping_dossier.json` (that name wins; otherwise
+  an existing `mapping*.json` is reused), read/written via
   `GET/PUT /api/admin/mapping` and rebuilt from the scans by
-  `POST /api/admin/mapping/rebuild`. Entries are stored longest-entity-first,
-  a code is never reused, and an entry deleted in the admin editor is recorded
-  under `ignored` so the next rebuild does not reintroduce that false positive.
+  `POST /api/admin/mapping/rebuild`. The pipeline is pointed at that same file
+  with `--mapping-file` — without it, it wrote its own `mapping_default.json`
+  next to it, which then shadowed the case mapping. Entries are stored
+  longest-entity-first, a code is never reused, and an entry deleted in the
+  admin editor is recorded under `ignored` so neither the next rebuild nor the
+  Python merge reintroduces that false positive.
+- Codes and variants are shared ground between the CLI pipeline and the admin:
+  `rebuildCaseMapping` (`originals-pipeline.cjs`) mirrors
+  `convert_to_anonymization_format` / `consolidate_duplicate_entities` — same
+  code vocabulary (`PERSONNE_PHYSIQUE_NN`, `PERSONNE_MORALE_NN`,
+  `SOCIETE_<forme>_NN`, `ADRESSE_NN`), same per-category counters, and the
+  several spellings of one person ("M. Gilly", "Bernard Gilly") join a single
+  code instead of each getting one. `extracted_data` (variants, parsed
+  addresses) is written by the Python side and must survive an admin
+  save/rebuild untouched — the partial de-anonymisation of addresses reads it
+  (`anonymization-server.cjs`).
 
 ## Document conversion
 

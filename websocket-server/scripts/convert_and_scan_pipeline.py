@@ -962,6 +962,10 @@ def convert_to_anonymization_format(consolidated_entities: Dict) -> Dict:
     """
     mapping = {}
     reverse_mapping = {}
+    # Texts deliberately left readable (city-only locations, the non-street part
+    # of a partially anonymised address). They go to `ignored` so that the admin
+    # rebuild (originals-pipeline.cjs) does not code them back from the raw scan.
+    left_visible: List[str] = []
     extracted_data = {
         "personnes_physiques": {},
         "societes": {},
@@ -1066,6 +1070,7 @@ def convert_to_anonymization_format(consolidated_entities: Dict) -> Dict:
                     # Remove from mapping - city names stay visible
                     for variant in variants:
                         mapping.pop(variant, None)
+                    left_visible.extend(variants)
                     reverse_mapping.pop(code, None)
                     del extracted_data[category][code]
                     counters[category] -= 1  # Revert counter
@@ -1081,11 +1086,13 @@ def convert_to_anonymization_format(consolidated_entities: Dict) -> Dict:
                         # Update variants to only include street part
                         extracted_data[category][code]["variants"] = [street_part]
                         reverse_mapping[code] = [street_part]
+                        left_visible.extend(v for v in variants if v != street_part)
 
     return {
         "mapping": mapping,
         "reverse_mapping": reverse_mapping,
-        "extracted_data": extracted_data
+        "extracted_data": extracted_data,
+        **({"ignored": list(dict.fromkeys(left_visible))} if left_visible else {}),
     }
 
 
@@ -1106,6 +1113,7 @@ def merge_with_existing_mapping(new_mapping: Dict, existing_mapping: Optional[Di
     # the lawyer removed by hand are false positives and must not come back.
     ignored = [str(text).strip() for text in existing_mapping.get('ignored', []) if str(text).strip()]
     ignored_lower = {text.lower() for text in ignored}
+    left_visible: List[str] = []
 
     merged_mapping = {**existing_mapping.get('mapping', {})}
     merged_reverse = {**existing_mapping.get('reverse_mapping', {})}
@@ -1223,6 +1231,7 @@ def merge_with_existing_mapping(new_mapping: Dict, existing_mapping: Optional[Di
                 # Remove from merged structures
                 for variant in variants:
                     merged_mapping.pop(variant, None)
+                left_visible.extend(variants)
                 merged_reverse.pop(new_code, None)
                 del merged_extracted[category][new_code]
                 # Don't increment counter since we're removing this entry
@@ -1238,12 +1247,16 @@ def merge_with_existing_mapping(new_mapping: Dict, existing_mapping: Optional[Di
                     # Update variants to only include street part
                     merged_extracted[category][new_code]["variants"] = [street_part]
                     merged_reverse[new_code] = [street_part]
+                    left_visible.extend(v for v in variants if v != street_part)
 
+    merged_ignored = list(dict.fromkeys(
+        ignored + [str(text).strip() for text in new_mapping.get('ignored', []) if str(text).strip()] + left_visible
+    ))
     return {
         "mapping": merged_mapping,
         "reverse_mapping": merged_reverse,
         "extracted_data": merged_extracted,
-        **({"ignored": ignored} if ignored else {}),
+        **({"ignored": merged_ignored} if merged_ignored else {}),
     }
 
 
@@ -1541,7 +1554,8 @@ def main():
     print(f"✅ Mapping saved to: {mapping_path}")
     print(f"   • Total entities: {len(final_mapping_data['mapping'])} variants")
     print(f"   • Unique codes: {len(final_mapping_data['reverse_mapping'])}")
-    print(f"   • Server can read via: GET /api/anonymize/mapping/{args.document_id}")
+    if not args.mapping_file:
+        print(f"   • Server can read via: GET /api/anonymize/mapping/{args.document_id}")
 
     # Cleanup individual mappings. Kept by default: the admin UI reads them to
     # tell a scanned original from an unscanned one, and rebuilds the case

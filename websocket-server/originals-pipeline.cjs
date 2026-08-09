@@ -163,7 +163,7 @@ function saveCaseMapping(caseRoot, document) {
 function codePrefix(entityType) {
   return String(entityType || 'ENTITE')
     .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .toUpperCase()
     .replace(/[^A-Z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '')
@@ -219,7 +219,7 @@ function entityCode(entityType, category, index) {
 function normalizeEntityName(text) {
   return String(text || '')
     .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/\b(mr\.?|mrs\.?|ms\.?|dr\.?|prof\.?|m\.|mme\.?|mlle\.?|maitre)\s*/g, '')
     .split(/\s+/)
@@ -358,6 +358,30 @@ function pruneJobs() {
   }
 }
 
+/** Travail rendu déjà terminé — rien à traiter, aucun processus lancé. */
+function finishedJob({ case: caseName, action, total, files, result }) {
+  const now = new Date().toISOString();
+  return {
+    id: crypto.randomUUID(),
+    case: caseName,
+    action,
+    state: 'done',
+    phase: 'mapping',
+    percent: 100,
+    processed: total,
+    total,
+    skipped: result?.skipped || 0,
+    files,
+    log: [],
+    error: null,
+    result,
+    cancelled: false,
+    child: null,
+    startedAt: now,
+    finishedAt: now,
+  };
+}
+
 function publicJob(job) {
   if (!job) return null;
   const { child, ...rest } = job;
@@ -471,7 +495,12 @@ async function runJob(job, legalCase, absoluteFiles, options) {
     return { converted: absoluteFiles.length };
   }
 
-  const args = [...absoluteFiles, '-o', legalCase.root];
+  // `--mapping-file` vise le mapping du dossier : sans lui le pipeline écrivait
+  // son propre `mapping_default.json` à côté, qui prenait ensuite la place du
+  // mapping tenu pour le dossier. `--skip-existing` évite de relancer GLiNER sur
+  // une pièce déjà scannée — c'est le script qui décide, fichier par fichier.
+  const args = [...absoluteFiles, '-o', legalCase.root, '--mapping-file', caseMappingFile(legalCase.root)];
+  if (options.skipExisting) args.push('--skip-existing');
   if (options.engine) args.push('--engine', options.engine);
   if (options.mode) args.push('--mode', options.mode);
   if (options.lang) args.push('--lang', options.lang);
@@ -499,10 +528,34 @@ async function startOriginalsJob({ casesRoot, caseName, action, files = [], opti
   const wanted = new Set(files.map((file) => String(file || '').replaceAll('\\', '/')));
   const selected = wanted.size ? originals.filter((file) => wanted.has(file.path)) : originals;
   if (!selected.length) throw new Error('Aucune pièce originale à traiter.');
-  if (selected.length > MAX_FILES_PER_JOB) throw new Error(`Traitement limité à ${MAX_FILES_PER_JOB} pièces à la fois.`);
+
+  // Sans sélection, le travail porte sur tout le dossier et ne refait que ce
+  // qui manque : le modèle GLiNER ne se charge pas si tout est déjà scanné.
+  // Cocher des pièces vaut demande explicite de les retraiter.
+  const forced = wanted.size > 0 || options.force === true;
+  const pending = forced
+    ? selected
+    : selected.filter((file) => (action === 'convert' ? !file.converted : !(file.converted && file.scanned)));
+  const skipped = selected.length - pending.length;
+  if (pending.length > MAX_FILES_PER_JOB) throw new Error(`Traitement limité à ${MAX_FILES_PER_JOB} pièces à la fois.`);
+
+  pruneJobs();
+  if (!pending.length) {
+    // Rien à faire : on rend un travail déjà terminé plutôt qu'une erreur, pour
+    // que l'administration affiche « à jour » et non un échec.
+    const job = finishedJob({
+      case: legalCase.name,
+      action,
+      total: 0,
+      files: [],
+      result: { converted: 0, scanned: 0, skipped, upToDate: true },
+    });
+    jobs.set(job.id, job);
+    return publicJob(job);
+  }
 
   const originalsRoot = path.join(legalCase.root, findOriginalsDirectory(legalCase.root));
-  const absoluteFiles = selected.map((file) => {
+  const absoluteFiles = pending.map((file) => {
     const absolute = path.resolve(originalsRoot, ...file.path.split('/'));
     if (absolute !== originalsRoot && !absolute.startsWith(`${originalsRoot}${path.sep}`)) {
       throw new Error('Pièce originale hors du dossier.');
@@ -511,7 +564,6 @@ async function startOriginalsJob({ casesRoot, caseName, action, files = [], opti
     return absolute;
   });
 
-  pruneJobs();
   const job = {
     id: crypto.randomUUID(),
     case: legalCase.name,
@@ -520,8 +572,9 @@ async function startOriginalsJob({ casesRoot, caseName, action, files = [], opti
     phase: 'convert',
     percent: 0,
     processed: 0,
-    total: selected.length,
-    files: selected.map((file) => file.path),
+    total: pending.length,
+    skipped,
+    files: pending.map((file) => file.path),
     log: [],
     error: null,
     result: null,
@@ -532,12 +585,12 @@ async function startOriginalsJob({ casesRoot, caseName, action, files = [], opti
   };
   jobs.set(job.id, job);
 
-  runJob(job, legalCase, absoluteFiles, options)
+  runJob(job, legalCase, absoluteFiles, { ...options, skipExisting: !forced })
     .then((result) => {
       job.state = 'done';
       job.percent = 100;
       job.processed = job.total;
-      job.result = result;
+      job.result = { ...result, skipped };
     })
     .catch((error) => {
       job.state = 'error';
