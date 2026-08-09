@@ -9,7 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { log, spinner, columns } from '../lib/ui.mjs';
-import { run, npmBin, REPO_ROOT } from '../lib/platform.mjs';
+import { run, npmBin, npmEnv, REPO_ROOT } from '../lib/platform.mjs';
 
 export const meta = {
   id: '02-dependances-node',
@@ -50,6 +50,7 @@ async function npmInstall(dir, label, ctx) {
   const spin = spinner(`${label} : npm install...`);
   const code = await run(npmBin('npm'), args, {
     cwd: dir,
+    env: npmEnv(),
     onLine: (line) => spin.update(truncate(line)),
   });
 

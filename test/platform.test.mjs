@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { IS_WINDOWS, npmBin, runCapture } from '../installer/lib/platform.mjs';
+import { IS_WINDOWS, npmBin, npmEnv, runCapture } from '../installer/lib/platform.mjs';
 
 test('npm utilise le même environnement Node que PieceMaker', (t) => {
   if (IS_WINDOWS) {
@@ -25,7 +25,7 @@ test('npm utilise le même environnement Node que PieceMaker', (t) => {
   try {
     assert.equal(npmBin(), adjacent);
     const result = runCapture(npmBin(), ['--version'], {
-      env: { ...process.env, PATH: dir },
+      env: npmEnv({ ...process.env, PATH: dir }),
     });
     assert.equal(result.code, 0, result.stderr || result.error?.message);
     assert.match(result.stdout, /^\d+\.\d+\.\d+/);

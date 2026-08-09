@@ -18,6 +18,7 @@ import {
   REPO_ROOT,
   ensureDir,
   npmBin,
+  npmEnv,
   runCapture,
 } from './platform.mjs';
 import { loadConfig, readEnv } from './state.mjs';
@@ -319,11 +320,18 @@ export function updateRepository(pending = checkForUpdate()) {
   // not perform `git clean`, so untracked and ignored runtime data is kept.
   runOrThrow('git', ['reset', '--hard', 'FETCH_HEAD'], 'Mise à jour Git impossible');
 
-  runOrThrow(npmBin('npm'), ['install', '--no-audit', '--no-fund'], 'Mise à jour npm impossible');
-  runOrThrow(npmBin('npm'), ['prune', '--no-audit', '--no-fund'], 'Nettoyage des dépendances impossible');
+  const npmOptions = { cwd: REPO_ROOT, env: npmEnv() };
+  const installed = runCapture(npmBin('npm'), ['install', '--no-audit', '--no-fund'], npmOptions);
+  if (installed.code !== 0 || installed.error) {
+    throw new Error(`Mise à jour npm impossible : ${installed.stderr || installed.stdout || installed.error?.message || `code ${installed.code}`}`);
+  }
+  const pruned = runCapture(npmBin('npm'), ['prune', '--no-audit', '--no-fund'], npmOptions);
+  if (pruned.code !== 0 || pruned.error) {
+    throw new Error(`Nettoyage des dépendances impossible : ${pruned.stderr || pruned.stdout || pruned.error?.message || `code ${pruned.code}`}`);
+  }
   // npm link needs a writable global prefix; a read-only one must not undo an
   // otherwise successful update, so it only downgrades to a warning.
-  const linked = runCapture(npmBin('npm'), ['link', '--ignore-scripts'], { cwd: REPO_ROOT });
+  const linked = runCapture(npmBin('npm'), ['link', '--ignore-scripts'], npmOptions);
 
   return {
     ...pending,

@@ -10,7 +10,7 @@
 
 import { createRequire } from 'node:module';
 import { log } from '../lib/ui.mjs';
-import { commandExists, compareVersions, npmBin, runCapture, IS_WINDOWS, REPO_ROOT } from '../lib/platform.mjs';
+import { commandExists, compareVersions, npmBin, npmEnv, runCapture, IS_WINDOWS, REPO_ROOT } from '../lib/platform.mjs';
 
 const require = createRequire(import.meta.url);
 const { findSoffice } = require(`${REPO_ROOT}/websocket-server/lib/office-to-pdf.cjs`);
@@ -27,8 +27,9 @@ function probe(ctx) {
   const nodeVersion = process.version;
   const nodeOk = compareVersions(nodeVersion, MIN_NODE) >= 0;
 
-  const npmOk = commandExists(npmBin('npm'));
-  const npmVersion = npmOk ? runCapture(npmBin('npm'), ['--version']).stdout : null;
+  const npmProbe = runCapture(npmBin('npm'), ['--version'], { env: npmEnv() });
+  const npmOk = npmProbe.code === 0 && !npmProbe.error;
+  const npmVersion = npmOk ? npmProbe.stdout : null;
 
   const gitOk = commandExists('git');
 

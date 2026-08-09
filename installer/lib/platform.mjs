@@ -30,7 +30,7 @@ export const HOME_DIR = process.env.PIECEMAKER_HOME || path.join(os.homedir(), '
  * `#!/usr/bin/env node`; without this, an older system Node can execute npm
  * even though PieceMaker itself was started with a recent NVM installation.
  */
-function runtimeEnv(env = process.env) {
+export function npmEnv(env = process.env) {
   const pathKey = Object.keys(env).find((key) => key.toLowerCase() === 'path') || 'PATH';
   const runtimeBin = path.dirname(process.execPath);
   const currentPath = env[pathKey] || '';
@@ -56,7 +56,6 @@ export function runCapture(command, args = [], options = {}) {
     encoding: 'utf8',
     windowsHide: true,
     ...options,
-    env: runtimeEnv(options.env),
   });
   return {
     code: result.status ?? 1,
@@ -76,7 +75,6 @@ export function run(command, args = [], { onLine, ...options } = {}) {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       ...options,
-      env: runtimeEnv(options.env),
     });
 
     const forward = (stream) => {
