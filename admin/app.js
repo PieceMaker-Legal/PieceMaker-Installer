@@ -658,6 +658,7 @@ async function controlTelegram(role, action, button) {
 const CLAUDE_ASSET_BADGES = {
   linked: { text: 'Claude Code', className: 'ok', title: 'Enregistré dans Claude Code (lien vers le dépôt).' },
   copied: { text: 'Claude Code', className: 'ok', title: 'Enregistré dans Claude Code (copie synchronisée à chaque enregistrement).' },
+  stale: { text: 'À réenregistrer', className: 'warn', title: 'Enregistrement PieceMaker périmé (autre installation) — « ⟳ Claude Code » le reprend.' },
   conflict: { text: 'Conflit', className: 'warn', title: 'Un fichier personnel du même nom existe déjà dans ~/.claude — il n’a pas été remplacé.' },
   missing: { text: 'Non enregistré', className: 'warn', title: 'Pas encore visible par Claude Code — utilisez « ⟳ Claude Code ».' },
 };
@@ -683,7 +684,8 @@ async function syncClaudeAssets() {
     const conflicts = result.conflicts?.length
       ? ` — ${result.conflicts.length} conflit(s) de nom dans ~/.claude`
       : '';
-    setMessage(message, `${result.registered} skill(s)/agent(s) enregistré(s)${conflicts}.`, conflicts ? 'error' : 'success');
+    const adopted = result.adopted ? `, dont ${result.adopted} repris d’une autre installation` : '';
+    setMessage(message, `${result.registered} skill(s)/agent(s) enregistré(s)${adopted}${conflicts}.`, conflicts ? 'error' : 'success');
     toast('Skills et agents synchronisés avec Claude Code');
   } catch (error) {
     setMessage(message, error.message, 'error');

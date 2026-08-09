@@ -75,6 +75,62 @@ test('un agent personnel homonyme n’est jamais écrasé', (t) => {
   assert.equal(syncClaudeAssets(data.repo, data.userHome).conflicts.length, 1);
 });
 
+test('un enregistrement laissé par un autre clone du dépôt est repris', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  // Deuxième clone du même dépôt (poste de dev + installation d'exécution).
+  const other = path.join(data.root, 'autre-clone');
+  fs.cpSync(data.repo, other, { recursive: true });
+  syncClaudeAssets(other, data.userHome);
+
+  const relative = 'piecemaker-plugin/agents/analyste-piece.md';
+  assert.equal(claudeAssetStatus(data.repo, data.userHome, relative).state, 'stale');
+
+  const result = syncClaudeAssets(data.repo, data.userHome);
+  assert.equal(result.registered, 2);
+  assert.equal(result.adopted, 2);
+  assert.deepEqual(result.conflicts, []);
+  assert.equal(claudeAssetStatus(data.repo, data.userHome, relative).state, 'linked');
+  assert.equal(
+    fs.realpathSync(path.join(data.userHome, '.claude', 'skills', 'tamponnage')),
+    fs.realpathSync(path.join(data.repo, 'piecemaker-plugin', 'skills', 'tamponnage')),
+  );
+  // L'autre clone est intact : seul le lien dans ~/.claude a bougé.
+  assert.equal(fs.existsSync(path.join(other, 'piecemaker-plugin', 'agents', 'analyste-piece.md')), true);
+});
+
+test('une copie déposée par PieceMaker est remise à jour, un fichier inconnu non', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const relative = 'piecemaker-plugin/agents/analyste-piece.md';
+  const source = path.join(data.repo, 'piecemaker-plugin', 'agents', 'analyste-piece.md');
+  const target = path.join(data.userHome, '.claude', 'agents', 'analyste-piece.md');
+
+  // Repli sans lien symbolique : la copie est notée dans le reçu.
+  const symlinkSync = fs.symlinkSync;
+  fs.symlinkSync = () => { throw new Error('EPERM'); };
+  try {
+    assert.equal(registerClaudeAsset(data.repo, data.userHome, relative).state, 'copied');
+  } finally {
+    fs.symlinkSync = symlinkSync;
+  }
+
+  fs.writeFileSync(source, '---\nname: analyste-piece\nmodel: opus\n---\n');
+  assert.equal(claudeAssetStatus(data.repo, data.userHome, relative).state, 'stale');
+  const refreshed = registerClaudeAsset(data.repo, data.userHome, relative);
+  assert.equal(refreshed.state, 'copied');
+  assert.equal(refreshed.adopted, true);
+  assert.match(fs.readFileSync(target, 'utf8'), /model: opus/);
+
+  // Un skill personnel jamais déposé par nous reste un conflit.
+  const personal = path.join(data.userHome, '.claude', 'skills', 'tamponnage');
+  fs.mkdirSync(personal, { recursive: true });
+  fs.writeFileSync(path.join(personal, 'SKILL.md'), '# skill personnel\n');
+  const skill = registerClaudeAsset(data.repo, data.userHome, 'piecemaker-plugin/skills/tamponnage/SKILL.md');
+  assert.equal(skill.state, 'conflict');
+  assert.equal(fs.readFileSync(path.join(personal, 'SKILL.md'), 'utf8'), '# skill personnel\n');
+});
+
 test('les liens orphelins du dépôt sont nettoyés, pas les fichiers personnels', (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
@@ -83,8 +139,14 @@ test('les liens orphelins du dépôt sont nettoyés, pas les fichiers personnels
   fs.writeFileSync(personal, '# perso\n');
   fs.rmSync(path.join(data.repo, 'piecemaker-plugin', 'agents', 'analyste-piece.md'));
 
+  const orphan = path.join(data.userHome, '.claude', 'skills', 'clone-disparu');
+  fs.symlinkSync(path.join(data.root, 'clone-effac\u00e9', 'piecemaker-plugin', 'skills', 'clone-disparu'), orphan, 'dir');
+
   const removed = pruneClaudeAssets(data.repo, data.userHome);
-  assert.deepEqual(removed, [path.join(data.userHome, '.claude', 'agents', 'analyste-piece.md')]);
+  assert.deepEqual(removed.sort(), [
+    path.join(data.userHome, '.claude', 'agents', 'analyste-piece.md'),
+    orphan,
+  ].sort());
   assert.equal(fs.existsSync(personal), true);
   assert.deepEqual(repositoryAssets(data.repo), ['piecemaker-plugin/skills/tamponnage/SKILL.md']);
 });

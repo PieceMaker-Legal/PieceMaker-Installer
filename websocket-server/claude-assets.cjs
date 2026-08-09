@@ -18,8 +18,11 @@
  * copie, re-synchronisée à chaque enregistrement.
  *
  * Règle de sûreté : on n'écrase jamais un agent ou un skill utilisateur
- * préexistant qui ne provient pas du dépôt — le conflit est signalé, pas
- * résolu en silence.
+ * préexistant — le conflit est signalé, pas résolu en silence. Un
+ * enregistrement qui provient de PieceMaker, lui, est repris sans question,
+ * même s'il vient d'un autre clone du dépôt (dev + installation d'exécution
+ * sur la même machine) : sans cela les six skills et agents restaient
+ * bloqués en « conflit » avec eux-mêmes.
  */
 
 const fs = require('fs');
@@ -27,6 +30,14 @@ const os = require('os');
 const path = require('path');
 
 const PLUGIN_DIRECTORY = 'piecemaker-plugin';
+
+/**
+ * Reconnaît un chemin appartenant à un clone *quelconque* du dépôt. Un poste
+ * a couramment le dépôt de développement et l'installation d'exécution côte à
+ * côte : le lien déposé dans ~/.claude par l'un ne doit pas être pris pour un
+ * fichier personnel par l'autre (voir l'état `stale` de claudeAssetStatus).
+ */
+const PLUGIN_ASSET_PATH = /(^|[\\/])piecemaker-plugin[\\/](agents|skills)[\\/][^\\/]+/;
 
 function pluginRoot(repoRoot) {
   return path.join(repoRoot, PLUGIN_DIRECTORY);
@@ -97,10 +108,46 @@ function copyTree(source, target, type) {
 }
 
 /**
+ * Repli sans lien symbolique : une copie déposée dans ~/.claude est
+ * indiscernable d'un fichier écrit à la main. On note donc ce qu'on a copié,
+ * seul moyen de rafraîchir plus tard une copie devenue obsolète sans risquer
+ * d'écraser le travail de l'utilisateur.
+ */
+function receiptFile(userHome) {
+  return path.join(userHome, '.claude', '.piecemaker-assets.json');
+}
+
+function readReceipt(userHome) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(receiptFile(userHome), 'utf8'));
+    return parsed && typeof parsed.copies === 'object' && parsed.copies ? parsed.copies : {};
+  } catch {
+    return {};
+  }
+}
+
+function rememberCopy(userHome, asset) {
+  const copies = readReceipt(userHome);
+  copies[`${asset.kind}:${asset.slug}`] = asset.source;
+  try {
+    fs.writeFileSync(receiptFile(userHome), `${JSON.stringify({ version: 1, copies }, null, 2)}\n`);
+  } catch {
+    // Le reçu est un confort, pas une dépendance : sans lui une copie
+    // obsolète retombe simplement sur un conflit signalé.
+  }
+}
+
+function ownedCopy(userHome, asset) {
+  return Object.hasOwn(readReceipt(userHome), `${asset.kind}:${asset.slug}`);
+}
+
+/**
  * État de l'enregistrement, sans rien modifier — utilisé par la liste des
  * fichiers de l'administration.
  *   linked   : lien symbolique vers le dépôt (mise à jour immédiate)
  *   copied   : copie synchronisée (repli sans lien symbolique)
+ *   stale    : enregistrement PieceMaker périmé (autre clone du dépôt, ou
+ *              copie obsolète que nous avions déposée) — repris sans question
  *   conflict : un fichier utilisateur homonyme existe déjà, non touché
  *   missing  : pas encore enregistré
  */
@@ -111,8 +158,11 @@ function claudeAssetStatus(repoRoot, userHome, relativePath) {
   if (!fs.existsSync(asset.source)) return { ...base, state: 'missing' };
   const link = linkTarget(asset.target);
   if (link) {
-    return samePath(link, asset.source)
-      ? { ...base, state: 'linked' }
+    if (samePath(link, asset.source)) return { ...base, state: 'linked' };
+    // Un lien vers un autre clone du dépôt reste un enregistrement
+    // PieceMaker : on le reprend, on ne le déclare pas en conflit.
+    return PLUGIN_ASSET_PATH.test(link)
+      ? { ...base, state: 'stale', origin: link }
       : { ...base, state: 'conflict' };
   }
   if (!fs.existsSync(asset.target)) return { ...base, state: 'missing' };
@@ -121,7 +171,7 @@ function claudeAssetStatus(repoRoot, userHome, relativePath) {
   if (fs.existsSync(targetFile) && fs.readFileSync(targetFile, 'utf8') === fs.readFileSync(sourceFile, 'utf8')) {
     return { ...base, state: 'copied' };
   }
-  return { ...base, state: 'conflict' };
+  return ownedCopy(userHome, asset) ? { ...base, state: 'stale' } : { ...base, state: 'conflict' };
 }
 
 /**
@@ -144,20 +194,37 @@ function registerClaudeAsset(repoRoot, userHome, relativePath) {
     };
   }
 
+  const base = { kind: asset.kind, slug: asset.slug, target: asset.target };
+  const adopted = current.state === 'stale'
+    ? {
+      adopted: true,
+      note: current.origin
+        ? `Enregistrement repris d'un autre clone PieceMaker (${current.origin}).`
+        : "Copie PieceMaker obsolète remplacée par la version de ce dépôt.",
+    }
+    : {};
   fs.mkdirSync(path.dirname(asset.target), { recursive: true });
-  if (current.state === 'copied') {
+
+  // Une copie réelle déjà en place signale une machine sans liens
+  // symboliques : on la rafraîchit au lieu de retenter un lien à chaque fois.
+  if (!linkTarget(asset.target) && fs.existsSync(asset.target)) {
     copyTree(asset.source, asset.target, asset.type);
-    return { ...current, state: 'copied' };
+    rememberCopy(userHome, asset);
+    return { ...base, state: 'copied', ...adopted };
   }
+
+  // Lien laissé par un autre clone : on le retire. Jamais un fichier réel —
+  // celui-ci est sorti plus haut en `conflict`.
+  if (linkTarget(asset.target)) fs.unlinkSync(asset.target);
   try {
     fs.symlinkSync(asset.source, asset.target, asset.type === 'dir' ? 'dir' : 'file');
-    return { kind: asset.kind, slug: asset.slug, target: asset.target, state: 'linked' };
+    return { ...base, state: 'linked', ...adopted };
   } catch {
     copyTree(asset.source, asset.target, asset.type);
+    rememberCopy(userHome, asset);
     return {
-      kind: asset.kind,
-      slug: asset.slug,
-      target: asset.target,
+      ...base,
+      ...adopted,
       state: 'copied',
       note: 'Liens symboliques indisponibles : une copie a été déposée, elle est mise à jour à chaque enregistrement.',
     };
@@ -186,8 +253,8 @@ function repositoryAssets(repoRoot) {
 
 /**
  * Retire les liens devenus orphelins : uniquement des liens symboliques
- * pointant vers ce dépôt dont la cible a disparu (skill/agent supprimé).
- * Jamais un fichier réel de l'utilisateur.
+ * pointant vers un clone du dépôt dont la cible a disparu (skill/agent
+ * supprimé, ou clone effacé). Jamais un fichier réel de l'utilisateur.
  */
 function pruneClaudeAssets(repoRoot, userHome) {
   const removed = [];
@@ -199,8 +266,8 @@ function pruneClaudeAssets(repoRoot, userHome) {
       const link = linkTarget(entry);
       if (!link) continue;
       const inside = link === pluginRoot(repoRoot) || link.startsWith(`${pluginRoot(repoRoot)}${path.sep}`);
-      if (inside && !fs.existsSync(link)) {
-        fs.rmSync(entry, { force: true });
+      if ((inside || PLUGIN_ASSET_PATH.test(link)) && !fs.existsSync(link)) {
+        fs.unlinkSync(entry);
         removed.push(entry);
       }
     }
@@ -222,6 +289,7 @@ function syncClaudeAssets(repoRoot, userHome = os.homedir()) {
     assets,
     pruned,
     registered: assets.filter((asset) => asset.state === 'linked' || asset.state === 'copied').length,
+    adopted: assets.filter((asset) => asset.adopted).length,
     conflicts: assets.filter((asset) => asset.state === 'conflict'),
   };
 }

@@ -369,7 +369,18 @@ from `/admin/` usable without publishing the repo and re-running
   installer step `09-claude-assets`, and from `POST /api/admin/files/sync`.
 - A pre-existing user file with the same slug is never overwritten — the
   state comes back as `conflict` and is surfaced as a badge in the admin file
-  list (`linked` / `copied` / `conflict` / `missing`).
+  list (`linked` / `copied` / `stale` / `conflict` / `missing`).
+- An entry that PieceMaker itself put there is *not* a conflict: it comes back
+  as `stale` and is taken over silently on the next registration. That covers
+  the normal two-clone setup (dev repo + runtime install) — a symlink into any
+  `…/piecemaker-plugin/{agents,skills}/<slug>` is recognised as ours and
+  re-pointed at the current root. Without it, a server started from the second
+  clone reported every asset as conflicting with the first clone's own links,
+  i.e. `0 registered / 6 conflicts`, and registered nothing. The copy fallback
+  has no path to recognise, so what we copied is recorded in
+  `~/.claude/.piecemaker-assets.json` — that receipt is what tells an outdated
+  copy of ours from a hand-written file. `pruneClaudeAssets` likewise removes a
+  dangling symlink into *any* clone, not just the current one.
 - Agent front matter is not skill front matter: agents are created with
   `tools:` and `model:` (validated by `normalizeAgentTools` /
   `normalizeAgentModel` in `admin-routes.cjs`), skills only carry
