@@ -4,6 +4,13 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { performance } = require('node:perf_hooks');
 const { configuredWorkspacePath } = require('./workspace-paths.cjs');
+const {
+  listConfiguredCases,
+  readRegistryConfig,
+  registerCaseFolder,
+  resolveCaseReference,
+  validateSelectedCaseFolder,
+} = require('./case-registry.cjs');
 const { stampedPiecesDirectory } = require('./lib/stamping.cjs');
 const {
   caseOverview,
@@ -31,6 +38,7 @@ const {
   writeCaseMapping,
 } = require('./originals-pipeline.cjs');
 const {
+  readProtection,
   writeProtection,
 } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
 const {
@@ -93,6 +101,157 @@ async function createLegalCase({ casesRoot, homeDir, name }) {
     fs.rmSync(directory, { recursive: true, force: true });
     throw error;
   }
+}
+
+/** Native folder-picker commands. Arguments stay separate from the shell. */
+function folderPickerCommands(platform, initialFolder) {
+  const start = path.resolve(initialFolder || os.homedir());
+  if (platform === 'darwin') {
+    return [{
+      command: 'osascript',
+      args: [
+        '-e', 'on run argv',
+        '-e', 'set initialFolder to POSIX file (item 1 of argv)',
+        '-e', 'set selectedFolder to choose folder with prompt "Choisir un dossier juridique PieceMaker" default location initialFolder',
+        '-e', 'return POSIX path of selectedFolder',
+        '-e', 'end run',
+        start,
+      ],
+    }];
+  }
+  if (platform === 'win32') {
+    const script = [
+      'Add-Type -AssemblyName System.Windows.Forms',
+      '$dialog = New-Object System.Windows.Forms.FolderBrowserDialog',
+      '$dialog.Description = "Choisir un dossier juridique PieceMaker"',
+      '$dialog.ShowNewFolderButton = $false',
+      'if (Test-Path -LiteralPath $args[0]) { $dialog.SelectedPath = $args[0] }',
+      'if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write($dialog.SelectedPath) }',
+    ].join('; ');
+    return [{ command: 'powershell.exe', args: ['-NoProfile', '-STA', '-Command', script, start] }];
+  }
+  const withSlash = start.endsWith(path.sep) ? start : `${start}${path.sep}`;
+  return [
+    { command: 'zenity', args: ['--file-selection', '--directory', '--title=Choisir un dossier juridique PieceMaker', `--filename=${withSlash}`] },
+    { command: 'kdialog', args: ['--getexistingdirectory', start, '--title', 'Choisir un dossier juridique PieceMaker'] },
+  ];
+}
+
+function captureProcess(command, args, { cwd } = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on('data', (chunk) => stdout.push(chunk));
+    child.stderr.on('data', (chunk) => stderr.push(chunk));
+    child.once('error', (error) => resolve({ code: null, stdout: '', stderr: '', error }));
+    child.once('close', (code) => resolve({
+      code,
+      stdout: Buffer.concat(stdout).toString('utf8').trim(),
+      stderr: Buffer.concat(stderr).toString('utf8').trim(),
+      error: null,
+    }));
+  });
+}
+
+async function selectLocalFolder(platform = process.platform, initialFolder = os.homedir()) {
+  let lastError = null;
+  for (const candidate of folderPickerCommands(platform, initialFolder)) {
+    const result = await captureProcess(candidate.command, candidate.args);
+    if (result.code === 0) return result.stdout ? validateSelectedCaseFolder(result.stdout) : null;
+    if (result.error?.code === 'ENOENT') {
+      lastError = result.error;
+      continue;
+    }
+    // Native dialogs use a non-zero status for an ordinary user cancellation.
+    if (!result.stdout && (result.code === 1 || /cancel|annul/i.test(result.stderr))) return null;
+    lastError = result.error || new Error(result.stderr || `Le sélecteur s’est arrêté avec le code ${result.code}.`);
+  }
+  throw new Error(`Aucun sélecteur de dossier n’est disponible sur ce poste (${lastError?.message || 'commande introuvable'}).`);
+}
+
+async function installProjectPlugin(folder) {
+  const result = await captureProcess('claude', [
+    'plugin', 'install', 'piecemaker@piecemaker', '--scope', 'project',
+  ], { cwd: folder });
+  if (result.code !== 0) {
+    const detail = result.error?.code === 'ENOENT'
+      ? 'Claude Code est introuvable.'
+      : result.stderr || result.stdout || 'installation refusée';
+    throw new Error(`Le plugin PieceMaker n’a pas pu être activé pour ce dossier : ${detail}`);
+  }
+  return true;
+}
+
+function caseRuleContent(repoRoot) {
+  const template = path.join(repoRoot, 'installer', 'templates', 'workspace-CLAUDE.md');
+  if (!fs.existsSync(template)) throw new Error('Le modèle d’instructions PieceMaker est introuvable.');
+  return fs.readFileSync(template, 'utf8')
+    .replace('# PieceMaker — dossiers juridiques', '# PieceMaker — dossier juridique actif')
+    .replace(
+      /Ce fichier est à la racine du workspace PieceMaker\.[\s\S]*?\*\*Chaque sous-dossier immédiat de cette racine est un dossier juridique\nindépendant\.\*\* Rien ne circule d'un dossier à l'autre : ni historique, ni\nmapping d'anonymisation, ni facturation\./,
+      'Cette règle est installée dans le dossier juridique sélectionné. Toute session Claude Code ouverte dans ce dossier ou dans un de ses sous-dossiers la charge automatiquement. Ce répertoire constitue un dossier juridique PieceMaker indépendant : son historique, son mapping d’anonymisation et sa facturation ne circulent vers aucun autre dossier.',
+    )
+    .replace(
+      '| Racine des dossiers | ce répertoire (`workspacePath` de `~/.piecemaker/config.json`) |',
+      '| Dossier juridique actif | ce répertoire (`caseFolders` de `~/.piecemaker/config.json`) |',
+    );
+}
+
+function ensureCaseRule(repoRoot, folder) {
+  const target = path.join(folder, '.claude', 'rules', 'piecemaker.md');
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  // This file is PieceMaker-owned and can be refreshed safely on re-register.
+  fs.writeFileSync(target, caseRuleContent(repoRoot), 'utf8');
+  return target;
+}
+
+async function registerLegalCase({
+  folder,
+  configFile,
+  repoRoot,
+  homeDir,
+  projectPluginInstaller = installProjectPlugin,
+} = {}) {
+  const root = validateSelectedCaseFolder(folder);
+  await projectPluginInstaller(root);
+  const rule = ensureCaseRule(repoRoot, root);
+  const protection = readProtection(root);
+  if (!protection.exists) writeProtection(root, { unprotected: [] });
+  const currentMapping = readCaseMapping(root);
+  const mapping = currentMapping.exists
+    ? currentMapping
+    : writeCaseMapping(root, { mapping: {}, reverse_mapping: {} });
+
+  const previous = readRegistryConfig(configFile);
+  const registered = registerCaseFolder(previous, root);
+  atomicWrite(configFile, `${JSON.stringify(registered.config, null, 2)}\n`);
+
+  const commit = await createCommit({
+    casesRoot: path.dirname(root),
+    caseName: path.basename(root),
+    homeDir,
+    label: 'Enregistrement du dossier juridique',
+    event: 'admin-case-register',
+    paths: [path.basename(mapping.file)],
+    waitForLockMs: 10_000,
+    envFile: path.join(repoRoot, '.env'),
+  });
+  const folderOverview = await caseOverview(path.dirname(root), homeDir, path.basename(root));
+  folderOverview.path = registered.entry.id;
+  folderOverview.location = root;
+  folderOverview.registered = true;
+  folderOverview.branches = await historyBranches(path.dirname(root), homeDir, path.basename(root));
+  return {
+    folder: folderOverview,
+    installed: {
+      plugin: true,
+      rule: path.relative(root, rule).split(path.sep).join('/'),
+      mapping: path.basename(mapping.file),
+      protection: path.relative(root, protection.file).split(path.sep).join('/'),
+      commit: commit.commit || null,
+    },
+  };
 }
 
 function defaultConfig(repoRoot, homeDir = path.join(os.homedir(), '.piecemaker')) {
@@ -451,12 +610,14 @@ function finishAdminTiming(res, metric, startedAt, details = {}) {
  * renvoyées — jamais `texte_integral`, qui contient les pièces en clair.
  */
 function listDossiers(repoRoot, homeDir) {
-  const workspace = legalWorkspaceDirectory(repoRoot, homeDir);
-  if (!fs.existsSync(workspace)) return [];
-  const legalCases = fs.readdirSync(workspace, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink() && !entry.name.startsWith('.'));
+  const config = readRegistryConfig(path.join(homeDir, 'config.json'));
+  const legalCases = listConfiguredCases(config);
   return legalCases.flatMap((entry) => {
-    const legalCase = path.join(workspace, entry.name);
+    // Preserve the configured spelling of the legacy workspace path (`/var`
+    // vs `/private/var` on macOS); explicit folders are stored canonicalized.
+    const legalCase = entry.registered
+      ? entry.root
+      : path.join(config.workspacePath, entry.name);
     return fs.readdirSync(legalCase)
       .filter((file) => /^compilation_dossier_.+\.json$/.test(file))
       .map((file) => {
@@ -550,6 +711,8 @@ function createAdminRouter({
   homeDir = path.join(os.homedir(), '.piecemaker'),
   userHome = os.homedir(),
   getRuntimeStatus = () => ({}),
+  pickFolder = selectLocalFolder,
+  projectPluginInstaller = installProjectPlugin,
 } = {}) {
   // Lazy import keeps the pure filesystem/Git helpers testable before npm
   // dependencies are installed. The running server already depends on Express.
@@ -558,6 +721,8 @@ function createAdminRouter({
   const configFile = path.join(homeDir, 'config.json');
   const envFile = path.join(repoRoot, '.env');
   const casesRoot = () => configuredWorkspacePath(homeDir);
+  const registryConfig = () => readRegistryConfig(configFile);
+  const selectedCase = (reference) => resolveCaseReference(registryConfig(), reference);
 
   router.use((req, res, next) => {
     res.set('Cache-Control', 'no-store');
@@ -683,7 +848,22 @@ function createAdminRouter({
   router.get('/repository', async (req, res) => {
     const startedAt = performance.now();
     try {
-      const overview = listCases(casesRoot());
+      const config = registryConfig();
+      const entries = listConfiguredCases(config);
+      const overview = {
+        name: 'PieceMaker',
+        root: config.workspacePath || '',
+        branch: 'Dossiers enregistrés',
+        head: '',
+        shortHead: '',
+        folders: entries.map((entry) => ({
+          name: entry.name,
+          path: entry.id,
+          location: entry.root,
+          registered: entry.registered,
+        })),
+        changes: [],
+      };
       finishAdminTiming(res, 'repository', startedAt, { folders: overview.folders.length });
       res.json(overview);
     } catch (error) {
@@ -693,12 +873,20 @@ function createAdminRouter({
 
   router.post('/repository/cases', async (req, res) => {
     try {
-      const folder = await createLegalCase({
-        casesRoot: casesRoot(),
+      const config = registryConfig();
+      const initial = config.workspacePath && fs.existsSync(config.workspacePath)
+        ? config.workspacePath
+        : userHome;
+      const selected = await pickFolder(process.platform, initial);
+      if (!selected) return res.json({ ok: true, cancelled: true });
+      const result = await registerLegalCase({
+        folder: selected,
+        configFile,
+        repoRoot,
         homeDir,
-        name: req.body?.name,
+        projectPluginInstaller,
       });
-      res.status(201).json({ ok: true, folder });
+      res.status(201).json({ ok: true, ...result });
     } catch (error) {
       res.status(400).json({ error: error.message });
     }
@@ -707,17 +895,21 @@ function createAdminRouter({
   router.get('/repository/case', async (req, res) => {
     const startedAt = performance.now();
     try {
-      const folder = await caseOverview(casesRoot(), homeDir, String(req.query.case || '').trim());
+      const legalCase = selectedCase(req.query.case);
+      const folder = await caseOverview(legalCase.casesRoot, homeDir, legalCase.caseName);
+      folder.path = legalCase.id;
+      folder.location = legalCase.root;
+      folder.registered = legalCase.registered;
       // Les Markdown convertis vivent déjà dans l'historique ; ce cadre ne
       // présente que les pièces originales et un résumé non sensible du mapping.
       folder.originals = folder.originals.filter((file) => file.extension !== '.md');
-      const mapping = readCaseMapping(path.join(casesRoot(), folder.path));
+      const mapping = readCaseMapping(legalCase.root);
       folder.mapping = {
         exists: mapping.exists,
         name: path.basename(mapping.file),
         entries: Object.keys(mapping.mapping).length,
       };
-      folder.branches = await historyBranches(casesRoot(), homeDir, folder.name);
+      folder.branches = await historyBranches(legalCase.casesRoot, homeDir, legalCase.caseName);
       finishAdminTiming(res, 'case', startedAt, {
         changes: folder.changes,
         originals: folder.originals.length,
@@ -730,9 +922,10 @@ function createAdminRouter({
 
   router.post('/branches', async (req, res) => {
     try {
+      const legalCase = selectedCase(req.body?.case);
       const branches = await createHistoryBranch({
-        casesRoot: casesRoot(),
-        caseName: String(req.body?.case || '').trim(),
+        casesRoot: legalCase.casesRoot,
+        caseName: legalCase.caseName,
         homeDir,
         name: req.body?.name,
       });
@@ -745,9 +938,10 @@ function createAdminRouter({
 
   router.put('/branches/current', async (req, res) => {
     try {
+      const legalCase = selectedCase(req.body?.case);
       const branches = await checkoutHistoryBranch({
-        casesRoot: casesRoot(),
-        caseName: String(req.body?.case || '').trim(),
+        casesRoot: legalCase.casesRoot,
+        caseName: legalCase.caseName,
         homeDir,
         name: req.body?.name,
       });
@@ -766,7 +960,9 @@ function createAdminRouter({
       const target = String(req.body?.target || '');
       if (!REVEAL_TARGETS.has(target)) throw new Error('Action de dossier inconnue.');
       const caseName = String(req.body?.case || '').trim();
-      const absolute = caseName ? resolveCase(casesRoot(), caseName).root : resolveCasesRoot(casesRoot());
+      const absolute = caseName
+        ? selectedCase(caseName).root
+        : resolveCasesRoot(casesRoot());
       await revealLocalFolder(process.platform, target, absolute);
       res.json({ ok: true, target, path: absolute });
     } catch (error) {
@@ -780,9 +976,10 @@ function createAdminRouter({
 
   router.post('/originals/pipeline', async (req, res) => {
     try {
+      const legalCase = selectedCase(req.body?.case);
       const job = await startOriginalsJob({
-        casesRoot: casesRoot(),
-        caseName: String(req.body?.case || '').trim(),
+        casesRoot: legalCase.casesRoot,
+        caseName: legalCase.caseName,
         homeDir,
         action: String(req.body?.action || ''),
         files: Array.isArray(req.body?.files) ? req.body.files : [],
@@ -795,6 +992,7 @@ function createAdminRouter({
           lang: String(req.body?.lang || '').trim() || undefined,
         },
       });
+      job.reference = legalCase.id;
       res.status(202).json({ ok: true, job });
     } catch (error) {
       res.status(400).json({ error: error.message });
@@ -822,11 +1020,11 @@ function createAdminRouter({
   router.get('/protection', async (req, res) => {
     const startedAt = performance.now();
     try {
-      const legalCase = resolveCase(casesRoot(), String(req.query.case || '').trim());
+      const legalCase = selectedCase(req.query.case);
       const files = await listOriginals(legalCase.root);
       finishAdminTiming(res, 'protection', startedAt, { files: files.length });
       res.json({
-        case: legalCase.name,
+        case: legalCase.id,
         files,
         protectedCount: files.filter((file) => file.protected).length,
         truncated: Boolean(files.truncated),
@@ -841,11 +1039,11 @@ function createAdminRouter({
       if (!Array.isArray(req.body?.unprotected)) {
         throw new Error('« unprotected » doit être la liste des pièces laissées accessibles à l’IA.');
       }
-      const legalCase = resolveCase(casesRoot(), String(req.body?.case || '').trim());
+      const legalCase = selectedCase(req.body?.case);
       const saved = writeProtection(legalCase.root, { unprotected: req.body.unprotected });
       res.json({
         ok: true,
-        case: legalCase.name,
+        case: legalCase.id,
         unprotected: [...saved.unprotected],
       });
     } catch (error) {
@@ -858,10 +1056,10 @@ function createAdminRouter({
   // rendu au navigateur local qui l'a demandé.
   router.get('/mapping', (req, res) => {
     try {
-      const legalCase = resolveCase(casesRoot(), String(req.query.case || '').trim());
+      const legalCase = selectedCase(req.query.case);
       const mapping = readCaseMapping(legalCase.root);
       res.json({
-        case: legalCase.name,
+        case: legalCase.id,
         name: path.basename(mapping.file),
         exists: mapping.exists,
         mapping: mapping.mapping,
@@ -877,14 +1075,14 @@ function createAdminRouter({
       if (!req.body?.mapping || typeof req.body.mapping !== 'object' || Array.isArray(req.body.mapping)) {
         throw new Error('Le mapping doit être un objet { entité: code }.');
       }
-      const legalCase = resolveCase(casesRoot(), String(req.body?.case || '').trim());
+      const legalCase = selectedCase(req.body?.case);
       const saved = saveCaseMapping(legalCase.root, {
         mapping: req.body.mapping,
         reverse_mapping: req.body.reverse_mapping,
       });
       const commit = await createCommit({
         casesRoot: legalCase.casesRoot,
-        caseName: legalCase.name,
+        caseName: legalCase.caseName,
         homeDir,
         label: 'Modification du mapping d’anonymisation',
         event: 'admin-mapping-edit',
@@ -894,7 +1092,7 @@ function createAdminRouter({
       if (commit.skipped === 'busy') throw new Error('Mapping enregistré, mais historique occupé : commit automatique non créé.');
       res.json({
         ok: true,
-        case: legalCase.name,
+        case: legalCase.id,
         name: path.basename(saved.file),
         exists: true,
         mapping: saved.mapping,
@@ -908,11 +1106,11 @@ function createAdminRouter({
 
   router.post('/mapping/rebuild', async (req, res) => {
     try {
-      const legalCase = resolveCase(casesRoot(), String(req.body?.case || '').trim());
+      const legalCase = selectedCase(req.body?.case);
       const rebuilt = await rebuildCaseMapping(legalCase.root);
       const commit = await createCommit({
         casesRoot: legalCase.casesRoot,
-        caseName: legalCase.name,
+        caseName: legalCase.caseName,
         homeDir,
         label: 'Régénération du mapping d’anonymisation',
         event: 'admin-mapping-rebuild',
@@ -922,7 +1120,7 @@ function createAdminRouter({
       if (commit.skipped === 'busy') throw new Error('Mapping régénéré, mais historique occupé : commit automatique non créé.');
       res.json({
         ok: true,
-        case: legalCase.name,
+        case: legalCase.id,
         name: path.basename(rebuilt.file),
         added: rebuilt.added,
         total: rebuilt.total,
@@ -939,8 +1137,8 @@ function createAdminRouter({
     const startedAt = performance.now();
     try {
       const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 250);
-      const caseName = String(req.query.case || '').trim();
-      const history = await listHistory(casesRoot(), homeDir, { limit, caseName });
+      const legalCase = selectedCase(req.query.case);
+      const history = await listHistory(legalCase.casesRoot, homeDir, { limit, caseName: legalCase.caseName });
       finishAdminTiming(res, 'history', startedAt, { commits: history.length, limit });
       res.json({ history });
     } catch (error) {
@@ -954,10 +1152,10 @@ function createAdminRouter({
       const hash = String(req.query.hash || '');
       const filePath = String(req.query.path || '');
       const snapshot = String(req.query.snapshot || '');
-      const caseName = String(req.query.case || '').trim();
+      const legalCase = selectedCase(req.query.case);
       const revision = hash === 'WORKTREE'
-        ? await worktreeDetails(casesRoot(), homeDir, caseName, filePath, snapshot)
-        : await revisionDetails(casesRoot(), homeDir, caseName, hash, filePath);
+        ? await worktreeDetails(legalCase.casesRoot, homeDir, legalCase.caseName, filePath, snapshot)
+        : await revisionDetails(legalCase.casesRoot, homeDir, legalCase.caseName, hash, filePath);
       finishAdminTiming(res, 'revision', startedAt, {
         files: revision.filesCount,
         patchBytes: Buffer.byteLength(revision.patch || '', 'utf8'),
@@ -971,11 +1169,12 @@ function createAdminRouter({
 
   router.post('/commits', async (req, res) => {
     try {
+      const legalCase = selectedCase(req.body?.case);
       const label = String(req.body?.label || 'Commit manuel').trim().slice(0, 140);
       const description = String(req.body?.description || '').trim().slice(0, 4000);
       const result = await createCommit({
-        casesRoot: casesRoot(),
-        caseName: String(req.body?.case || '').trim(),
+        casesRoot: legalCase.casesRoot,
+        caseName: legalCase.caseName,
         homeDir,
         label,
         description,
@@ -994,9 +1193,10 @@ function createAdminRouter({
       if (req.body?.confirm !== true) {
         return res.status(400).json({ error: 'La confirmation explicite de la restauration est requise.' });
       }
+      const legalCase = selectedCase(req.body?.case);
       const result = await restoreRevision({
-        casesRoot: casesRoot(),
-        caseName: String(req.body?.case || '').trim(),
+        casesRoot: legalCase.casesRoot,
+        caseName: legalCase.caseName,
         homeDir,
         hash: req.body?.hash,
       });
@@ -1049,6 +1249,8 @@ module.exports = {
   createLegalCase,
   createAdminRouter,
   createManagedFile,
+  folderPickerCommands,
+  installProjectPlugin,
   isLocalOrigin,
   legalWorkspaceDirectory,
   listDossiers,
@@ -1057,7 +1259,9 @@ module.exports = {
   normalizeAgentModel,
   normalizeAgentTools,
   readManagedFile,
+  registerLegalCase,
   revealCommands,
   saveManagedFile,
+  selectLocalFolder,
   updateEnvFile,
 };

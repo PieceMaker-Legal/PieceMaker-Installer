@@ -873,6 +873,8 @@ function renderFolders() {
   const select = byId('caseSelect');
   select.textContent = '';
   const folders = repositoryData?.folders || [];
+  const duplicateNames = new Map();
+  for (const folder of folders) duplicateNames.set(folder.name, (duplicateNames.get(folder.name) || 0) + 1);
   if (!folders.length) {
     const option = document.createElement('option');
     option.value = '';
@@ -882,7 +884,10 @@ function renderFolders() {
   for (const folder of folders) {
     const option = document.createElement('option');
     option.value = folder.path;
-    option.textContent = folder.changes ? `${folder.name} (${folder.changes})` : folder.name;
+    const name = duplicateNames.get(folder.name) > 1 && folder.location
+      ? `${folder.name} — ${folder.location}`
+      : folder.name;
+    option.textContent = folder.changes ? `${name} (${folder.changes})` : name;
     select.append(option);
   }
   // La valeur active est synchronisée une fois la liste complète insérée : le
@@ -1692,7 +1697,7 @@ async function selectHistoryFolder(folder) {
   selectedOriginals = new Set();
   caseTelegram = null;
   caseTelegramFolder = '';
-  if (originalsJob?.case !== folder) showOriginalsProgress('');
+  if ((originalsJob?.reference || originalsJob?.case) !== folder) showOriginalsProgress('');
   showRevisionPlaceholder('Sélectionnez une modification');
   updateCaseToolbar();
   renderFolders();
@@ -1739,7 +1744,7 @@ async function revealCaseFolder(target, button) {
 
 function updateCaseToolbar() {
   const legalCase = currentCase();
-  byId('repositoryPath').textContent = repositoryData?.root || '—';
+  byId('repositoryPath').textContent = legalCase?.location || repositoryData?.root || '—';
   byId('repositoryHead').textContent = legalCase?.shortHead || 'Aucun';
   byId('pushState').textContent = legalCase?.shortHead ? `À jour · ${legalCase.shortHead}` : 'Actualiser l’historique local';
   const branchSelect = byId('branchSelect');
@@ -1754,7 +1759,7 @@ function updateCaseToolbar() {
   }
   branchSelect.disabled = !legalCase || !branches.length;
   byId('openCreateBranch').disabled = !legalCase;
-  const hasRoot = Boolean(repositoryData?.root);
+  const hasRoot = Boolean(legalCase || repositoryData?.root);
   byId('revealFolder').disabled = !hasRoot;
   byId('openTerminal').disabled = !hasRoot;
   const scope = legalCase ? `le dossier « ${legalCase.name} »` : 'la racine PieceMaker';
@@ -1778,19 +1783,23 @@ function renderCaseTelegramCard() {
 }
 
 async function loadCaseTelegramState() {
-  const caseName = currentCase()?.name || '';
-  if (caseName && caseTelegramFolder === caseName && caseTelegram) {
+  const legalCase = currentCase();
+  const caseName = legalCase?.name || '';
+  const caseKey = legalCase?.path || '';
+  if (caseKey && caseTelegramFolder === caseKey && caseTelegram) {
     renderCaseTelegramCard();
     return;
   }
   caseTelegram = null;
-  caseTelegramFolder = caseName;
+  caseTelegramFolder = caseKey;
   renderCaseTelegramCard();
   if (!selectedFolder || !caseName) return;
   try {
     const data = await api('/api/admin/telegram');
-    if (caseTelegramFolder === caseName) {
-      caseTelegram = data.dossiers?.find((dossier) => dossier.directoryName === caseName) || null;
+    if (caseTelegramFolder === caseKey) {
+      caseTelegram = data.dossiers?.find((dossier) => dossier.workdir === legalCase.location)
+        || data.dossiers?.find((dossier) => dossier.directoryName === caseName)
+        || null;
     }
   } catch (error) {
     dwarn('telegram', `État du bot du dossier indisponible : ${error.message}`);
@@ -1894,32 +1903,33 @@ async function createManualCommit(event) {
 }
 
 function openCreationDialog(kind) {
-  const dialog = byId(kind === 'case' ? 'createCaseDialog' : 'createBranchDialog');
-  const input = byId(kind === 'case' ? 'newCaseName' : 'newBranchName');
-  const message = byId(kind === 'case' ? 'createCaseMessage' : 'createBranchMessage');
+  const dialog = byId('createBranchDialog');
+  const input = byId('newBranchName');
+  const message = byId('createBranchMessage');
   input.value = '';
   setMessage(message);
   dialog.showModal();
   requestAnimationFrame(() => input.focus());
 }
 
-async function createCaseFromForm(event) {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const button = form.querySelector('button[type="submit"]');
+async function selectAndRegisterCase() {
+  const button = byId('openCreateCase');
   button.disabled = true;
-  setMessage(byId('createCaseMessage'), 'Création de la configuration complète…');
+  toast('Sélectionnez un dossier existant sur votre ordinateur');
   try {
     const result = await api('/api/admin/repository/cases', {
       method: 'POST',
-      body: JSON.stringify({ name: byId('newCaseName').value }),
+      body: '{}',
     });
+    if (result.cancelled) {
+      toast('Sélection annulée');
+      return;
+    }
     selectedFolder = result.folder.path;
-    byId('createCaseDialog').close();
     await loadRepositoryHistory();
-    toast('Dossier créé avec son mapping, sa protection et son historique');
+    toast('Dossier enregistré · plugin PieceMaker actif pour toutes ses sessions');
   } catch (error) {
-    setMessage(byId('createCaseMessage'), error.message, 'error');
+    toast(error.message);
   } finally {
     button.disabled = false;
   }
@@ -2029,11 +2039,9 @@ document.querySelectorAll('[data-history-view]').forEach((button) => button.addE
 byId('refreshHistory').addEventListener('click', () => loadRepositoryHistory());
 byId('caseSelect').addEventListener('change', (event) => selectHistoryFolder(event.currentTarget.value));
 byId('branchSelect').addEventListener('change', selectHistoryBranch);
-byId('openCreateCase').addEventListener('click', () => openCreationDialog('case'));
+byId('openCreateCase').addEventListener('click', selectAndRegisterCase);
 byId('openCreateBranch').addEventListener('click', () => openCreationDialog('branch'));
-byId('createCaseForm').addEventListener('submit', createCaseFromForm);
 byId('createBranchForm').addEventListener('submit', createBranchFromForm);
-byId('cancelCreateCase').addEventListener('click', () => byId('createCaseDialog').close());
 byId('cancelCreateBranch').addEventListener('click', () => byId('createBranchDialog').close());
 byId('revealFolder').addEventListener('click', (event) => revealCaseFolder('files', event.currentTarget));
 byId('openTerminal').addEventListener('click', (event) => revealCaseFolder('terminal', event.currentTarget));

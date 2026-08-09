@@ -92,7 +92,13 @@ export async function install(ctx) {
 
   ensureDir(selected);
   const anonymization = ctx.config?.anonymization
-    ? { ...ctx.config.anonymization, watchPaths: [selected] }
+    ? {
+      ...ctx.config.anonymization,
+      watchPaths: [...new Set([
+        selected,
+        ...(Array.isArray(ctx.config?.caseFolders) ? ctx.config.caseFolders : []),
+      ])],
+    }
     : undefined;
   updateConfig({
     workspacePath: selected,

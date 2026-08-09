@@ -31,7 +31,7 @@
               <span class="toolbar-caption">Dossier actuel</span>
               <div class="toolbar-select-row">
                 <select id="caseSelect" aria-label="Dossier juridique actuel"></select>
-                <button id="openCreateCase" class="toolbar-plus" type="button" title="Ajouter un dossier">+</button>
+                <button id="openCreateCase" class="toolbar-plus" type="button" title="Sélectionner un dossier existant sur l’ordinateur" aria-label="Ajouter un dossier existant">+</button>
               </div>
               <code id="repositoryPath">—</code>
               <div class="identity-actions">
@@ -448,16 +448,6 @@
         <button id="cancelCreateFile" class="button secondary" type="button">Annuler</button>
         <button class="button primary" type="submit">Créer et rédiger</button>
       </div>
-    </form>
-  </dialog>
-
-  <dialog id="createCaseDialog">
-    <form id="createCaseForm" class="dialog-card">
-      <div><p class="eyebrow">NOUVEAU DOSSIER</p><h2>Ajouter un dossier juridique</h2></div>
-      <label>Nom du dossier<input id="newCaseName" maxlength="120" placeholder="Dossier Martin" required></label>
-      <p class="hint">PieceMaker crée le dossier, sa protection par défaut, son mapping vide et son historique Git.</p>
-      <span id="createCaseMessage" class="message"></span>
-      <div class="actions"><button id="cancelCreateCase" class="button secondary" type="button">Annuler</button><button class="button primary" type="submit">Créer le dossier</button></div>
     </form>
   </dialog>
 

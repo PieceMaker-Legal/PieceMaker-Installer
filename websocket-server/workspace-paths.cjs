@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { locateConfiguredCase } = require('../piecemaker-plugin/scripts/lib/case-folders.cjs');
 
 function configuredWorkspacePath(homeDir) {
   try {
@@ -46,4 +47,20 @@ function isLegalCaseFolder(workspacePath, candidate) {
   }
 }
 
-module.exports = { configuredWorkspacePath, isInside, isLegalCaseFolder, resolveLegalCaseFolder };
+/** Resolve a selected path against explicit caseFolders, then legacy workspace. */
+function resolveConfiguredLegalCaseFolder(config, selectedFolder) {
+  if (!selectedFolder) throw new Error('Dossier de travail manquant.');
+  const located = locateConfiguredCase(config || {}, selectedFolder);
+  if (!located) {
+    throw new Error('Ce dossier de travail n’est pas enregistré dans PieceMaker. Ajoutez-le depuis le panneau d’administration.');
+  }
+  return located.caseRoot;
+}
+
+module.exports = {
+  configuredWorkspacePath,
+  isInside,
+  isLegalCaseFolder,
+  resolveConfiguredLegalCaseFolder,
+  resolveLegalCaseFolder,
+};

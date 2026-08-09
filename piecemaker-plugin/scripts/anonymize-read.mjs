@@ -23,7 +23,7 @@ import { createRequire } from 'node:module';
 import { loadPieceMakerConfig, readHookPayload, runHook, noop } from './lib/hook-io.mjs';
 
 const require = createRequire(import.meta.url);
-const { applyMapping, resolveCaseMapping } = require('./lib/mapping.cjs');
+const { applyMapping, resolveConfiguredCaseMapping } = require('./lib/mapping.cjs');
 
 const HANDLED_TOOLS = new Set(['Read', 'Grep', 'Glob', 'Bash']);
 
@@ -68,16 +68,13 @@ async function main() {
 
   const config = loadPieceMakerConfig();
   if (config.anonymization?.enabled === false) return null;
-  const casesRoot = config.workspacePath;
-  if (!casesRoot) return null;
-
   const cwd = payload.cwd || process.cwd();
   // Le dossier vient du chemin visé quand l'outil en a un ; sinon du répertoire
   // de travail, qui est le dossier juridique lui-même pour les assistants par
   // dossier. Deux dossiers ont des compteurs de codes indépendants : mélanger
   // leurs mappings attribuerait un même code à deux personnes différentes.
   const hint = absolutePath(payload.tool_input?.file_path || payload.tool_input?.path, cwd) || cwd;
-  const legalCase = resolveCaseMapping(casesRoot, hint);
+  const legalCase = resolveConfiguredCaseMapping(config, hint);
   if (!legalCase) return null;
 
   const text = resultText(payload.tool_response);

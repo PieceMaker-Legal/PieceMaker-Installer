@@ -2,7 +2,8 @@
 /**
  * PostToolUse hook — records every successful Write/Edit as a per-case commit.
  *
- * Each immediate child of config.workspacePath is an independent legal case.
+ * Each explicitly registered folder (and each legacy workspace child) is an
+ * independent legal case.
  * Its Markdown and mapping JSON history lives outside client data under
  * ~/.piecemaker/case-history/. Original pieces are never opened or indexed.
  */
@@ -19,7 +20,8 @@ import {
 
 const require = createRequire(import.meta.url);
 const { createCommit, locateCaseFile } = require('./lib/commits.cjs');
-const { resolveCaseMapping, revertMapping } = require('./lib/mapping.cjs');
+const { locateConfiguredCase } = require('./lib/case-folders.cjs');
+const { resolveConfiguredCaseMapping, revertMapping } = require('./lib/mapping.cjs');
 
 async function main() {
   const payload = await readHookPayload(2000);
@@ -30,14 +32,14 @@ async function main() {
   if (config.commits?.enabled === false) return null;
 
   const cwd = payload.cwd || process.cwd();
-  const casesRoot = config.workspacePath;
-  if (!casesRoot) return null;
   const filePath = payload.tool_input?.file_path;
   if (!filePath) return null;
   const absolute = path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath);
   let located;
   try {
-    located = locateCaseFile(casesRoot, absolute);
+    const configured = locateConfiguredCase(config, absolute);
+    if (!configured) return null;
+    located = locateCaseFile(configured.casesRoot, absolute);
   } catch {
     return null;
   }
@@ -46,11 +48,11 @@ async function main() {
   // Le nom d'un fichier porte souvent une entité
   // (« 06_Email_..._par_CAITLYN_SA.md ») : l'historique du cabinet doit rester
   // lisible, alors que l'IA n'a vu que des codes.
-  const legalCase = resolveCaseMapping(casesRoot, absolute);
+  const legalCase = resolveConfiguredCaseMapping(config, absolute);
   const relative = legalCase ? revertMapping(located.relative, legalCase.reverse_mapping) : located.relative;
 
   await createCommit({
-    casesRoot,
+    casesRoot: located.casesRoot,
     caseName: located.name,
     homeDir: HOME_DIR,
     label: `${payload.tool_name === 'Write' ? 'Création' : 'Modification'} de ${relative}`,

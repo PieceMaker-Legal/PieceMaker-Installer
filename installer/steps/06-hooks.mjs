@@ -81,7 +81,10 @@ export async function install(ctx) {
   // alors complètement, et l'IA voit les documents en clair.
   const anonymizationConfig = {
     enabled: true,
-    watchPaths: workspacePath ? [workspacePath] : [],
+    watchPaths: [...new Set([
+      workspacePath,
+      ...(Array.isArray(ctx.config?.caseFolders) ? ctx.config.caseFolders : []),
+    ].filter(Boolean))],
   };
 
   if (ctx.dryRun) {

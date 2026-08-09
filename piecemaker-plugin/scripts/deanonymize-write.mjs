@@ -23,7 +23,7 @@ import { createRequire } from 'node:module';
 import { loadPieceMakerConfig, readHookPayload, runHook, noop } from './lib/hook-io.mjs';
 
 const require = createRequire(import.meta.url);
-const { resolveCaseMapping, revertMapping } = require('./lib/mapping.cjs');
+const { resolveConfiguredCaseMapping, revertMapping } = require('./lib/mapping.cjs');
 
 /** Champs textuels à rétablir, par outil. */
 const FIELDS_BY_TOOL = {
@@ -56,14 +56,11 @@ async function main() {
 
   const config = loadPieceMakerConfig();
   if (config.anonymization?.enabled === false) return null;
-  const casesRoot = config.workspacePath;
-  if (!casesRoot) return null;
-
   const cwd = payload.cwd || process.cwd();
   // Un message Telegram n'a pas de chemin : le dossier vient du répertoire de
   // travail, qui est celui de l'assistant du dossier (orchestrator/launch-telegram.sh).
   const hint = absolutePath(payload.tool_input?.file_path, cwd) || cwd;
-  const legalCase = resolveCaseMapping(casesRoot, hint);
+  const legalCase = resolveConfiguredCaseMapping(config, hint);
   if (!legalCase) return null;
 
   const updatedInput = {};

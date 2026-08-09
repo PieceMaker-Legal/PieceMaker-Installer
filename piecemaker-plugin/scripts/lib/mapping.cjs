@@ -21,6 +21,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { locateCase } = require('./protection.cjs');
+const { locateConfiguredCase } = require('./case-folders.cjs');
 
 const CANONICAL_MAPPING_FILE = 'mapping_dossier.json';
 
@@ -292,6 +293,15 @@ function resolveCaseMapping(casesRoot, hint) {
   return { caseRoot: located.caseRoot, caseName: located.caseName, ...mapping };
 }
 
+/** Resolve a mapping from the explicit folder registry plus legacy workspace. */
+function resolveConfiguredCaseMapping(config, hint) {
+  const located = locateConfiguredCase(config, hint);
+  if (!located) return null;
+  const mapping = readCaseMapping(located.caseRoot);
+  if (!mapping.exists) return null;
+  return { ...located, ...mapping };
+}
+
 module.exports = {
   applyMapping,
   buildEntityRegex,
@@ -301,6 +311,7 @@ module.exports = {
   normalizeMappingDocument,
   readCaseMapping,
   readJsonFile,
+  resolveConfiguredCaseMapping,
   resolveCaseMapping,
   revertMapping,
   sortedMapping,

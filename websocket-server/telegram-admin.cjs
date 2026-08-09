@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { isProtectedFile, readProtection } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
+const { listConfiguredCases, readRegistryConfig } = require('./case-registry.cjs');
 
 const ASSISTANT_DIR = 'telegram-piecemaker';
 const MONITOR_DIR = 'telegram-piecemaker-lord';
@@ -312,6 +313,7 @@ function pathsFor({ repoRoot, userHome, homeDir }) {
     projectsFile: path.join(orchestratorDir, 'projects.json'),
     launcher: path.join(repoRoot, 'orchestrator', 'launch-telegram.sh'),
     dossiersRoot: configuredDossiersRoot(repoRoot, homeDir),
+    dossierEntries: listConfiguredCases(readRegistryConfig(path.join(homeDir, 'config.json'))),
   };
 }
 
@@ -320,17 +322,13 @@ function readMonitorToken(paths) {
 }
 
 function dossierDirectories(paths, config) {
-  let entries = [];
-  try { entries = fs.readdirSync(paths.dossiersRoot, { withFileTypes: true }); } catch { return []; }
   const projects = Array.isArray(config.projects) ? config.projects : [];
   const usedIds = new Set(['piecemaker']);
-  return entries
-    .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink())
+  return paths.dossierEntries
     .filter((entry) => !entry.name.startsWith('.') && !entry.name.startsWith('_'))
     .filter((entry) => !RESERVED_DOSSIER_DIRS.has(entry.name.toLowerCase()))
-    .sort((a, b) => a.name.localeCompare(b.name, 'fr'))
     .map((entry) => {
-      const workdir = path.join(paths.dossiersRoot, entry.name);
+      const workdir = entry.root;
       const configured = projects.find((project) => {
         try { return project?.name !== 'piecemaker' && path.resolve(project.workdir) === path.resolve(workdir); }
         catch { return false; }
@@ -340,7 +338,7 @@ function dossierDirectories(paths, config) {
         : '';
       let id = configuredId || projectId(entry.name);
       if (usedIds.has(id)) {
-        const suffix = crypto.createHash('sha256').update(entry.name).digest('hex').slice(0, 6);
+        const suffix = crypto.createHash('sha256').update(workdir).digest('hex').slice(0, 6);
         id = `${id.slice(0, 41)}-${suffix}`;
       }
       usedIds.add(id);

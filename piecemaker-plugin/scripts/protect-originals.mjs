@@ -24,7 +24,8 @@ import { createRequire } from 'node:module';
 import { loadPieceMakerConfig, readHookPayload, runHook, noop } from './lib/hook-io.mjs';
 
 const require = createRequire(import.meta.url);
-const { isMappingFile, isProtectedFile, locateCase, markdownCounterpart, readProtection } = require('./lib/protection.cjs');
+const { locateConfiguredCase } = require('./lib/case-folders.cjs');
+const { isMappingFile, isProtectedFile, markdownCounterpart, readProtection } = require('./lib/protection.cjs');
 
 /** Au-delà, on ne cherche pas de chemin : une commande pareille n'en cite pas un. */
 const MAX_COMMAND_LENGTH = 20_000;
@@ -141,15 +142,14 @@ function caseRootHasMapping(located) {
 async function main() {
   const payload = await readHookPayload(2000);
   if (!payload) return null;
-  const casesRoot = loadPieceMakerConfig().workspacePath;
-  if (!casesRoot) return null;
+  const config = loadPieceMakerConfig();
 
   const toolName = payload.tool_name;
   const cwd = payload.cwd || process.cwd();
 
   if (toolName === 'Bash') {
     for (const candidate of commandPaths(payload.tool_input?.command, cwd)) {
-      const located = locateCase(casesRoot, candidate);
+      const located = locateConfiguredCase(config, candidate);
       if (!located) continue;
       if (isMappingFile(candidate)) return deny(mappingReason(candidate));
       if (isProtectedFile(candidate, located.caseRoot)) {
@@ -163,7 +163,7 @@ async function main() {
 
   const target = absolutePath(payload.tool_input?.file_path || payload.tool_input?.path, cwd);
   if (!target) return null;
-  const located = locateCase(casesRoot, target);
+  const located = locateConfiguredCase(config, target);
   if (!located) return null;
 
   // Un répertoire n'est pas une pièce : `Grep`/`Glob` en visent un couramment,

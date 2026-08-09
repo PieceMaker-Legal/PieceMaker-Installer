@@ -15,7 +15,7 @@ const {
   stampDataUrl,
   stampedPiecesDirectory,
 } = require('./lib/stamping.cjs');
-const { resolveLegalCaseFolder } = require('./workspace-paths.cjs');
+const { resolveConfiguredLegalCaseFolder } = require('./workspace-paths.cjs');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const PIECEMAKER_HOME = process.env.PIECEMAKER_HOME || path.join(os.homedir(), '.piecemaker');
@@ -106,7 +106,7 @@ function readDossierFolders() {
 
 function rememberDossierFolder(documentId, folder) {
   if (!documentId || !folder) throw new Error('documentId et dossier de travail requis.');
-  const legalCase = resolveLegalCaseFolder(getWorkspacePath(), folder);
+  const legalCase = resolveConfiguredLegalCaseFolder(readUserConfig(), folder);
   const registry = readDossierFolders();
   if (registry[documentId] === legalCase) return legalCase;
   registry[documentId] = legalCase;
@@ -126,7 +126,7 @@ function getOutputPath(documentId = null) {
   if (!legalCase) {
     throw new Error(`Aucun dossier juridique actif pour ${documentId}. Enregistrez le document Word dans la racine PieceMaker.`);
   }
-  return resolveLegalCaseFolder(getWorkspacePath(), legalCase);
+  return resolveConfiguredLegalCaseFolder(readUserConfig(), legalCase);
 }
 
 // Middleware pour parser le JSON

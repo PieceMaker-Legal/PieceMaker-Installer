@@ -24,6 +24,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import {
   readHookPayload,
   loadPieceMakerConfig,
@@ -34,6 +35,9 @@ import {
   BILLING_DIR,
   SYNTHESIS_DIR,
 } from './lib/hook-io.mjs';
+
+const require = createRequire(import.meta.url);
+const { locateConfiguredCase } = require('./lib/case-folders.cjs');
 
 const DEFAULT_TIMEOUT_MS = 8000;
 const MAX_TRANSCRIPT_BYTES = 10 * 1024 * 1024; // skip duration/tool-count derivation beyond this
@@ -102,15 +106,10 @@ function derivedDurationMs(analysis) {
   return Number.isFinite(ms) && ms >= 0 ? ms : null;
 }
 
-/** dossier = first path segment of cwd relative to the configured legal workspace, if any. */
+/** Name of the explicitly registered or legacy legal case containing cwd. */
 function detectDossier(cwd, config) {
-  if (!cwd || !config.workspacePath) return null;
-  const resolvedOutput = path.resolve(config.workspacePath);
-  const resolvedCwd = path.resolve(cwd);
-  if (resolvedCwd === resolvedOutput) return null;
-  if (!resolvedCwd.startsWith(resolvedOutput + path.sep)) return null;
-  const rel = path.relative(resolvedOutput, resolvedCwd);
-  return rel.split(path.sep)[0] || null;
+  if (!cwd) return null;
+  return locateConfiguredCase(config, cwd)?.caseName || null;
 }
 
 function synthesisFilePath(sessionId, isoTimestamp) {
