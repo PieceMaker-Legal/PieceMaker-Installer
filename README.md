@@ -79,8 +79,9 @@ permet aussi de rédiger les skills et agents dans un éditeur Markdown visuel
 consultables en lecture seule. Les noms des pièces originales n’y sont affichés
 qu’après application du mapping d’anonymisation ; à défaut, un nom générique est
 utilisé. L’interface permet enfin d’inspecter chaque dossier juridique
-indépendant, l’état de protection GLiNER de ses pièces originales et ses commits
-automatiques représentant chacun l’état complet du dossier. La commande suivante démarre le serveur si
+indépendant, de choisir pièce par pièce ce que l’IA n’a pas le droit d’ouvrir
+(tout ce qui n’est ni Markdown ni JSON est protégé par défaut) et de consulter
+ses commits automatiques représentant chacun l’état complet du dossier. La commande suivante démarre le serveur si
 nécessaire et ouvre directement cette interface dans le navigateur :
 
 ```bash

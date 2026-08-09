@@ -238,21 +238,98 @@ function runOrThrow(command, args, label) {
   return result;
 }
 
-export function updateRepository() {
-  const dirty = runOrThrow('git', ['status', '--porcelain'], 'Impossible de vérifier le dépôt').stdout;
-  if (dirty) {
-    throw new Error('Le dépôt contient des modifications locales. Committez-les ou remisez-les avant la mise à jour.');
-  }
+/** launchd label of the Telegram monitor installed by step 08. */
+const TELEGRAM_DAEMON_LABEL = 'com.piecemaker.telegram-monitor';
 
-  const branch = runOrThrow('git', ['branch', '--show-current'], 'Impossible de déterminer la branche').stdout;
-  const ref = process.env.PIECEMAKER_REF || branch || 'main';
-  if (branch) {
-    runOrThrow('git', ['pull', '--ff-only', 'origin', ref], 'Mise à jour Git impossible');
-  } else {
-    runOrThrow('git', ['fetch', '--depth', '1', 'origin', ref], 'Téléchargement Git impossible');
-    runOrThrow('git', ['checkout', '--detach', 'FETCH_HEAD'], 'Mise à jour Git impossible');
+/**
+ * The Telegram monitor runs `orchestrator/piecemaker-daemon.mjs` straight out
+ * of the repository, so an update leaves it executing the previous revision
+ * until launchd restarts it. Only touched when the service is already loaded.
+ */
+export function restartTelegramDaemon() {
+  if (!IS_MAC || typeof process.getuid !== 'function') return { restarted: false, reason: 'unsupported' };
+  const domain = `gui/${process.getuid()}`;
+  if (runCapture('launchctl', ['print', `${domain}/${TELEGRAM_DAEMON_LABEL}`]).code !== 0) {
+    return { restarted: false, reason: 'absent' };
   }
+  const kick = runCapture('launchctl', ['kickstart', '-k', `${domain}/${TELEGRAM_DAEMON_LABEL}`]);
+  return kick.code === 0
+    ? { restarted: true }
+    : { restarted: false, reason: kick.stderr || `code ${kick.code}` };
+}
+
+function gitOut(args, label) {
+  return runOrThrow('git', args, label).stdout;
+}
+
+/**
+ * Fetch the target ref and report whether it differs from the checked-out
+ * revision. Read-only: nothing is stopped, moved or installed here, so the
+ * caller can decide about downtime before the working tree is touched.
+ */
+export function checkForUpdate() {
+  const branch = gitOut(['branch', '--show-current'], 'Impossible de déterminer la branche');
+  const ref = process.env.PIECEMAKER_REF || branch || 'main';
+  runOrThrow('git', ['fetch', 'origin', ref], 'Téléchargement Git impossible');
+
+  const current = gitOut(['rev-parse', 'HEAD'], 'Impossible de lire la révision locale');
+  const target = gitOut(['rev-parse', 'FETCH_HEAD'], 'Impossible de lire la révision distante');
+  // The installed checkout is a deployment artifact: tracked local edits are
+  // never a second source of truth. They trigger reconciliation with origin,
+  // while untracked/ignored runtime data remains untouched.
+  const localChanges = gitOut(
+    ['status', '--porcelain', '--untracked-files=no'],
+    'Impossible de vérifier le dépôt',
+  ).split('\n').filter(Boolean);
+  const changed = current === target
+    ? []
+    : gitOut(['diff', '--name-only', current, target], 'Impossible de comparer les révisions')
+      .split('\n')
+      .filter(Boolean);
+
+  const remoteAvailable = current !== target;
+  const dirty = localChanges.length > 0;
+  return {
+    ref,
+    branch,
+    current,
+    target,
+    changed,
+    localChanges: localChanges.length,
+    dirty,
+    remoteAvailable,
+    available: remoteAvailable || dirty,
+  };
+}
+
+/**
+ * Apply a pending update: move the working tree to the fetched revision, then
+ * reconcile node_modules with the new package.json. `git` handles both halves
+ * of "delete deprecated files, download new ones" — a checkout removes files
+ * dropped upstream and writes the added ones — and `npm prune` does the same
+ * for dependencies that no longer appear in package.json.
+ *
+ * Pass the result of `checkForUpdate()` to avoid fetching twice.
+ */
+export function updateRepository(pending = checkForUpdate()) {
+  if (!pending.available) return { ...pending, updated: false };
+
+  // origin is authoritative for every tracked file in the installed clone.
+  // `reset --hard` also handles divergent commits and a detached HEAD. It does
+  // not perform `git clean`, so untracked and ignored runtime data is kept.
+  runOrThrow('git', ['reset', '--hard', 'FETCH_HEAD'], 'Mise à jour Git impossible');
+
   runOrThrow(npmBin('npm'), ['install', '--no-audit', '--no-fund'], 'Mise à jour npm impossible');
-  runOrThrow(npmBin('npm'), ['link', '--ignore-scripts'], 'Réinstallation de la commande impossible');
-  return { ref };
+  runOrThrow(npmBin('npm'), ['prune', '--no-audit', '--no-fund'], 'Nettoyage des dépendances impossible');
+  // npm link needs a writable global prefix; a read-only one must not undo an
+  // otherwise successful update, so it only downgrades to a warning.
+  const linked = runCapture(npmBin('npm'), ['link', '--ignore-scripts'], { cwd: REPO_ROOT });
+
+  return {
+    ...pending,
+    updated: true,
+    linked: linked.code === 0,
+    // requirements.txt is installed into the venv by step 03, not by npm.
+    pythonChanged: pending.changed.some((file) => file.endsWith('requirements.txt')),
+  };
 }

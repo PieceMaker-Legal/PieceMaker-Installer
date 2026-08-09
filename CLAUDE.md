@@ -11,8 +11,9 @@ this repo — read it before touching `websocket-server/` or `taskpane/`.
 - **`admin/`** — local browser administration UI for settings, the general
   Telegram assistant, one assistant per legal-case directory, the global
   non-LLM monitor, visual skill/agent Markdown editing, and the per-case
-  "pièces originales" frame (Markdown conversion, local PII pipeline, mapping
-  editor — see "Originals pipeline" below), served at `/admin/`.
+  pieces frame (Markdown conversion, local PII pipeline, mapping editor, and
+  the per-file protection toggle — see "Piece protection" and "Originals
+  pipeline" below), served at `/admin/`.
   The "Skills et agents" file list is restricted to the repo's own hierarchies
   — `CLAUDE.md`/`AGENTS.md`, `piecemaker-plugin/skills/`,
   `piecemaker-plugin/agents/`. The billing ledgers and syntheses under
@@ -160,24 +161,108 @@ per-job callback.
 in-memory `anonymizationMappings` Map, exposing
 `GET/PUT/DELETE /api/anonymize/mapping/:documentId` and
 `POST /api/anonymize/text` (apply/reverse a mapping to an arbitrary string,
-direction `anonymize` or `deanonymize`). When applying a mapping, entries are
-always sorted **longest-entity-first** (`byDescendingEntityLength`, around
-line 116) before substitution, so a short name that is a substring of a
-longer one (e.g. "Dupont" inside "Jean Dupont-Martin") never gets replaced
-first and corrupt the longer match.
+direction `anonymize` or `deanonymize`).
+
+**The substitution engine lives in the plugin** —
+`piecemaker-plugin/scripts/lib/mapping.cjs` owns `buildEntityRegex`,
+`escapeWithVariants`, `byDescendingEntityLength`, the case-mapping file
+resolution (`caseMappingFile` / `normalizeMappingDocument` / `readCaseMapping`)
+and the two substitutions `applyMapping` (entity → code) and `revertMapping`
+(code → entity). Three consumers require it: the hooks, the admin pipeline
+(`originals-pipeline.cjs`, which re-exports the file helpers) and
+`anonymization-server.cjs`. It sits in the plugin because the hooks are the one
+consumer that ships alone — a hook cannot require `websocket-server/` or
+`taskpane/`. Entries are always applied **longest-entity-first**, so a short
+name that is a substring of a longer one ("Dupont" inside "Jean Dupont-Martin")
+never gets replaced first and corrupts the longer match; `revertMapping` sorts
+codes the same way so `PERSONNE_PHYSIQUE_1` cannot eat `PERSONNE_PHYSIQUE_12`.
+Both directions are idempotent, which is what lets the hooks run without
+tracking what has already been substituted.
+
+## Piece protection and the anonymisation hooks
+
+`docs/anonymisation-hooks.md` is the full account of this boundary — the
+execution contract, why the substitution has no size ceiling and what keeps it
+fast anyway, how to prove the chain works on a real case, and why a hook edit
+needs a `claude plugin update` before it affects anything. What follows is the
+summary.
+
+The protection boundary is a property of the **file**, not of its location.
+`piecemaker-plugin/scripts/lib/protection.cjs` owns it:
+
+- Everything under a legal case that is not `.md` or `.json` is **protected by
+  default**; `<case>/.piecemaker/protection.json` records only the
+  *exceptions* (`{ version: 1, unprotected: [...] }`). A piece dropped into a
+  case between two visits to `/admin/` is therefore protected with no action.
+  `.md`/`.json` are never protected — they are the surfaces the hooks
+  anonymise on the fly.
+- `locateCase` / `relativeKey` resolve **both** sides through `realpath`. On
+  macOS a `/var/…` tool argument against a `/private/var/…` root never
+  overlaps, which silently protected nothing.
+- The earlier rule keyed on a "Pièces originales" subfolder is gone
+  (`isOriginalDirectoryName` / `isProtectedOriginalPath` no longer exist): a
+  firm that files its pieces flat, next to the Markdown they were converted
+  from — the common case — got no protection at all.
+
+Four hooks, wired in `piecemaker-plugin/hooks/hooks.json`:
+
+| Event | Matcher | Script |
+| --- | --- | --- |
+| `PreToolUse` | `Read\|Grep\|Glob\|Bash` | `protect-originals.mjs` — denies a protected piece, pointing at its `.md` |
+| `PostToolUse` | `Read\|Grep\|Glob\|Bash` | `anonymize-read.mjs` — `updatedToolOutput` with the mapping applied |
+| `PreToolUse` | `Write\|Edit\|mcp__telegram__reply\|mcp__telegram__edit_message` | `deanonymize-write.mjs` — `updatedInput` with the mapping reversed |
+| `PostToolUse` | `Write\|Edit` | `commit-track.mjs` — case commit, label reversed |
+
+- **Files on disk are never rewritten.** Only the tool *result* handed to the
+  model is coded, and only the tool *input* about to be executed is restored.
+  The firm keeps readable Markdown; no real name reaches the API.
+- `Edit` has **both** `old_string` and `new_string` reversed. The model read the
+  file through the mapping, so its `old_string` carries codes while the disk
+  carries names — reversing only `new_string` would fail every edit on "string
+  not found".
+- Telegram is covered because outgoing messages go through the plugin's MCP
+  `reply` tool (`telegram/server.ts`), not through the harness channel — a
+  `Stop` hook could not have rewritten them.
+- `Bash` is guarded on both sides. This is what closes the hole opened by the
+  `docx` skill, which works through `pandoc`, `unzip` and
+  `python ooxml/scripts/unpack.py`. `commandPaths` keeps only tokens that
+  resolve to an **existing file**, otherwise the program name itself
+  (`pandoc`) resolves to `<case>/pandoc` — extensionless, hence "protected" —
+  and every command was denied.
+- **The hooks never scan.** No GLiNER, no regex heuristics (`pre-anonymize.mjs`
+  and `post-anonymize.mjs` were removed). Scanning stays in the admin pipeline,
+  the only place the NER models are loaded — loading them per read would make a
+  session unusable.
+- Every hook fails open: no config, no mapping, or an unrelated path all end in
+  exit 0 with empty stdout, and `anonymize-read.mjs` stays silent when the
+  substitution changes nothing so `Read` keeps its native line numbering.
 
 ## Originals pipeline (admin)
 
-`websocket-server/originals-pipeline.cjs` drives the per-case "pièces
-originales" frame in `/admin/`. It is the *local* pipeline (`smart_converter.py`
-then `presidio-gliner.py`), never the remote bulk anonymisation job.
+`websocket-server/originals-pipeline.cjs` drives the per-case pieces frame in
+`/admin/`. It is the *local* pipeline (`smart_converter.py` then
+`presidio-gliner.py`), never the remote bulk anonymisation job.
 
-- `GET /api/admin/repository` decorates every folder with its non-Markdown
-  originals (each carrying `converted` / `scanned`, the two badges the UI
-  shows) and a `mapping` summary (`{ exists, name, entries }` — counts only,
-  never entity contents).
+- `originalFilesOverview` (`commits.cjs`) walks the **whole case recursively**.
+  A piece is any file that is not `.md`/`.json`; each carries `converted` /
+  `scanned` (pipeline state, `status` is `ready` / `awaiting-scan` /
+  `not-converted`) and `protected` (the admin decision). Traversal skips
+  dotfiles, symlinks, `IGNORED_DIRECTORY_NAMES` (`node_modules`, `dist`, …) and
+  MinerU output directories — a directory whose `documentKey` matches a sibling
+  file. Without those skips the test case listed 47 000 entries, and
+  `node_modules` `package.json` files were entering case history through
+  `safeCaseFiles`. The list is capped at `MAX_ORIGINALS` with a `truncated`
+  flag.
+- `GET /api/admin/repository/case` returns that list; `GET/PUT
+  /api/admin/protection` reads and writes `protection.json` (the PUT takes the
+  full `unprotected` list, since only exceptions are stored). The admin column
+  offers a "Non traitées / Toutes" scope and a per-row shield toggle — the
+  pipeline selection checkbox stays restricted to pieces still to process.
+- `GET /api/admin/repository` also carries a `mapping` summary
+  (`{ exists, name, entries }` — counts only, never entity contents).
 - `POST /api/admin/originals/pipeline` (`action: 'convert' | 'anonymize'`)
-  starts a background job scoped to one case and returns its id;
+  starts a background job scoped to one case and returns its id. `files` are
+  paths **relative to the legal-case root**, not to any subfolder;
   `GET/DELETE /api/admin/originals/job?id=` polls or cancels it. Both scripts
   run with the legal-case directory as their output dir, so the `.md` and
   `*_sensitive_map.json` land next to the files already versioned. Only
@@ -333,9 +418,15 @@ development, use `taskpane/manifest.xml`-equivalent per current tooling; see
   `executePythonScript`/`executePythonScriptBatch` client-side.
 - Mapping edits (`PUT /api/anonymize/mapping/:documentId`) must always send
   both `mapping` and `reverse_mapping` together — the route 400s otherwise —
-  and any code that *applies* a mapping to text must sort entries
-  longest-entity-first, matching `byDescendingEntityLength` in
-  `anonymization-server.cjs`.
+  and any code that *applies* a mapping to text must go through
+  `applyMapping`/`revertMapping` in `piecemaker-plugin/scripts/lib/mapping.cjs`
+  rather than rolling its own substitution. That module is the single
+  implementation shared by the hooks, the admin pipeline and the task-pane
+  router; a second one drifts silently.
+- A hook script may only require from `piecemaker-plugin/scripts/lib/` — the
+  plugin ships standalone from a marketplace copy. Shared server logic that a
+  hook needs moves *into* the plugin and is re-exported by the server module,
+  never the reverse.
 - Anonymisation/mapping data under `output/` can contain real client PII
   before/without a mapping applied — never log full mapping contents, and
   treat `output/` as sensitive (already gitignored).

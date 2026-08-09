@@ -16,6 +16,35 @@ CHANNELS="plugin:telegram@claude-plugins-official"
 STATE_ROOT="$HOME/.claude/channels"
 PROJECTS_FILE="$HOME/.piecemaker/orchestrator/projects.json"
 
+# ---- node : résolution explicite ------------------------------------------
+# Ce script est aussi lancé par un daemon (launchd, ou lord-daemon via
+# execFile) qui n'hérite PAS du PATH du shell de connexion : nvm n'y est pas,
+# et un `node` nu échoue en « command not found ». On résout donc le binaire
+# nous-mêmes, sans jamais dépendre du PATH hérité.
+resolve_node() {
+  if [ -n "${NODE_BIN:-}" ] && [ -x "$NODE_BIN" ]; then printf '%s' "$NODE_BIN"; return 0; fi
+  if command -v node >/dev/null 2>&1; then command -v node; return 0; fi
+  local alias_file="$HOME/.nvm/alias/default" v
+  if [ -f "$alias_file" ]; then
+    v="$(cat "$alias_file" 2>/dev/null || true)"
+    for c in "$HOME/.nvm/versions/node/$v/bin/node" "$HOME/.nvm/versions/node/v$v/bin/node"; do
+      [ -x "$c" ] && { printf '%s' "$c"; return 0; }
+    done
+  fi
+  # dernière version nvm installée (tri numérique), puis emplacements système
+  v="$(ls "$HOME/.nvm/versions/node" 2>/dev/null | sort -V | tail -1 || true)"
+  for c in "$HOME/.nvm/versions/node/$v/bin/node" /opt/homebrew/bin/node /usr/local/bin/node; do
+    [ -x "$c" ] && { printf '%s' "$c"; return 0; }
+  done
+  return 1
+}
+
+NODE_BIN="$(resolve_node || true)"
+if [ -z "$NODE_BIN" ]; then
+  echo "❌ node introuvable (PATH=$PATH). Réglez NODE_BIN=/chemin/vers/node."
+  exit 1
+fi
+
 if [ ! -f "$PROJECTS_FILE" ]; then
   echo "❌ Aucun projet déclaré : $PROJECTS_FILE est absent."
   echo "   Lancez : node installer/bin/piecemaker.mjs --step 08-telegram"
@@ -26,7 +55,7 @@ fi
 # node plutôt que jq : déjà requis par le daemon, et jq n'est pas garanti
 # présent. Toujours du bash 3.2 (macOS) : pas de tableau associatif.
 _field_for() {  # $1 = projet, $2 = champ, $3 = valeur par défaut
-  node -e '
+  "$NODE_BIN" -e '
     const fs = require("fs");
     const [file, name, field, fallback] = process.argv.slice(1);
     try {
@@ -45,7 +74,7 @@ workdir_for() { _field_for "$1" workdir ""; }
 permmode_for() { _field_for "$1" permissionMode "auto"; }
 
 all_projects() {
-  node -e '
+  "$NODE_BIN" -e '
     const fs = require("fs");
     try {
       const parsed = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));

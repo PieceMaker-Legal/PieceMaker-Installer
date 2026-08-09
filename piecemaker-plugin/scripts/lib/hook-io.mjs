@@ -28,6 +28,9 @@ export const CONFIG_FILE = path.join(HOME_DIR, 'config.json');
 export const BILLING_DIR = path.join(HOME_DIR, 'billing');
 export const SYNTHESIS_DIR = path.join(BILLING_DIR, 'synthese');
 
+/** Upper bound on waiting for stdout to drain before exiting anyway. */
+const FLUSH_TIMEOUT_MS = 2000;
+
 /**
  * Read stdin fully as text, bounded by timeoutMs. Never rejects — resolves
  * with whatever was collected (possibly '') on timeout, error, or a TTY with
@@ -94,16 +97,38 @@ export function noop() {
   process.exit(0);
 }
 
-/** Exit 0 and print a JSON hook-output object to stdout. */
+/**
+ * Exit 0 and print a JSON hook-output object to stdout.
+ *
+ * The write is awaited before exiting. On a pipe — which is exactly how Claude
+ * Code runs a hook — stdout is asynchronous, and `process.exit()` drops
+ * whatever is still in flight past the 64 KB pipe buffer. A truncated JSON is
+ * unparseable, so the harness falls back to the *original* tool result: for
+ * `anonymize-read.mjs` that means a document over 64 KB reaching the model in
+ * clear. The privacy boundary must not depend on payload size.
+ */
 export function emit(output) {
+  let payload;
   try {
-    if (output && typeof output === 'object') {
-      process.stdout.write(JSON.stringify(output));
+    if (!output || typeof output !== 'object') {
+      noop();
+      return;
     }
+    payload = JSON.stringify(output);
   } catch {
     // Serialization failure must never block the session.
+    noop();
+    return;
   }
-  process.exit(0);
+
+  // Safety net: an stdout that never drains must not hang the session either.
+  // Unref'd, so a completed write exits immediately instead of waiting it out.
+  const guard = setTimeout(() => process.exit(0), FLUSH_TIMEOUT_MS);
+  guard.unref?.();
+  process.stdout.write(payload, () => {
+    clearTimeout(guard);
+    process.exit(0);
+  });
 }
 
 /**
@@ -113,8 +138,12 @@ export function emit(output) {
  *
  * Note: this only protects async work (spawned children, timers). Purely
  * synchronous CPU-bound code blocks the event loop and the timeout cannot
- * preempt it — keep synchronous scan logic linear-time and bounded in input
- * size (see pre-anonymize.mjs).
+ * preempt it. That is deliberate for the substitution in mapping.cjs, which has
+ * no size ceiling: a hook that returned early on a large document would hand
+ * the model the original text in clear. The body's promise settles as a
+ * microtask, ahead of the timer's macrotask, so a slow substitution is always
+ * emitted in full — verified against an 8 s synchronous body under a 5 s
+ * timeout. The timeout remains what it was meant for: async work that hangs.
  */
 export async function runHook(bodyFn, { timeoutMs = 5000 } = {}) {
   let timer;

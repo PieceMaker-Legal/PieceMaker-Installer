@@ -223,27 +223,43 @@ test('un traitement refuse une pièce hors du dossier et une action inconnue', a
   assert.equal(getJob('inexistant'), null);
 });
 
-test('le traitement d’une pièce absente échoue sans créer de travail', async (t) => {
+test('un convertisseur qui échoue termine le travail en erreur, jamais bloqué', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
-  process.env.PYTHON_PATH = process.execPath;
-  t.after(() => { delete process.env.PYTHON_PATH; });
+  t.after(() => {
+    delete process.env.PYTHON_PATH;
+    delete process.env.SMART_CONVERTER_PATH;
+  });
 
-  const job = await startOriginalsJob({
+  // Deux façons d'échouer, toutes deux résolues sans créer de processus fils :
+  // le test doit rester déterministe même quand la machine est saturée par les
+  // autres fichiers de test (un simple spawn y a été mesuré à plus d'une minute).
+
+  // 1. Script de conversion absent : refusé avant tout spawn.
+  process.env.SMART_CONVERTER_PATH = path.join(data.root, 'smart_converter.py');
+  const missingScript = await waitForJob((await startOriginalsJob({
+    casesRoot: data.casesRoot,
+    caseName: 'Dossier Alpha',
+    action: 'convert',
+    files: ['pièces originales/contrat.pdf'],
+  })).id);
+  assert.equal(missingScript.state, 'error');
+  assert.match(missingScript.error, /smart_converter\.py/);
+
+  // 2. Interpréteur introuvable : `spawn` émet « error », pas « close ».
+  delete process.env.SMART_CONVERTER_PATH;
+  process.env.PYTHON_PATH = path.join(data.root, 'python-inexistant');
+  const started = await startOriginalsJob({
     casesRoot: data.casesRoot,
     caseName: 'Dossier Alpha',
     action: 'convert',
     files: ['pièces originales/contrat.pdf'],
   });
-  assert.equal(job.state, 'running');
-  assert.equal(job.total, 1);
-  assert.deepEqual(job.files, ['pièces originales/contrat.pdf']);
-
-  // Node exécuté à la place de Python échoue : le travail doit finir en erreur,
-  // jamais rester bloqué en « running ».
-  const finished = await waitForJob(job.id);
-  assert.equal(finished.state, 'error');
-  assert.match(finished.error, /smart_converter\.py/);
+  assert.equal(started.state, 'running');
+  assert.deepEqual(started.files, ['pièces originales/contrat.pdf']);
+  const spawnFailure = await waitForJob(started.id);
+  assert.equal(spawnFailure.state, 'error');
+  assert.match(spawnFailure.error, /ENOENT|python-inexistant/);
 });
 
 test('les écritures d’une même personne partagent un code et gardent leurs variants', async (t) => {
@@ -291,7 +307,12 @@ test('le mapping du dossier l’emporte sur un mapping_default.json laissé par 
 test('sans sélection, un traitement ne refait que les pièces incomplètes', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
-  process.env.PYTHON_PATH = process.execPath;
+  // Ce test porte sur la sélection, pas sur l'exécution : un interpréteur
+  // introuvable fait échouer le spawn immédiatement (ENOENT) au lieu de lancer
+  // un vrai processus, dont l'arrivée peut prendre plus d'une minute quand les
+  // autres fichiers de test saturent le disque — et un travail resté « running »
+  // bloque les tests suivants sur le même dossier.
+  process.env.PYTHON_PATH = path.join(data.root, 'python-inexistant');
   t.after(() => { delete process.env.PYTHON_PATH; });
   // contrat.pdf a son Markdown et son scan ; annexe.docx n'a rien.
   writeScan(data.caseRoot, 'contrat', { PERSON: [{ text: 'Jean Dupont', score: 0.9 }] });

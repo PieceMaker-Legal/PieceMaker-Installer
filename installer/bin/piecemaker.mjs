@@ -33,8 +33,10 @@ import {
   getServerStatus,
   openAdmin,
   readLogs,
+  restartTelegramDaemon,
   startServer,
   stopServer,
+  checkForUpdate,
   updateRepository,
 } from '../lib/service.mjs';
 
@@ -302,17 +304,41 @@ async function runOperationalCommand(command) {
     return 0;
   }
   if (command === 'update') {
+    // Look before stopping anything: an up-to-date install must not lose its
+    // server for the duration of a no-op npm install.
+    const pending = checkForUpdate();
+    if (!pending.available) {
+      log.ok(`PieceMaker est déjà à jour (${pending.ref}, ${pending.current.slice(0, 7)}).`);
+      return 0;
+    }
+    if (pending.remoteAvailable) {
+      log.info(`Nouvelle version disponible (${pending.changed.length} fichier(s) modifié(s)).`);
+    } else {
+      log.info(`Restauration de l’installation depuis le dépôt distant (${pending.localChanges} fichier(s) localement modifié(s)).`);
+    }
+
     const previous = await getServerStatus();
     if (previous.running && previous.managed) await stopServer();
     try {
-      const result = updateRepository();
-      log.ok(`PieceMaker mis à jour (${result.ref}).`);
+      const result = updateRepository(pending);
+      log.ok(`PieceMaker mis à jour (${result.ref}, ${result.target.slice(0, 7)}).`);
+      if (!result.linked) {
+        log.warn('La commande « piecemaker » n’a pas pu être réinstallée (npm link). Utilisez « npm link » manuellement si elle a disparu.');
+      }
+      if (result.pythonChanged) {
+        log.warn('requirements.txt a changé : relancez « piecemaker install » puis l’étape 03 — Python & GLiNER.');
+      }
     } finally {
       if (previous.running && previous.managed) {
         const restarted = await startServer();
         log.ok(`Serveur redémarré : ${restarted.url}`);
       } else if (previous.running) {
         log.warn('Le serveur actif n’est pas géré par PieceMaker ; redémarrez-le manuellement.');
+      }
+      const daemon = restartTelegramDaemon();
+      if (daemon.restarted) log.ok('Moniteur Telegram redémarré.');
+      else if (daemon.reason && daemon.reason !== 'absent' && daemon.reason !== 'unsupported') {
+        log.warn(`Le moniteur Telegram n’a pas redémarré : ${daemon.reason}`);
       }
     }
     return 0;
