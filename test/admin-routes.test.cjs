@@ -150,6 +150,23 @@ test('les secrets .env peuvent être remplacés ou effacés sans perdre les comm
   assert.doesNotMatch(content, /^LEGIFRANCE_CLIENT_SECRET=/m);
 });
 
+test('le nom signataire peut être modifié dans le env global protégé', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const envFile = path.join(data.repo, '.env');
+
+  updateEnvFile(envFile, { PIECEMAKER_USER_NAME: 'Alice Martin' });
+  assert.match(fs.readFileSync(envFile, 'utf8'), /^PIECEMAKER_USER_NAME=Alice Martin$/m);
+  if (process.platform !== 'win32') assert.equal(fs.statSync(envFile).mode & 0o777, 0o600);
+
+  updateEnvFile(envFile, { PIECEMAKER_USER_NAME: 'Bob Dupont' });
+  assert.match(fs.readFileSync(envFile, 'utf8'), /^PIECEMAKER_USER_NAME=Bob Dupont$/m);
+  assert.throws(
+    () => updateEnvFile(envFile, { PIECEMAKER_USER_NAME: 'Nom <invalide>' }),
+    /Nom utilisateur invalide/,
+  );
+});
+
 test('l’administration refuse les origines web non locales', () => {
   assert.equal(isLocalOrigin('https://localhost:43098'), true);
   assert.equal(isLocalOrigin('https://127.0.0.1:43098'), true);

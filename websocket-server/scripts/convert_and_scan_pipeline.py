@@ -18,17 +18,20 @@ Progress Format:
     PROGRESS:CONVERT:percentage:current:total    (Phase 1: Converting documents)
     PROGRESS:SCAN:percentage:current:total       (Phase 2: Scanning for PII)
 
-Output Structure:
+Persistent Output Structure:
     {output_dir}/
     ├── document1.md
-    ├── document1_sensitive_map.json
     ├── document2.md
-    ├── document2_sensitive_map.json
-    └── ...
+    ├── mapping_default.json
+    └── .piecemaker/anonymization-state.json
+
+The per-document sensitive maps are transient scanner payloads. They are
+created in a private temporary directory, merged into mapping_default.json,
+then removed automatically.
 
 Exit Codes:
     0: Success (at least one file fully processed)
-    1: Total failure (all files failed conversion)
+    1: No file could be fully converted and scanned
 """
 
 import sys
@@ -37,6 +40,8 @@ import time
 import argparse
 import subprocess
 import json
+import hashlib
+import tempfile
 import unicodedata
 import re
 from pathlib import Path
@@ -103,14 +108,27 @@ def wait_for_worker_ready(proc: Optional[subprocess.Popen], timeout: int = 300) 
     if proc is None:
         return False
 
+    import re
     import select
     import threading
 
-    # Stream stderr in a background thread so we see model loading progress
+    _chunk_re = re.compile(r"^PROGRESS:CHUNKS:\d+:\d+:\d+")
+
+    # Stream stderr in a background thread so we see model loading progress. The
+    # thread lives for the whole process, so it also carries the worker's per-chunk
+    # progress during a scan. A CHUNKS line is re-emitted CLEAN on stdout: the Node
+    # parent only reads stdout and requires a leading "PROGRESS:", so the "[worker]"
+    # prefix otherwise hid it and the admin bar stayed frozen on a long file. Only
+    # lines matching the strict pattern reach stdout — never arbitrary worker stderr,
+    # which can carry document text under PIECEMAKER_DEBUG_ENTITIES.
     def _stream_stderr():
         try:
             for line in proc.stderr:
-                print(f"  [worker] {line}", end="", flush=True)
+                stripped = line.strip()
+                if _chunk_re.match(stripped):
+                    print(stripped, flush=True)
+                else:
+                    print(f"  [worker] {line}", end="", flush=True)
         except (ValueError, OSError):
             pass  # Pipe closed
 
@@ -411,7 +429,7 @@ def load_existing_mapping(mapping_path: Path) -> Optional[Dict]:
     ensuring single source of truth for mappings.
 
     Args:
-        mapping_path: Full path to mapping_{documentId}.json (or the case mapping)
+        mapping_path: Full path to mapping_default.json (or an explicit target)
 
     Returns:
         Existing mapping data or None if file doesn't exist
@@ -1273,33 +1291,123 @@ def save_mapping(mapping_path: Path, mapping_data: Dict) -> Path:
     Returns:
         Path to saved file
     """
-    with open(mapping_path, 'w', encoding='utf-8') as f:
-        json.dump(mapping_data, f, indent=2, ensure_ascii=False)
+    payload = {
+        **mapping_data,
+        "mapping": dict(sorted(
+            mapping_data.get("mapping", {}).items(),
+            key=lambda item: (-len(item[0]), item[0].casefold()),
+        )),
+    }
+    mapping_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = mapping_path.with_name(f"{mapping_path.name}.piecemaker-{os.getpid()}.tmp")
+    with open(temporary, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, mapping_path)
 
     return mapping_path
 
 
-def cleanup_individual_mappings(json_files: List[str]) -> int:
-    """Delete individual _sensitive_map.json files after successful merge.
+def load_anonymization_state(state_path: Path) -> Dict:
+    """Load the non-sensitive per-file processing manifest."""
+    try:
+        with open(state_path, "r", encoding="utf-8") as state_file:
+            raw = json.load(state_file)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        raw = {}
+    source_files = raw.get("files", {}) if isinstance(raw, dict) else {}
+    files = {}
+    if isinstance(source_files, dict):
+        for key, entry in source_files.items():
+            if not isinstance(entry, dict):
+                continue
+            if "size" in entry and "mtimeMs" in entry:
+                legacy = {
+                    "size": entry["size"],
+                    "mtimeMs": entry["mtimeMs"],
+                    **({"updatedAt": entry["scannedAt"]} if entry.get("scannedAt") else {}),
+                }
+                files[key] = {"converted": legacy, "scanned": legacy}
+            else:
+                files[key] = {
+                    phase: value for phase, value in entry.items()
+                    if phase in ("converted", "scanned") and isinstance(value, dict)
+                }
+    return {"version": 1, "files": files}
 
-    Args:
-        json_files: List of individual mapping file paths
 
-    Returns:
-        Number of files deleted
-    """
-    deleted_count = 0
+def anonymization_state_key(source_file: str, case_root: str) -> Optional[str]:
+    """Hash source identity so the manifest itself contains no filename."""
+    source = Path(source_file).resolve()
+    try:
+        identity = source.relative_to(Path(case_root).resolve()).as_posix()
+    except ValueError:
+        # Standalone CLI use can place outputs outside the input tree. Hashing
+        # the absolute identity preserves --skip-existing without persisting it.
+        identity = f"absolute:{source.as_posix()}"
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
-    for json_file in json_files:
-        try:
-            if os.path.exists(json_file):
-                os.remove(json_file)
-                deleted_count += 1
-                print(f"🗑️  Deleted: {Path(json_file).name}")
-        except Exception as e:
-            print(f"⚠️  Failed to delete {json_file}: {e}", file=sys.stderr)
 
-    return deleted_count
+def source_fingerprint(source_file: str) -> Dict:
+    stat = os.stat(source_file)
+    return {"size": stat.st_size, "mtimeMs": stat.st_mtime_ns // 1_000_000}
+
+
+def source_state_entry(state: Dict, source_file: str, case_root: str) -> Optional[Dict]:
+    key = anonymization_state_key(source_file, case_root)
+    return state.get("files", {}).get(key) if key else None
+
+
+def source_is_processed(state: Dict, source_file: str, case_root: str, phase: str) -> bool:
+    entry = source_state_entry(state, source_file, case_root)
+    if not isinstance(entry, dict):
+        return False
+    phase_entry = entry.get(phase)
+    # Backward compatibility with the first, flat state format.
+    if not isinstance(phase_entry, dict):
+        phase_entry = entry if "size" in entry and "mtimeMs" in entry else None
+    if not phase_entry:
+        return False
+    fingerprint = source_fingerprint(source_file)
+    return phase_entry.get("size") == fingerprint["size"] and phase_entry.get("mtimeMs") == fingerprint["mtimeMs"]
+
+
+def source_is_converted(state: Dict, source_file: str, case_root: str) -> bool:
+    return source_is_processed(state, source_file, case_root, "converted")
+
+
+def source_is_anonymized(state: Dict, source_file: str, case_root: str) -> bool:
+    return source_is_processed(state, source_file, case_root, "scanned")
+
+
+def update_processing_state(state_path: Path, case_root: str, source_files: List[str], phase: str) -> None:
+    """Atomically add successful conversions/scans without paths or entities."""
+    if not source_files:
+        return
+    state = load_anonymization_state(state_path)
+    updated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    for source_file in source_files:
+        key = anonymization_state_key(source_file, case_root)
+        if not key:
+            continue
+        fingerprint = {**source_fingerprint(source_file), "updatedAt": updated_at}
+        entry = state["files"].get(key, {})
+        entry[phase] = fingerprint
+        if phase == "scanned":
+            entry["converted"] = fingerprint
+        state["files"][key] = entry
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = state_path.with_name(f"{state_path.name}.piecemaker-{os.getpid()}.tmp")
+    with open(temporary, "w", encoding="utf-8") as state_file:
+        json.dump(state, state_file, indent=2, ensure_ascii=False)
+        state_file.write("\n")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, state_path)
+
+
+def update_anonymization_state(state_path: Path, case_root: str, source_files: List[str]) -> None:
+    update_processing_state(state_path, case_root, source_files, "scanned")
 
 
 def main():
@@ -1317,7 +1425,7 @@ def main():
         "-o",
         "--output",
         required=True,
-        help="Output directory for markdown and JSON files",
+        help="Output directory for Markdown files and mapping_default.json",
     )
     parser.add_argument(
         "--engine",
@@ -1334,29 +1442,28 @@ def main():
     parser.add_argument(
         "--document-id",
         default="default",
-        help="Document ID for mapping file (default: 'default')",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--mapping-dir",
         default=None,
-        help="Directory for mapping_{documentId}.json (default: same as --output)",
+        help="Directory for mapping_default.json (default: same as --output)",
     )
     parser.add_argument(
         "--mapping-file",
         default=None,
-        help="Exact mapping file to read and rewrite (overrides --mapping-dir/--document-id)",
+        help="Exact mapping file to read and rewrite (overrides --mapping-dir)",
+    )
+    parser.add_argument(
+        "--state-file",
+        default=None,
+        help="Technical scan-state manifest (default: <output>/.piecemaker/anonymization-state.json)",
     )
     parser.add_argument(
         "--skip-existing",
         action="store_true",
-        help="Reuse an existing .md / _sensitive_map.json instead of reconverting and rescanning",
+        help="Reuse existing Markdown and scans whose source fingerprint is unchanged",
     )
-    parser.add_argument(
-        "--cleanup-scans",
-        action="store_true",
-        help="Delete the individual *_sensitive_map.json files after merging (default: keep them)",
-    )
-
     args = parser.parse_args()
 
     # Validate input files
@@ -1373,6 +1480,13 @@ def main():
 
     # Ensure output directory exists
     os.makedirs(args.output, exist_ok=True)
+    mapping_target = (
+        Path(args.mapping_file)
+        if args.mapping_file
+        else Path(args.mapping_dir or args.output) / "mapping_default.json"
+    )
+    state_target = Path(args.state_file) if args.state_file else Path(args.output) / ".piecemaker" / "anonymization-state.json"
+    anonymization_state = load_anonymization_state(state_target)
 
     print(f"🚀 Starting Convert & Scan Pipeline")
     print(f"   Files: {len(input_files)}")
@@ -1387,15 +1501,12 @@ def main():
     # What is left to do, decided before anything runs: the scanner worker loads
     # ~400MB of GLiNER2 + spaCy weights, so it must only start when at least one
     # file actually needs a PII scan.
-    def artifact_paths(input_file: str) -> Tuple[Path, Path]:
-        stem = Path(input_file).stem
-        return (
-            Path(args.output) / f"{stem}.md",
-            Path(args.output) / f"{stem}_sensitive_map.json",
-        )
+    def markdown_path(input_file: str) -> Path:
+        return Path(args.output) / f"{Path(input_file).stem}.md"
 
     scan_needed = any(
-        not (args.skip_existing and artifact_paths(f)[1].exists()) for f in input_files
+        not (args.skip_existing and source_is_anonymized(anonymization_state, f, args.output))
+        for f in input_files
     )
 
     # Start scanner worker immediately so model loading overlaps with Phase 1.
@@ -1413,15 +1524,24 @@ def main():
     print()
 
     md_files = []
+    md_sources = {}
+    converted_sources = []
     convert_success_count = 0
 
     for i, input_file in enumerate(input_files, start=1):
         print_progress("CONVERT", i, len(input_files))
-        existing_md, _ = artifact_paths(input_file)
+        existing_md = markdown_path(input_file)
 
-        if args.skip_existing and existing_md.exists():
+        state_entry = source_state_entry(anonymization_state, input_file, args.output)
+        reusable_markdown = existing_md.exists() and (
+            state_entry is None
+            or source_is_converted(anonymization_state, input_file, args.output)
+        )
+        if args.skip_existing and reusable_markdown:
             print(f"📄 [{i}/{len(input_files)}] Already converted, reusing: {existing_md.name}")
             md_files.append(str(existing_md))
+            md_sources[str(existing_md)] = input_file
+            converted_sources.append(input_file)
             convert_success_count += 1
             print()
             continue
@@ -1435,6 +1555,8 @@ def main():
         if success and md_path:
             print(f"   ✅ Markdown generated: {Path(md_path).name}")
             md_files.append(md_path)
+            md_sources[md_path] = input_file
+            converted_sources.append(input_file)
             convert_success_count += 1
         else:
             print(f"   ❌ Conversion failed, skipping...")
@@ -1448,6 +1570,7 @@ def main():
     print(
         f"✅ Phase 1 complete: {convert_success_count}/{len(input_files)} files converted"
     )
+    update_processing_state(state_target, args.output, converted_sources, "converted")
     print()
 
     # Phase 2: Scan all Markdown files for PII
@@ -1456,13 +1579,13 @@ def main():
     print("=" * 70)
     print()
 
-    def sensitive_map_path(md_file: str) -> Path:
-        return Path(args.output) / f"{Path(md_file).stem}_sensitive_map.json"
-
     pending_scans = [
         md_file
         for md_file in md_files
-        if not (args.skip_existing and sensitive_map_path(md_file).exists())
+        if not (
+            args.skip_existing
+            and source_is_anonymized(anonymization_state, md_sources[md_file], args.output)
+        )
     ]
     skipped_scans = len(md_files) - len(pending_scans)
     if skipped_scans:
@@ -1476,20 +1599,32 @@ def main():
     print()
 
     scan_success_count = 0
+    successful_scan_sources = []
+    json_files = []
+    # Raw detections contain PII. They live only in a private OS temporary
+    # directory and disappear after consolidation, including on exceptions.
+    scan_workspace = tempfile.TemporaryDirectory(prefix="piecemaker-scans-")
+    scan_output_dir = scan_workspace.name
 
     for i, md_file in enumerate(pending_scans, start=1):
         print_progress("SCAN", i, len(pending_scans))
         print(f"🔍 [{i}/{len(pending_scans)}] Scanning: {Path(md_file).name}")
 
         if worker_ready:
-            success = scan_file_via_worker(scanner_worker, md_file, args.output)
+            success = scan_file_via_worker(scanner_worker, md_file, scan_output_dir)
         else:
             # Fallback: subprocess per file (old behavior)
-            success = scan_file(md_file, args.output)
+            success = scan_file(md_file, scan_output_dir)
 
         if success:
-            print(f"   ✅ Sensitive data map generated")
+            json_path = Path(scan_output_dir) / f"{Path(md_file).stem}_sensitive_map.json"
+            if not json_path.exists():
+                print(f"   ⚠️  Scanner reported success without a payload", file=sys.stderr)
+                continue
+            print(f"   ✅ Sensitive entities collected")
             scan_success_count += 1
+            successful_scan_sources.append(md_sources[md_file])
+            json_files.append(str(json_path))
         else:
             print(f"   ⚠️  Scan failed, markdown preserved")
 
@@ -1501,34 +1636,27 @@ def main():
     print(f"✅ Phase 2 complete: {scan_success_count}/{len(pending_scans)} files scanned")
     print()
 
-    # Phase 3: Merge & Cleanup (NEW)
+    # Phase 3: Merge the transient detections into the one persistent mapping.
     print("=" * 70)
-    print("PHASE 3: MERGING INDIVIDUAL MAPPINGS & CLEANUP")
+    print("PHASE 3: UPDATING THE CASE MAPPING")
     print("=" * 70)
     print()
 
-    # Find all generated _sensitive_map.json files
-    json_files = []
-    for md_file in md_files:
-        stem = Path(md_file).stem
-        json_path = Path(args.output) / f"{stem}_sensitive_map.json"
-        if json_path.exists():
-            json_files.append(str(json_path))
-
     if not json_files:
-        print("⚠️  No sensitive maps to merge", file=sys.stderr)
+        scan_workspace.cleanup()
+        if not pending_scans:
+            print("✅ No new scan to merge; mapping and processing state are already up to date")
+            return 0
+        print("⚠️  No successful PII scan to merge", file=sys.stderr)
         print(f"✅ Pipeline complete: {convert_success_count}/{len(input_files)} files converted")
         print()
-        # Exit with success if conversions succeeded
-        if convert_success_count > 0:
-            return 0
-        else:
-            return 1
+        return 1
 
     print(f"📊 Step 1: Reading {len(json_files)} individual mapping(s)...")
 
     # Read individual mappings
     consolidated = read_individual_mappings(json_files)
+    scan_workspace.cleanup()
 
     # Convert to anonymization format
     print("🔄 Step 2: Converting to anonymization format...")
@@ -1536,11 +1664,6 @@ def main():
 
     # Load existing mapping (if exists)
     print("📂 Step 3: Loading existing mapping...")
-    mapping_target = (
-        Path(args.mapping_file)
-        if args.mapping_file
-        else Path(args.mapping_dir or args.output) / f"mapping_{args.document_id}.json"
-    )
     existing_mapping = load_existing_mapping(mapping_target)
 
     # Merge with existing mapping
@@ -1550,23 +1673,12 @@ def main():
     # Save mapping (same file server uses)
     print("💾 Step 5: Saving mapping...")
     mapping_path = save_mapping(mapping_target, final_mapping_data)
+    update_anonymization_state(state_target, args.output, successful_scan_sources)
 
     print(f"✅ Mapping saved to: {mapping_path}")
     print(f"   • Total entities: {len(final_mapping_data['mapping'])} variants")
     print(f"   • Unique codes: {len(final_mapping_data['reverse_mapping'])}")
-    if not args.mapping_file:
-        print(f"   • Server can read via: GET /api/anonymize/mapping/{args.document_id}")
-
-    # Cleanup individual mappings. Kept by default: the admin UI reads them to
-    # tell a scanned original from an unscanned one, and rebuilds the case
-    # mapping from them — deleting them makes every piece look unscanned and
-    # sends GLiNER over the whole case again on the next run.
-    if args.cleanup_scans:
-        print("🗑️  Step 6: Cleaning up individual mappings...")
-        deleted_count = cleanup_individual_mappings(json_files)
-        print(f"✅ Deleted {deleted_count} individual mapping file(s)")
-    else:
-        print(f"📎 Step 6: Keeping {len(json_files)} individual mapping file(s)")
+    print(f"🧹 Step 6: Removed {len(json_files)} transient sensitive payload(s)")
     print()
 
     # Summary

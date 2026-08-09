@@ -20,6 +20,18 @@ test('Dossiers est le premier onglet et Vue d’ensemble est intégrée aux para
   }
 });
 
+test('les paramètres permettent de modifier le nom appliqué à chaque commit', () => {
+  const html = read('admin/index.html');
+  const app = read('admin/app.js');
+
+  assert.match(html, /id="commitUserName"[^>]*name="PIECEMAKER_USER_NAME"[^>]*required/);
+  assert.match(html, /Identité des tâches/);
+  assert.match(app, /data\.env\.PIECEMAKER_USER_NAME/);
+  assert.match(app, /form\.get\('PIECEMAKER_USER_NAME'\)/);
+  assert.doesNotMatch(html, /PIECEMAKER_USER_EMAIL/);
+  assert.doesNotMatch(app, /PIECEMAKER_USER_EMAIL/);
+});
+
 test('un commit liste ses fichiers puis ne calcule que le diff sélectionné', () => {
   const html = read('admin/index.html');
   const app = read('admin/app.js');
@@ -76,6 +88,17 @@ test('la vue Dossiers suit le bureau Git avec trois onglets et des détails int�
   assert.match(app, /\/api\/admin\/repository\/cases/);
   assert.match(app, /\/api\/admin\/branches\/current/);
   assert.match(app, /\/api\/admin\/telegram\/dossiers/);
+});
+
+test('la liste des pièces affiche les états converti, anonymisé et protégé', () => {
+  const app = read('admin/app.js');
+  const css = read('admin/styles.css');
+
+  assert.match(app, /if \(original\.converted\) badges\.append\(originalStatusBadge\('converted', 'Converti'\)\)/);
+  assert.match(app, /if \(original\.scanned\) badges\.append\(originalStatusBadge\('scanned', 'Anonymisé'\)\)/);
+  assert.match(app, /badges\.append\(shieldButton\(original\)\)/);
+  assert.match(css, /\.protection-badge\.converted/);
+  assert.match(css, /\.protection-badge\.scanned/);
 });
 
 test('l’administration reste claire, tient dans le viewport et conserve les dossiers visibles', () => {

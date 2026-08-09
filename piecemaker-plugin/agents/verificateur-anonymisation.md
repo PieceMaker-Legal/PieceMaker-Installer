@@ -13,15 +13,16 @@ rapportez.
 
 ## Ce que vous vérifiez
 
-1. **Mapping existant** : si un `mapping_<documentId>.json` existe pour le
+1. **Mapping existant** : si `mapping_default.json` existe pour le
    document (voir `taskpane/modules/anonymization-server.cjs` pour le
    format — `{ mapping, reverse_mapping }`), vérifiez que chaque entrée du
    `mapping` a bien été substituée dans le document final (aucune occurrence
    résiduelle du texte original).
 2. **Scan PII indépendant** : si possible, relancez ou consultez le résultat
    de `websocket-server/scripts/presidio-gliner/presidio-gliner.py` sur la
-   version Markdown du document (`<stem>_sensitive_map.json`) et croisez ses
-   détections avec le mapping appliqué — toute entité détectée par le scan
+   version Markdown du document dans un répertoire temporaire, consultez le
+   `<stem>_sensitive_map.json` ainsi produit, puis supprimez ce répertoire.
+   Croisez ses détections avec le mapping appliqué — toute entité détectée
    mais absente du mapping est un résidu potentiel à signaler.
 3. **Lecture directe** : parcourez le texte final à la recherche de motifs
    qu'un scan automatique peut manquer : noms propres en dehors des zones

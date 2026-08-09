@@ -41,8 +41,10 @@ juridique concerné. Rien à lancer à la main.
   l'opération ont réellement changé (pas de commit vide). Le commit automatique
   est ciblé : il ne capture jamais les autres modifications présentes dans le
   dossier. Les conversions, scans PII et modifications du mapping lancés depuis
-  l'administration créent leur propre commit ciblé. Auteur
-  `PieceMaker <commits@piecemaker.local>`, message descriptif de l'opération.
+  l'administration créent leur propre commit ciblé. L'auteur et le validateur
+  portent le nom saisi pendant l'installation (modifiable dans les paramètres) ;
+  l'adresse Git reste l'adresse technique locale de PieceMaker. Le message
+  décrit l'opération.
 - **Consulter ou restaurer** : par l'administration
   (`https://localhost:43098/admin/`), section historique du dossier. Ne pas
   manipuler `~/.piecemaker/case-history/` à la main.
@@ -64,7 +66,7 @@ entrées d'outil que les hooks réécrivent au passage.
 - Les hooks **ne scannent pas** les données personnelles. Le scan GLiNER/Presidio
   est lancé depuis l'administration (« Anonymiser & mapper »), seul endroit où
   les modèles NER sont chargés.
-- **Mapping du dossier** : `mapping_dossier.json`, à la racine du dossier
+- **Mapping du dossier** : `mapping_default.json`, à la racine du dossier
   juridique. Les entrées sont triées de la plus longue entité à la plus
   courte — toute substitution doit respecter cet ordre, sinon « Dupont »
   corrompt « Jean Dupont-Martin ». Un code n'est jamais réattribué ; une

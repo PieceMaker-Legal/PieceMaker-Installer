@@ -140,7 +140,7 @@
                 </div>
                 <div id="mappingView" class="inline-detail" hidden>
                   <div class="inline-detail-toolbar">
-                    <div><strong id="mappingDialogTitle">mapping_dossier.json</strong><span>Le mapping est modifié directement dans ce panneau.</span></div>
+                    <div><strong id="mappingDialogTitle">mapping_default.json</strong><span>Le mapping est modifié directement dans ce panneau.</span></div>
                     <span id="mappingDialogCount" class="count-badge">0</span>
                   </div>
                   <p class="inline-detail-hint">Chaque ligne regroupe un nom anonymisé, le variant principal rétabli lors du revert et toutes les autres écritures détectées. Toute modification enregistrée crée automatiquement un commit limité au fichier de mapping.</p>
@@ -196,6 +196,15 @@
         </article>
 
         <form id="settingsForm">
+          <article class="card form-card">
+            <div class="section-heading">
+              <div><p class="eyebrow">SIGNATURE</p><h2>Identité des tâches</h2></div>
+            </div>
+            <div class="form-grid">
+              <label>Nom de l’utilisateur<input id="commitUserName" name="PIECEMAKER_USER_NAME" autocomplete="name" required><small>Conservé dans le .env global protégé et appliqué comme auteur de chaque commit.</small></label>
+            </div>
+          </article>
+
           <article class="card form-card">
             <div class="section-heading">
               <div><p class="eyebrow">LOCAL</p><h2>Serveur et fichiers</h2></div>

@@ -150,7 +150,9 @@ per-job callback.
    below) is typically run first to get Markdown, and
    `convert_and_scan_pipeline.py` chains the two for batch use, emitting
    `PROGRESS:CONVERT:...` / `PROGRESS:SCAN:...` lines on stdout. This local
-   scan is separate from the remote anonymisation job above — it is what the
+   raw map is transient when the batch pipeline runs: it is merged into
+   `mapping_default.json` from a private temporary directory. The local scan
+   is separate from the remote anonymisation job above — it is what the
    `anonymisation` skill (see `piecemaker-plugin/skills/anonymisation/`) and
    the Python bridge's `convert-scan` entry drive.
 
@@ -268,28 +270,55 @@ Four hooks, wired in `piecemaker-plugin/hooks/hooks.json`:
   paths **relative to the legal-case root**, not to any subfolder;
   `GET/DELETE /api/admin/originals/job?id=` polls or cancels it. Both scripts
   run with the legal-case directory as their output dir, so the `.md` and
-  `*_sensitive_map.json` land next to the files already versioned. Only
+  `mapping_default.json` lands next to the Markdown files already versioned;
+  the raw `*_sensitive_map.json` payloads stay in a private temporary directory.
+  Only
   `PROGRESS:` lines and a short stderr tail are kept in a job's log — raw
   script stdout can carry document text.
+- **Job scheduling never overloads the machine** (an explicit user requirement).
+  A global admission controller in `originals-pipeline.cjs` runs at most **one
+  `anonymize` at a time** across all cases (two GLiNER workers would each load
+  ~400MB and freeze the box) and lets `convert` jobs run in parallel only while
+  their reservations stay under a **RAM budget** (~half of `os.totalmem()`).
+  Jobs that don't fit go to a FIFO `waiting` list and auto-start from `pumpQueue`
+  when a slot frees (`launchJob`/`admitOrQueue`); a job's public shape gains
+  `state: 'queued'` + `queuePosition`. Every spawned child runs at low CPU
+  priority (`os.setPriority`, `PIECEMAKER_JOB_NICE`, default 10) with
+  `PIECEMAKER_TORCH_THREADS` (default 4) so the machine stays responsive. GLiNER
+  itself is **never** parallelised in Python — one sequential worker per scan.
+- **Progress is chunk-level, not just per file.** `scanner_worker.py` emits
+  `PROGRESS:CHUNKS:…` on its stderr; the pipeline re-emits only that strict
+  pattern **clean on stdout** so `spawnTracked` can drive a live bar during a
+  long single-file scan (it stayed frozen on "1/1" before). No other worker
+  stderr reaches stdout — document text stays behind `PIECEMAKER_DEBUG_ENTITIES`.
+- **The GLiNER encoder runs on the Mac GPU when available.**
+  `presidio-gliner/coreml_runtime.py` swaps mdeberta's encoder for a CoreML
+  MLProgram (`CPU_AND_GPU`) — ~2× faster, output proven identical
+  (`eval/BACKENDS_MESURES.md`), CPU freed. The `.mlmodelc` is generated once at
+  install by `build_coreml.py` (installer step `03-python-gliner`, macOS,
+  best-effort); absent or on any failure, the runtime falls back to torch CPU.
+  Never `CPU_AND_NE` (measured 3.3× slower on this model). None of these levers
+  touch detection: threshold, entity descriptions, chunking and span arbitration
+  are untouched.
 - **A job with no `files` covers the whole case and only redoes what is
-  missing** (no Markdown, or no `*_sensitive_map.json`); listing `files`
+  missing** (no Markdown, or no matching entry in
+  `.piecemaker/anonymization-state.json`); listing `files`
   explicitly — or `force: true` — reprocesses exactly those. When nothing is
   left to do the route returns an already-`done` job and spawns nothing, so
   GLiNER's ~400MB of weights never load for an up-to-date case. The same
   decision is taken again per file inside `convert_and_scan_pipeline.py` via
   `--skip-existing`, which also holds the scanner worker back until it knows at
   least one file needs scanning.
-- The individual `*_sensitive_map.json` are **kept** after the merge (the
-  script only deletes them with `--cleanup-scans`): they are what tells a
-  scanned original from an unscanned one in the admin list, and what
-  `rebuildCaseMapping` merges. Deleting them made every piece look unscanned
-  and sent GLiNER over the whole case on every run.
-- The case mapping is `<case>/mapping_dossier.json` (that name wins; otherwise
-  an existing `mapping*.json` is reused), read/written via
+- The individual `*_sensitive_map.json` are temporary and removed after their
+  entities are merged. Scan state lives separately in the non-PII manifest
+  `.piecemaker/anonymization-state.json`; each hashed relative path carries only
+  source size/mtime fingerprints for conversion and scan, so a modified piece is
+  reconverted and scanned again automatically.
+- The case mapping is the single `<case>/mapping_default.json`, read/written via
   `GET/PUT /api/admin/mapping` and rebuilt from the scans by
   `POST /api/admin/mapping/rebuild`. The pipeline is pointed at that same file
-  with `--mapping-file` — without it, it wrote its own `mapping_default.json`
-  next to it, which then shadowed the case mapping. Entries are stored
+  with `--mapping-file`. Legacy `mapping_dossier.json` / `mapping_<id>.json`
+  files are merged into it before being removed. Entries are stored
   longest-entity-first, a code is never reused, and an entry deleted in the
   admin editor is recorded under `ignored` so neither the next rebuild nor the
   Python merge reintroduces that false positive.

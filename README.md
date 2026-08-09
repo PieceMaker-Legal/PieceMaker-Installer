@@ -44,11 +44,12 @@ environnement virtuel Python et modèles GLiNER2 + spaCy.
 
 ## Ce que fait l'installateur
 
-Dix étapes, exécutables ensemble ou une par une :
+Étapes exécutables ensemble ou une par une :
 
 | # | Étape | Contenu |
 | --- | --- | --- |
-| 00 | Dossier racine PieceMaker | choix de la racine contenant un sous-dossier par dossier juridique |
+| 00a | Identification de l’utilisateur | nom protégé dans le `.env` global et appliqué à chaque commit |
+| 00b | Dossier racine PieceMaker | choix de la racine contenant un sous-dossier par dossier juridique |
 | 01 | Prérequis système | Node, Python, git, outils de build |
 | 02 | Dépendances Node.js | `npm install` racine et `mcp-server/` |
 | 03 | Python, GLiNER & anonymisation | venv, `requirements.txt`, modèles GLiNER2 et spaCy |
@@ -71,7 +72,8 @@ et au sous-menu d’installation/réparation :
 piecemaker
 ```
 
-L’interface graphique locale permet de modifier les paramètres, configurer
+L’interface graphique locale permet de modifier les paramètres et l’identité
+qui signe les tâches, configurer
 séparément l’Assistant Telegram général et son bot de surveillance sans LLM,
 puis lier chaque sous-dossier juridique à son propre Assistant Telegram. Elle
 permet aussi de rédiger les skills et agents dans un éditeur Markdown visuel

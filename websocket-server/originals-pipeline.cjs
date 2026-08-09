@@ -4,14 +4,15 @@
  *
  * Les originaux ne sortent jamais du dossier : `smart_converter.py` et
  * `convert_and_scan_pipeline.py` sont lancés avec le dossier juridique comme
- * répertoire de sortie, si bien que le Markdown converti et les
- * `*_sensitive_map.json` atterrissent à côté des fichiers déjà versionnés.
+ * répertoire de sortie, si bien que le Markdown converti et le seul
+ * `mapping_default.json` atterrissent à côté des fichiers déjà versionnés.
  * Seules les lignes `PROGRESS:` et un extrait d'erreur sont conservés dans le
  * journal d'un travail : la sortie brute des scripts peut contenir du texte de
  * pièce, qui ne doit jamais remonter dans l'interface.
  */
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 
@@ -22,10 +23,13 @@ const {
   safeCaseFiles,
 } = require('../piecemaker-plugin/scripts/lib/commits.cjs');
 const { documentKey } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
+const {
+  markFilesAnonymized,
+  markFilesConverted,
+} = require('../piecemaker-plugin/scripts/lib/anonymization-state.cjs');
 // Le mapping vit dans le plugin : c'est le seul des trois consommateurs (hooks,
 // pipeline, routeur du task pane) qui soit distribué seul.
 const {
-  CANONICAL_MAPPING_FILE,
   caseMappingFile,
   normalizeMappingDocument,
   readCaseMapping,
@@ -35,11 +39,36 @@ const {
 
 const SCRIPTS_DIR = path.join(__dirname, 'scripts');
 const CONVERTER_SCRIPT = () => process.env.SMART_CONVERTER_PATH || path.join(SCRIPTS_DIR, 'smart_converter.py');
-const PIPELINE_SCRIPT = () => path.join(SCRIPTS_DIR, 'convert_and_scan_pipeline.py');
+const PIPELINE_SCRIPT = () => process.env.PIECEMAKER_PIPELINE_PATH || path.join(SCRIPTS_DIR, 'convert_and_scan_pipeline.py');
 const PYTHON = () => process.env.PYTHON_PATH || 'python3';
 const MAX_LOG_LINES = 200;
 const MAX_ERROR_LINES = 12;
 const MAX_FILES_PER_JOB = 200;
+
+const GIB = 1024 ** 3;
+/**
+ * Contrôle d'admission des traitements — pensé pour ne jamais saturer la machine
+ * de l'utilisateur (sa priorité explicite). Deux contraintes :
+ *  1. exclusivité GLiNER : au plus un `anonymize` à la fois, quel que soit le
+ *     dossier (deux workers chargeraient chacun ~400 Mo de poids et figeraient
+ *     l'ordinateur) ;
+ *  2. budget RAM : les conversions peuvent tourner en parallèle tant que la somme
+ *     de leurs réservations reste sous ~la moitié de la RAM.
+ * Tout est réglable par variable d'environnement, ce qui rend aussi les tests
+ * déterministes sans dépendre de la RAM réelle.
+ */
+const RAM_BUDGET_BYTES = () => Number(process.env.PIECEMAKER_RAM_BUDGET_BYTES) || Math.floor(os.totalmem() * 0.5);
+const JOB_RESERVE_BYTES = (action) => {
+  if (action === 'anonymize') return Number(process.env.PIECEMAKER_ANONYMIZE_JOB_BYTES) || 3 * GIB;
+  return Number(process.env.PIECEMAKER_CONVERT_JOB_BYTES) || 2 * GIB;
+};
+/** Priorité CPU (nice) des process de traitement : cède la main dès que l'utilisateur travaille. */
+const JOB_NICE = () => {
+  const value = Number(process.env.PIECEMAKER_JOB_NICE);
+  return Number.isFinite(value) ? value : 10;
+};
+/** Threads torch du scanner : abaissé de 6 à 4 pour laisser des cœurs libres (le worker lit cette variable). */
+const JOB_TORCH_THREADS = () => process.env.PIECEMAKER_TORCH_THREADS || '4';
 
 /** Les pièces d'un dossier listées dans l'administration : tout sauf le Markdown. */
 async function listOriginals(caseRoot) {
@@ -47,19 +76,30 @@ async function listOriginals(caseRoot) {
   return originals.filter((file) => file.extension !== '.md');
 }
 
-function writeCaseMapping(caseRoot, document) {
-  const file = caseMappingFile(caseRoot);
+function caseMappingPayload(document) {
   const normalized = normalizeMappingDocument(document);
-  const payload = {
+  return {
     mapping: sortedMapping(normalized.mapping),
     reverse_mapping: normalized.reverse_mapping,
     ...(Object.keys(normalized.extracted_data).length ? { extracted_data: normalized.extracted_data } : {}),
     ...(normalized.ignored.length ? { ignored: normalized.ignored } : {}),
   };
+}
+
+function writeCaseMapping(caseRoot, document) {
+  const file = caseMappingFile(caseRoot);
+  const payload = caseMappingPayload(document);
   const temporary = `${file}.piecemaker-${process.pid}.tmp`;
-  fs.writeFileSync(temporary, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  fs.writeFileSync(temporary, `${JSON.stringify(payload, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   fs.renameSync(temporary, file);
-  return { file, exists: true, ignored: normalized.ignored, ...payload };
+  // Une fois le fichier canonique écrit avec succès, les anciens mappings
+  // devenus redondants sont supprimés. `readCaseMapping` les a fusionnés avant
+  // les appels de migration ; aucune entité n'est perdue.
+  for (const entry of fs.readdirSync(caseRoot, { withFileTypes: true })) {
+    if (!entry.isFile() || entry.name === path.basename(file) || !/^mapping.*\.json$/i.test(entry.name)) continue;
+    fs.unlinkSync(path.join(caseRoot, entry.name));
+  }
+  return { file, exists: true, ignored: payload.ignored || [], ...payload };
 }
 
 /**
@@ -177,7 +217,7 @@ function groupEntityHits(hits, category) {
 }
 
 /**
- * Fusionne les `*_sensitive_map.json` du dossier dans son mapping.
+ * Migre les anciens `*_sensitive_map.json` du dossier dans son mapping.
  * Une entrée déjà présente n'est jamais réécrite : un faux positif retiré à la
  * main ne doit pas revenir au scan suivant, et un code ne doit jamais servir
  * deux fois. Les écritures multiples d'une même personne rejoignent le code
@@ -260,7 +300,32 @@ async function rebuildCaseMapping(caseRoot) {
     extracted_data: extracted,
     ignored: [...ignored],
   });
-  return { ...saved, added, total: Object.keys(saved.mapping).length };
+  const migratedScans = await migrateLegacySensitiveMaps(caseRoot);
+  return { ...saved, added, total: Object.keys(saved.mapping).length, migratedScans };
+}
+
+/**
+ * Transfère l'état porté par les anciens sensitive maps vers le manifeste sans
+ * PII, puis retire ces artefacts devenus inutiles. Le mapping doit avoir été
+ * reconstruit avant cet appel.
+ */
+async function migrateLegacySensitiveMaps(caseRoot) {
+  const safeFiles = await safeCaseFiles(caseRoot);
+  const legacy = safeFiles.filter((relative) => relative.toLowerCase().endsWith('_sensitive_map.json'));
+  if (!legacy.length) return 0;
+
+  const scannedKeys = new Set(legacy.map((relative) => {
+    const basename = relative.split('/').at(-1) || '';
+    return documentKey(basename).replace(/-sensitive-map$/, '');
+  }));
+  const originals = await listOriginals(caseRoot);
+  const scannedOriginals = originals
+    .filter((original) => scannedKeys.has(documentKey(original.name)))
+    .map((original) => path.join(caseRoot, ...original.path.split('/')));
+  if (scannedOriginals.length) markFilesAnonymized(caseRoot, scannedOriginals);
+
+  for (const relative of legacy) fs.unlinkSync(path.join(caseRoot, ...relative.split('/')));
+  return legacy.length;
 }
 
 // ── Travaux de conversion / anonymisation ──────────────────────────────────
@@ -301,13 +366,19 @@ function finishedJob({ case: caseName, caseRoot, action, total, files, result })
 }
 
 /**
- * Forme exposée par l'API. `caseRoot` en sort avec `child` : il ne sert qu'au
- * verrou interne, et la réponse de `GET /api/admin/originals/job` n'a pas à
- * véhiculer un chemin absolu du disque du cabinet.
+ * Forme exposée par l'API. `caseRoot`, `child` et `reserveBytes` en sont retirés :
+ * ils ne servent qu'à l'ordonnancement interne, et la réponse de
+ * `GET /api/admin/originals/job` n'a pas à véhiculer un chemin absolu du disque du
+ * cabinet ni des octets de réservation. `queuePosition` est ajouté pour un job en
+ * file, pour que l'admin puisse afficher « N devant ».
  */
 function publicJob(job) {
   if (!job) return null;
-  const { child, caseRoot, ...rest } = job;
+  const { child, caseRoot, reserveBytes, ...rest } = job;
+  if (job.state === 'queued') {
+    const position = waiting.findIndex((entry) => entry.job.id === job.id);
+    rest.queuePosition = position >= 0 ? position + 1 : 1;
+  }
   return rest;
 }
 
@@ -321,17 +392,54 @@ function appendLog(job, line) {
 /**
  * Le verrou porte sur la **racine** du dossier, pas sur son nom : deux racines
  * `workspacePath` distinctes peuvent porter un dossier de même nom, et un
- * traitement lent sur l'une bloquait alors tout traitement sur l'autre.
+ * traitement lent sur l'une bloquait alors tout traitement sur l'autre. Un job en
+ * file compte aussi : sinon un double-clic empilerait deux traitements du même
+ * dossier au lieu d'un seul.
  */
 function runningJobForCase(caseRoot) {
   for (const job of jobs.values()) {
-    if (job.state === 'running' && job.caseRoot === caseRoot) return job;
+    if (['running', 'queued'].includes(job.state) && job.caseRoot === caseRoot) return job;
   }
   return null;
 }
 
 function getJob(jobId) {
   return publicJob(jobs.get(String(jobId || '')));
+}
+
+// ── Contrôle d'admission : sérialise GLiNER, plafonne les conversions par la RAM ─
+
+/** Descripteurs de traitements admis mais pas encore lancés, du plus ancien au plus récent. */
+const waiting = [];
+let reservedBytes = 0;
+
+function runningAnonymize() {
+  for (const job of jobs.values()) {
+    if (job.state === 'running' && job.action === 'anonymize') return true;
+  }
+  return false;
+}
+
+/**
+ * Un job peut-il démarrer maintenant ? Exclusivité GLiNER pour `anonymize`, puis
+ * budget RAM. Un job seul est toujours admis même s'il dépasse le budget, sinon
+ * un traitement plus gros que la moitié de la RAM ne partirait jamais.
+ */
+function canAdmit(job) {
+  if (job.action === 'anonymize' && runningAnonymize()) return false;
+  if (reservedBytes > 0 && reservedBytes + job.reserveBytes > RAM_BUDGET_BYTES()) return false;
+  return true;
+}
+
+/** Admet les traitements en file qui rentrent désormais, du plus ancien au plus récent. */
+function pumpQueue() {
+  for (let index = 0; index < waiting.length; index += 1) {
+    const descriptor = waiting[index];
+    if (!canAdmit(descriptor.job)) continue;
+    waiting.splice(index, 1);
+    index -= 1;
+    launchJob(descriptor);
+  }
 }
 
 /**
@@ -348,10 +456,23 @@ function spawnTracked(job, script, args) {
     }
     const child = spawn(PYTHON(), [script, ...args], {
       cwd: SCRIPTS_DIR,
-      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+      env: {
+        ...process.env,
+        PYTHONUNBUFFERED: '1',
+        // Le worker et MinerU, enfants de ce process, héritent de la variable.
+        PIECEMAKER_TORCH_THREADS: JOB_TORCH_THREADS(),
+      },
       windowsHide: true,
     });
     job.child = child;
+    // Basse priorité CPU : un scan long ne doit pas figer la machine. Les enfants
+    // (worker GLiNER, MinerU) héritent du nice sous POSIX. Best-effort — un échec
+    // (droits, plateforme) ne doit jamais empêcher le traitement.
+    try {
+      os.setPriority(child.pid, JOB_NICE());
+    } catch {
+      // priorité inchangée, sans conséquence sur le résultat
+    }
     const errorLines = [];
     let stdoutRest = '';
     let stderrRest = '';
@@ -363,11 +484,17 @@ function spawnTracked(job, script, args) {
       for (const line of lines) {
         const progress = /^PROGRESS:([A-Z]+):(\d+):(\d+):(\d+)/.exec(line.trim());
         if (!progress) continue;
-        job.phase = progress[1] === 'SCAN' ? 'scan' : 'convert';
-        job.percent = Math.min(100, Number(progress[2]) || 0);
-        job.processed = Number(progress[3]) || 0;
-        job.total = Number(progress[4]) || job.total;
-        appendLog(job, `${job.phase === 'scan' ? 'Analyse PII' : 'Conversion'} ${job.processed}/${job.total}`);
+        const [, marker, pct, current, total] = progress;
+        // CONVERT : fichier par fichier. SCAN : fichier par fichier de la phase PII.
+        // CHUNKS : progression *à l'intérieur* d'un scan (réémise par le pipeline
+        // depuis le worker) — c'est elle qui fait vivre la barre pendant les longues
+        // minutes d'un gros document, là où SCAN restait figé sur « 1/1 ».
+        job.phase = marker === 'CONVERT' ? 'convert' : 'scan';
+        job.percent = Math.min(100, Number(pct) || 0);
+        job.processed = Number(current) || 0;
+        job.total = Number(total) || job.total;
+        const unit = marker === 'CHUNKS' ? ' segments' : '';
+        appendLog(job, `${job.phase === 'scan' ? 'Analyse PII' : 'Conversion'} ${job.processed}/${job.total}${unit}`);
       }
     };
     const consumeStderr = (chunk) => {
@@ -416,6 +543,7 @@ async function runJob(job, legalCase, absoluteFiles, options) {
       if (options.mode) args.push('--mode', options.mode);
       if (options.lang) args.push('--lang', options.lang);
       await spawnTracked(job, CONVERTER_SCRIPT(), args);
+      markFilesConverted(legalCase.root, [absolute]);
       job.processed = index + 1;
       job.percent = Math.round(((index + 1) / absoluteFiles.length) * 100);
       appendLog(job, `Conversion ${job.processed}/${absoluteFiles.length}`);
@@ -423,21 +551,42 @@ async function runJob(job, legalCase, absoluteFiles, options) {
     return { converted: absoluteFiles.length };
   }
 
-  // `--mapping-file` vise le mapping du dossier : sans lui le pipeline écrivait
-  // son propre `mapping_default.json` à côté, qui prenait ensuite la place du
-  // mapping tenu pour le dossier. `--skip-existing` évite de relancer GLiNER sur
-  // une pièce déjà scannée — c'est le script qui décide, fichier par fichier.
-  const args = [...absoluteFiles, '-o', legalCase.root, '--mapping-file', caseMappingFile(legalCase.root)];
+  // Tous les anciens mappings sont réunis dans un fichier de travail privé. Le
+  // dossier juridique n'est modifié qu'après le succès complet du pipeline : un
+  // échec de GLiNER ne doit pas laisser une migration à moitié enregistrée.
+  const before = readCaseMapping(legalCase.root);
+  const mappingWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-mapping-'));
+  const workingMapping = path.join(mappingWorkspace, 'mapping_default.json');
+  if (before.exists) {
+    fs.writeFileSync(workingMapping, `${JSON.stringify(caseMappingPayload(before), null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  }
+
+  // `--mapping-file` vise la copie de travail de l'unique mapping du dossier.
+  // `--state-file` découple le statut « analysé » du contenu sensible ; les
+  // cartes brutes restent temporaires et ne sont jamais déposées ici.
+  const args = [...absoluteFiles, '-o', legalCase.root, '--mapping-file', workingMapping];
+  args.push('--state-file', path.join(legalCase.root, '.piecemaker', 'anonymization-state.json'));
   if (options.skipExisting) args.push('--skip-existing');
   if (options.engine) args.push('--engine', options.engine);
   if (options.mode) args.push('--mode', options.mode);
   if (options.lang) args.push('--lang', options.lang);
-  await spawnTracked(job, PIPELINE_SCRIPT(), args);
+  try {
+    await spawnTracked(job, PIPELINE_SCRIPT(), args);
+    const produced = readJsonFile(workingMapping, null);
+    if (!produced) throw new Error('Le pipeline n’a produit aucun mapping exploitable.');
+    writeCaseMapping(legalCase.root, produced);
+  } finally {
+    fs.rmSync(mappingWorkspace, { recursive: true, force: true });
+  }
   job.phase = 'mapping';
   job.percent = 100;
+  // Migration unique des dossiers créés par les anciennes versions : leurs
+  // scans sont absorbés dans le mapping et leur état technique avant suppression.
   const mapping = await rebuildCaseMapping(legalCase.root);
-  appendLog(job, `Mapping : ${mapping.added} nouvelle(s) entrée(s), ${mapping.total} au total`);
-  return { scanned: absoluteFiles.length, mappingAdded: mapping.added, mappingTotal: mapping.total };
+  const mappingAdded = Math.max(0, mapping.total - Object.keys(before.mapping).length);
+  appendLog(job, `Mapping : ${mappingAdded} nouvelle(s) entrée(s), ${mapping.total} au total`);
+  if (mapping.migratedScans) appendLog(job, `${mapping.migratedScans} ancien(s) sensitive map migré(s)`);
+  return { scanned: absoluteFiles.length, mappingAdded, mappingTotal: mapping.total };
 }
 
 /**
@@ -457,9 +606,6 @@ async function sessionArtifactPaths(legalCase, absoluteFiles, action) {
     const insideDocumentOutput = segments.slice(0, -1).some((segment) => documentKeys.has(documentKey(segment)));
     if (insideDocumentOutput) return true;
     if (extension === '.md') return documentKeys.has(documentKey(basename));
-    if (action === 'anonymize' && /_sensitive_map\.json$/i.test(basename)) {
-      return documentKeys.has(documentKey(basename).replace(/-sensitive-map$/, ''));
-    }
     return false;
   });
 }
@@ -551,22 +697,53 @@ async function startOriginalsJob({ casesRoot, caseName, action, files = [], opti
     case: legalCase.name,
     caseRoot: legalCase.root,
     action,
-    state: 'running',
+    state: 'queued',
     phase: 'convert',
     percent: 0,
     processed: 0,
     total: pending.length,
     skipped,
     files: pending.map((file) => file.path),
+    reserveBytes: JOB_RESERVE_BYTES(action),
     log: [],
     error: null,
     result: null,
     cancelled: false,
     child: null,
-    startedAt: new Date().toISOString(),
+    queuedAt: new Date().toISOString(),
+    startedAt: null,
     finishedAt: null,
   };
+
+  // Le descripteur porte tout ce dont `launchJob` a besoin, qu'il démarre
+  // maintenant ou plus tard depuis la file.
+  return admitOrQueue({ job, legalCase, absoluteFiles, options, homeDir, skipped, forced });
+}
+
+/** Démarre le traitement maintenant s'il rentre, sinon le met en file d'attente. */
+function admitOrQueue(descriptor) {
+  const { job } = descriptor;
   jobs.set(job.id, job);
+  if (canAdmit(job)) {
+    launchJob(descriptor);
+  } else {
+    job.state = 'queued';
+    waiting.push(descriptor);
+  }
+  return publicJob(job);
+}
+
+/**
+ * Lance réellement le traitement : réserve sa RAM, exécute le script Python, puis
+ * — quoi qu'il arrive — libère la réservation et relance la file. Le `.finally`
+ * est le seul endroit qui rend une place : un traitement qui échoue ne doit pas
+ * bloquer la file pour autant.
+ */
+function launchJob(descriptor) {
+  const { job, legalCase, absoluteFiles, options, homeDir, skipped, forced } = descriptor;
+  job.state = 'running';
+  job.startedAt = new Date().toISOString();
+  reservedBytes += job.reserveBytes;
 
   runJob(job, legalCase, absoluteFiles, { ...options, skipExisting: !forced })
     .then(async (result) => {
@@ -583,14 +760,26 @@ async function startOriginalsJob({ casesRoot, caseName, action, files = [], opti
     .finally(() => {
       job.child = null;
       job.finishedAt = new Date().toISOString();
+      reservedBytes -= job.reserveBytes;
+      pumpQueue();
     });
-
-  return publicJob(job);
 }
 
 function cancelOriginalsJob(jobId) {
   const job = jobs.get(String(jobId || ''));
-  if (!job || job.state !== 'running') return null;
+  if (!job) return null;
+  // Un job encore en file n'a pas de process : on le retire de la file et on
+  // laisse la place au suivant.
+  if (job.state === 'queued') {
+    const index = waiting.findIndex((entry) => entry.job.id === job.id);
+    if (index >= 0) waiting.splice(index, 1);
+    job.state = 'error';
+    job.error = 'Traitement interrompu.';
+    job.finishedAt = new Date().toISOString();
+    pumpQueue();
+    return publicJob(job);
+  }
+  if (job.state !== 'running') return null;
   job.cancelled = true;
   if (job.child) job.child.kill('SIGTERM');
   return publicJob(job);

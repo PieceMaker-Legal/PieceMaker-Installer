@@ -16,6 +16,11 @@ huggingface-hub>=0.20.0  # Required for model downloading with progress
 presidio-analyzer>=2.2.0
 gliner>=0.2.0
 spacy>=3.7.0
+
+# Accélération GPU de l'encodeur (macOS) — optionnelle : le runtime retombe sur
+# torch si coremltools ou le .mlmodelc manquent. Sert à build_coreml.py et à
+# presidio-gliner/coreml_runtime.py.
+coremltools>=8.0 ; sys_platform == "darwin"
 #
 # After installing spacy, download language models:
 #   python -m spacy download fr_core_news_sm  # French (15MB, 88% NER accuracy)

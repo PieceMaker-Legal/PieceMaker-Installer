@@ -4,6 +4,8 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
+process.env.PIECEMAKER_USER_NAME = 'Utilisateur Test';
+
 const {
   cancelOriginalsJob,
   caseMappingFile,
@@ -22,6 +24,10 @@ const {
   resolveCase,
   worktreeDetails,
 } = require('../piecemaker-plugin/scripts/lib/commits.cjs');
+const {
+  anonymizationStateFile,
+  markFilesAnonymized,
+} = require('../piecemaker-plugin/scripts/lib/anonymization-state.cjs');
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-originals-test-'));
@@ -71,6 +77,14 @@ function describeJob(job) {
   return job.error || `état ${job.state}, phase ${job.phase}, ${tail}`;
 }
 
+/** Attend qu'une condition devienne vraie (promotion depuis la file, etc.). */
+async function waitUntil(predicate, attempts = 200) {
+  for (let i = 0; i < attempts && !predicate(); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return Boolean(predicate());
+}
+
 function writeScan(caseRoot, stem, entities) {
   fs.writeFileSync(
     path.join(caseRoot, `${stem}_sensitive_map.json`),
@@ -78,10 +92,17 @@ function writeScan(caseRoot, stem, entities) {
   );
 }
 
-test('le cadre des pièces originales liste tout sauf le Markdown, avec ses deux états', async (t) => {
+function markScanned(caseRoot, ...relativeFiles) {
+  return markFilesAnonymized(
+    caseRoot,
+    relativeFiles.map((relative) => path.join(caseRoot, ...relative.split('/')))
+  );
+}
+
+test('le cadre déduit le scan du manifeste technique, sans sensitive map par pièce', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
-  writeScan(data.caseRoot, 'contrat', { PERSON: [{ text: 'Jean Dupont', start: 0, end: 11, score: 0.9 }] });
+  markScanned(data.caseRoot, 'pièces originales/contrat.pdf');
 
   const originals = await listOriginals(data.caseRoot);
   // Les chemins sont relatifs au dossier juridique : une pièce n'a plus à vivre
@@ -96,6 +117,22 @@ test('le cadre des pièces originales liste tout sauf le Markdown, avec ses deux
   const annexe = originals.find((file) => file.name === 'annexe.docx');
   assert.equal(annexe.converted, false);
   assert.equal(annexe.scanned, false);
+  assert.equal(fs.existsSync(path.join(data.caseRoot, 'contrat_sensitive_map.json')), false);
+  const state = JSON.parse(fs.readFileSync(anonymizationStateFile(data.caseRoot), 'utf8'));
+  assert.equal(Object.keys(state.files).length, 1);
+  assert.doesNotMatch(JSON.stringify(state), /contrat|pièces originales/i);
+});
+
+test('une source modifiée redevient à analyser', async (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  markScanned(data.caseRoot, 'pièces originales/contrat.pdf');
+  const source = path.join(data.originals, 'contrat.pdf');
+  fs.appendFileSync(source, ' MODIFIÉ');
+
+  const contrat = (await listOriginals(data.caseRoot)).find((file) => file.name === 'contrat.pdf');
+  assert.equal(contrat.converted, false);
+  assert.equal(contrat.scanned, false);
 });
 
 test('le mapping est reconstruit depuis les scans PII sans réutiliser un code', async (t) => {
@@ -121,6 +158,8 @@ test('le mapping est reconstruit depuis les scans PII sans réutiliser un code',
 
   const onDisk = JSON.parse(fs.readFileSync(caseMappingFile(data.caseRoot), 'utf8'));
   assert.deepEqual(Object.keys(onDisk.mapping), ['Société Alpha', 'Marie Martin', 'Jean Dupont']);
+  assert.equal(fs.existsSync(path.join(data.caseRoot, 'contrat_sensitive_map.json')), false);
+  assert.equal((await listOriginals(data.caseRoot)).find((file) => file.name === 'contrat.pdf').scanned, true);
 });
 
 test('un second scan complète le mapping sans renuméroter les codes déjà attribués', async (t) => {
@@ -158,21 +197,20 @@ test('une entrée supprimée à la main n’est pas réintroduite par le scan su
 test('un mapping écrit à la main sans sens inverse reste exploitable', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(data.caseRoot, 'mapping_dossier.json'), `${JSON.stringify({ mapping: { Martin: 'PERSONNE_01' } })}\n`);
+  fs.writeFileSync(path.join(data.caseRoot, 'mapping_default.json'), `${JSON.stringify({ mapping: { Martin: 'PERSONNE_01' } })}\n`);
 
   const mapping = readCaseMapping(data.caseRoot);
   assert.equal(mapping.exists, true);
   assert.deepEqual(mapping.reverse_mapping, { PERSONNE_01: ['Martin'] });
 
   const saved = writeCaseMapping(data.caseRoot, mapping);
-  assert.equal(path.basename(saved.file), 'mapping_dossier.json');
+  assert.equal(path.basename(saved.file), 'mapping_default.json');
 });
 
 test('les artefacts d’un lot excluent les fichiers modifiés par une autre session', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
   fs.writeFileSync(path.join(data.caseRoot, 'annexe.md'), '# Annexe convertie\n');
-  fs.writeFileSync(path.join(data.caseRoot, 'annexe_sensitive_map.json'), '{"entities":{}}\n');
   fs.writeFileSync(path.join(data.caseRoot, 'autre-session.md'), '# Concurrent\n');
   writeCaseMapping(data.caseRoot, { mapping: { Martin: 'PERSONNE_PHYSIQUE_01' } });
 
@@ -184,8 +222,86 @@ test('les artefacts d’un lot excluent les fichiers modifiés par une autre ses
   );
   assert.deepEqual(
     await sessionArtifactPaths(legalCase, [source], 'anonymize'),
-    ['annexe_sensitive_map.json', 'annexe.md', 'mapping_dossier.json'],
+    ['annexe.md', 'mapping_default.json'],
   );
+});
+
+test('un lot anonymisé ne laisse que mapping_default.json et son état technique', async (t) => {
+  const data = fixture();
+  const fakePipeline = path.join(data.root, 'fake-pipeline.cjs');
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  t.after(() => {
+    delete process.env.PYTHON_PATH;
+    delete process.env.PIECEMAKER_PIPELINE_PATH;
+  });
+  fs.writeFileSync(fakePipeline, [
+    "const crypto = require('node:crypto');",
+    "const fs = require('node:fs');",
+    "const path = require('node:path');",
+    "const args = process.argv.slice(2);",
+    "const source = path.resolve(args[0]);",
+    "const output = path.resolve(args[args.indexOf('-o') + 1]);",
+    "const mapping = args[args.indexOf('--mapping-file') + 1];",
+    "const stateFile = args[args.indexOf('--state-file') + 1];",
+    "fs.writeFileSync(path.join(output, `${path.basename(source, path.extname(source))}.md`), '# Converti\\n');",
+    "fs.writeFileSync(mapping, JSON.stringify({ mapping: { Martin: 'PERSONNE_PHYSIQUE_01' }, reverse_mapping: { PERSONNE_PHYSIQUE_01: ['Martin'] } }));",
+    "const relative = path.relative(output, source).split(path.sep).join('/');",
+    "const key = crypto.createHash('sha256').update(relative).digest('hex');",
+    "const stat = fs.statSync(source);",
+    "fs.mkdirSync(path.dirname(stateFile), { recursive: true });",
+    "fs.writeFileSync(stateFile, JSON.stringify({ version: 1, files: { [key]: { size: stat.size, mtimeMs: Math.trunc(stat.mtimeMs) } } }));",
+  ].join('\n'));
+  process.env.PYTHON_PATH = process.execPath;
+  process.env.PIECEMAKER_PIPELINE_PATH = fakePipeline;
+
+  const started = await startJob(t, {
+    casesRoot: data.casesRoot,
+    caseName: 'Dossier Alpha',
+    action: 'anonymize',
+    files: ['pièces originales/annexe.docx'],
+  });
+  const finished = await waitForJob(started.id);
+  assert.equal(finished.state, 'done', describeJob(finished));
+  assert.equal((await listOriginals(data.caseRoot)).find((file) => file.name === 'annexe.docx').scanned, true);
+  assert.deepEqual(
+    fs.readdirSync(data.caseRoot).filter((name) => /^mapping.*\.json$/i.test(name)),
+    ['mapping_default.json'],
+  );
+  assert.deepEqual(
+    fs.readdirSync(data.caseRoot).filter((name) => /_sensitive_map\.json$/i.test(name)),
+    [],
+  );
+});
+
+test('un scan en échec ne migre pas prématurément les anciens mappings', async (t) => {
+  const data = fixture();
+  const failingPipeline = path.join(data.root, 'failing-pipeline.cjs');
+  const legacy = path.join(data.caseRoot, 'mapping_dossier.json');
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  t.after(() => {
+    delete process.env.PYTHON_PATH;
+    delete process.env.PIECEMAKER_PIPELINE_PATH;
+  });
+  fs.writeFileSync(legacy, JSON.stringify({ mapping: { Martin: 'PERSONNE_PHYSIQUE_01' } }));
+  fs.writeFileSync(failingPipeline, [
+    "const fs = require('node:fs');",
+    "const args = process.argv.slice(2);",
+    "const workingMapping = args[args.indexOf('--mapping-file') + 1];",
+    "fs.writeFileSync(workingMapping, JSON.stringify({ mapping: { Perdu: 'PERSONNE_PHYSIQUE_02' } }));",
+    "process.exit(1);",
+  ].join('\n'));
+  process.env.PYTHON_PATH = process.execPath;
+  process.env.PIECEMAKER_PIPELINE_PATH = failingPipeline;
+
+  const finished = await waitForJob((await startJob(t, {
+    casesRoot: data.casesRoot,
+    caseName: 'Dossier Alpha',
+    action: 'anonymize',
+    files: ['pièces originales/annexe.docx'],
+  })).id);
+  assert.equal(finished.state, 'error');
+  assert.equal(fs.existsSync(legacy), true);
+  assert.equal(fs.existsSync(path.join(data.caseRoot, 'mapping_default.json')), false);
 });
 
 test('une conversion admin crée un commit ciblé et laisse les changements concurrents locaux', async (t) => {
@@ -223,6 +339,7 @@ test('une conversion admin crée un commit ciblé et laisse les changements conc
   const finished = await waitForJob(started.id);
   assert.equal(finished.state, 'done', describeJob(finished));
   assert.equal(finished.result.commit.created, true);
+  assert.equal((await listOriginals(data.caseRoot)).find((file) => file.name === 'annexe.docx').converted, true);
   assert.deepEqual(finished.result.commit.files.map((file) => file.path), ['annexe.md']);
   assert.match((await listHistory(data.casesRoot, homeDir, { caseName: 'Dossier Alpha' }))[0].subject, /Conversion de 1 pièce/);
 
@@ -282,6 +399,119 @@ test('le verrou porte sur la racine du dossier, pas sur son nom', async (t) => {
   // Les deux travaux sont tués par le `t.after` de `startJob`.
 });
 
+/** Un script Node qui ne rend jamais la main : garde un traitement `running`. */
+function writeHang(dir, name) {
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, 'setTimeout(() => {}, 60_000);\n');
+  return file;
+}
+
+test('un seul scan GLiNER à la fois : le dossier suivant passe en file', async (t) => {
+  const first = fixture();
+  const second = fixture();
+  t.after(() => fs.rmSync(first.root, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(second.root, { recursive: true, force: true }));
+  t.after(() => {
+    delete process.env.PYTHON_PATH;
+    delete process.env.PIECEMAKER_PIPELINE_PATH;
+  });
+  // Le scan anonymize passe par le pipeline : on le remplace par un process qui
+  // ne finit jamais, pour tenir le premier `running` sans charger GLiNER.
+  process.env.PYTHON_PATH = process.execPath;
+  process.env.PIECEMAKER_PIPELINE_PATH = writeHang(first.root, 'slow-pipeline.cjs');
+
+  const running = await startJob(t, { casesRoot: first.casesRoot, caseName: 'Dossier Alpha', action: 'anonymize' });
+  const queued = await startJob(t, { casesRoot: second.casesRoot, caseName: 'Dossier Alpha', action: 'anonymize' });
+
+  assert.equal(getJob(running.id).state, 'running');
+  assert.equal(queued.state, 'queued');
+  assert.equal(queued.queuePosition, 1);
+
+  // Le premier terminé (ici annulé), le second démarre de lui-même.
+  cancelOriginalsJob(running.id);
+  assert.equal(await waitUntil(() => getJob(queued.id)?.state === 'running'), true,
+    'le second scan doit démarrer une fois le premier fini');
+});
+
+test('les conversions sont plafonnées par la RAM, puis reprennent', async (t) => {
+  const first = fixture();
+  const second = fixture();
+  t.after(() => fs.rmSync(first.root, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(second.root, { recursive: true, force: true }));
+  t.after(() => {
+    delete process.env.PYTHON_PATH;
+    delete process.env.SMART_CONVERTER_PATH;
+    delete process.env.PIECEMAKER_RAM_BUDGET_BYTES;
+    delete process.env.PIECEMAKER_CONVERT_JOB_BYTES;
+  });
+  process.env.PYTHON_PATH = process.execPath;
+  process.env.SMART_CONVERTER_PATH = writeHang(first.root, 'slow-converter.cjs');
+  // Budget qui ne laisse tenir qu'une conversion à la fois.
+  process.env.PIECEMAKER_CONVERT_JOB_BYTES = '1000';
+  process.env.PIECEMAKER_RAM_BUDGET_BYTES = '1500';
+
+  const running = await startJob(t, { casesRoot: first.casesRoot, caseName: 'Dossier Alpha', action: 'convert', files: ['pièces originales/contrat.pdf'] });
+  const queued = await startJob(t, { casesRoot: second.casesRoot, caseName: 'Dossier Alpha', action: 'convert', files: ['pièces originales/annexe.docx'] });
+
+  assert.equal(getJob(running.id).state, 'running');
+  assert.equal(queued.state, 'queued');
+
+  cancelOriginalsJob(running.id);
+  assert.equal(await waitUntil(() => getJob(queued.id)?.state === 'running'), true,
+    'la conversion en file doit reprendre quand la RAM se libère');
+});
+
+test('sous le budget, deux conversions tournent en parallèle', async (t) => {
+  const first = fixture();
+  const second = fixture();
+  t.after(() => fs.rmSync(first.root, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(second.root, { recursive: true, force: true }));
+  t.after(() => {
+    delete process.env.PYTHON_PATH;
+    delete process.env.SMART_CONVERTER_PATH;
+    delete process.env.PIECEMAKER_RAM_BUDGET_BYTES;
+    delete process.env.PIECEMAKER_CONVERT_JOB_BYTES;
+  });
+  process.env.PYTHON_PATH = process.execPath;
+  process.env.SMART_CONVERTER_PATH = writeHang(first.root, 'slow-converter.cjs');
+  process.env.PIECEMAKER_CONVERT_JOB_BYTES = '1000';
+  process.env.PIECEMAKER_RAM_BUDGET_BYTES = '10000';
+
+  const a = await startJob(t, { casesRoot: first.casesRoot, caseName: 'Dossier Alpha', action: 'convert', files: ['pièces originales/contrat.pdf'] });
+  const b = await startJob(t, { casesRoot: second.casesRoot, caseName: 'Dossier Alpha', action: 'convert', files: ['pièces originales/annexe.docx'] });
+
+  assert.equal(getJob(a.id).state, 'running');
+  assert.equal(getJob(b.id).state, 'running');
+});
+
+test('un traitement annulé en file ne démarre jamais', async (t) => {
+  const first = fixture();
+  const second = fixture();
+  t.after(() => fs.rmSync(first.root, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(second.root, { recursive: true, force: true }));
+  t.after(() => {
+    delete process.env.PYTHON_PATH;
+    delete process.env.SMART_CONVERTER_PATH;
+    delete process.env.PIECEMAKER_RAM_BUDGET_BYTES;
+    delete process.env.PIECEMAKER_CONVERT_JOB_BYTES;
+  });
+  process.env.PYTHON_PATH = process.execPath;
+  process.env.SMART_CONVERTER_PATH = writeHang(first.root, 'slow-converter.cjs');
+  process.env.PIECEMAKER_CONVERT_JOB_BYTES = '1000';
+  process.env.PIECEMAKER_RAM_BUDGET_BYTES = '1500';
+
+  const running = await startJob(t, { casesRoot: first.casesRoot, caseName: 'Dossier Alpha', action: 'convert', files: ['pièces originales/contrat.pdf'] });
+  const queued = await startJob(t, { casesRoot: second.casesRoot, caseName: 'Dossier Alpha', action: 'convert', files: ['pièces originales/annexe.docx'] });
+  assert.equal(queued.state, 'queued');
+
+  const cancelled = cancelOriginalsJob(queued.id);
+  assert.equal(cancelled.state, 'error');
+  // Il ne doit jamais passer `running`, même en laissant du temps s'écouler.
+  const startedAnyway = await waitUntil(() => getJob(queued.id)?.state === 'running', 20);
+  assert.equal(startedAnyway, false);
+  assert.equal(getJob(running.id).state, 'running');
+});
+
 test('un traitement refuse une pièce hors du dossier et une action inconnue', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
@@ -339,7 +569,7 @@ test('les écritures d’une même personne partagent un code et gardent leurs v
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
   // Mapping tel que le produit le pipeline Python : variants dans extracted_data.
-  fs.writeFileSync(path.join(data.caseRoot, 'mapping_dossier.json'), `${JSON.stringify({
+  fs.writeFileSync(path.join(data.caseRoot, 'mapping_default.json'), `${JSON.stringify({
     mapping: { 'Bernard Gilly': 'PERSONNE_PHYSIQUE_01' },
     reverse_mapping: { PERSONNE_PHYSIQUE_01: ['Bernard Gilly'] },
     extracted_data: {
@@ -367,14 +597,21 @@ test('les écritures d’une même personne partagent un code et gardent leurs v
   assert.deepEqual(afterEdit.extracted_data.personnes_physiques.PERSONNE_PHYSIQUE_01.variants, ['Bernard Gilly', 'M. Gilly']);
 });
 
-test('le mapping du dossier l’emporte sur un mapping_default.json laissé par le pipeline', async (t) => {
+test('les anciens mappings convergent vers le seul mapping_default.json', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
   fs.writeFileSync(path.join(data.caseRoot, 'mapping_default.json'), `${JSON.stringify({ mapping: { Egaré: 'AUTRE_01' } })}\n`);
   fs.writeFileSync(path.join(data.caseRoot, 'mapping_dossier.json'), `${JSON.stringify({ mapping: { Martin: 'PERSONNE_PHYSIQUE_01' } })}\n`);
 
-  assert.equal(path.basename(caseMappingFile(data.caseRoot)), 'mapping_dossier.json');
-  assert.deepEqual(Object.keys(readCaseMapping(data.caseRoot).mapping), ['Martin']);
+  assert.equal(path.basename(caseMappingFile(data.caseRoot)), 'mapping_default.json');
+  const merged = readCaseMapping(data.caseRoot);
+  assert.deepEqual(new Set(Object.keys(merged.mapping)), new Set(['Egaré', 'Martin']));
+  writeCaseMapping(data.caseRoot, merged);
+  assert.equal(fs.existsSync(path.join(data.caseRoot, 'mapping_dossier.json')), false);
+  assert.deepEqual(
+    fs.readdirSync(data.caseRoot).filter((name) => /^mapping.*\.json$/i.test(name)),
+    ['mapping_default.json'],
+  );
 });
 
 test('sans sélection, un traitement ne refait que les pièces incomplètes', async (t) => {
@@ -388,7 +625,7 @@ test('sans sélection, un traitement ne refait que les pièces incomplètes', as
   process.env.PYTHON_PATH = path.join(data.root, 'python-inexistant');
   t.after(() => { delete process.env.PYTHON_PATH; });
   // contrat.pdf a son Markdown et son scan ; annexe.docx n'a rien.
-  writeScan(data.caseRoot, 'contrat', { PERSON: [{ text: 'Jean Dupont', score: 0.9 }] });
+  markScanned(data.caseRoot, 'pièces originales/contrat.pdf');
 
   const job = await startJob(t, { casesRoot: data.casesRoot, caseName: 'Dossier Alpha', action: 'anonymize' });
   assert.deepEqual(job.files, ['pièces originales/annexe.docx'], 'la pièce déjà scannée est laissée de côté');
@@ -403,8 +640,7 @@ test('un dossier déjà à jour rend un travail terminé sans lancer GLiNER', as
   process.env.PYTHON_PATH = path.join(data.root, 'python-inexistant');
   t.after(() => { delete process.env.PYTHON_PATH; });
   fs.writeFileSync(path.join(data.caseRoot, 'annexe.md'), '# Annexe\n');
-  writeScan(data.caseRoot, 'contrat', { PERSON: [{ text: 'Jean Dupont', score: 0.9 }] });
-  writeScan(data.caseRoot, 'annexe', { PERSON: [{ text: 'Jean Dupont', score: 0.9 }] });
+  markScanned(data.caseRoot, 'pièces originales/contrat.pdf', 'pièces originales/annexe.docx');
 
   const job = await startJob(t, { casesRoot: data.casesRoot, caseName: 'Dossier Alpha', action: 'anonymize' });
   assert.equal(job.state, 'done');

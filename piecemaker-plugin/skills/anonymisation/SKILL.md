@@ -1,16 +1,17 @@
 ---
 name: anonymisation
-description: Lancer un scan PII GLiNER/Presidio sur un document PieceMaker, lire ou modifier un fichier de mapping d'anonymisation (mapping_{documentId}.json), ou ré-identifier (dé-anonymiser) un texte déjà codé. À utiliser dès qu'il est question d'anonymiser une pièce, de vérifier qu'un document ne contient plus de données personnelles, ou d'éditer/consulter un mapping d'anonymisation existant.
+description: Lancer un scan PII GLiNER/Presidio sur un document PieceMaker, lire ou modifier le mapping_default.json cumulatif, ou ré-identifier (dé-anonymiser) un texte déjà codé. À utiliser dès qu'il est question d'anonymiser une pièce, de vérifier qu'un document ne contient plus de données personnelles, ou d'éditer/consulter un mapping d'anonymisation existant.
 ---
 
 # Anonymisation PieceMaker (GLiNER/Presidio)
 
 ## Ce que fait réellement ce pipeline
 
-- Le scanner PII local est
+- Le scanner PII local bas niveau est
   `websocket-server/scripts/presidio-gliner/presidio-gliner.py`. Il prend un
-  fichier **Markdown** (pas de PDF/DOCX direct) et écrit
-  `<output_dir>/<stem>_sensitive_map.json` :
+  fichier **Markdown** (pas de PDF/DOCX direct) et écrit un payload brut
+  `<output_dir>/<stem>_sensitive_map.json`. Cette commande est réservée au
+  diagnostic ponctuel et doit viser un répertoire temporaire :
   ```
   python3 websocket-server/scripts/presidio-gliner/presidio-gliner.py document.md -o output_dir
   ```
@@ -19,13 +20,13 @@ description: Lancer un scan PII GLiNER/Presidio sur un document PieceMaker, lire
   reconnaisseurs à motifs (emails, IBAN, SIREN/SIRET, téléphones, etc.) et un
   reconnaisseur NER (Presidio + GLiNER2) pour PERSON/ORGANIZATION/LOCATION,
   puis résout les chevauchements de spans avant d'écrire le payload.
-- Si le document n'est pas encore en Markdown, convertissez-le d'abord (voir
-  la skill `conversion-md`), ou utilisez
+- Pour le flux normal, utilisez
   `websocket-server/scripts/convert_and_scan_pipeline.py` qui enchaîne
   conversion + scan et journalise `PROGRESS:CONVERT:...` /
-  `PROGRESS:SCAN:...` sur stdout.
+  `PROGRESS:SCAN:...` sur stdout. Les payloads bruts sont alors temporaires :
+  seul `mapping_default.json` demeure et s'enrichit à chaque lot.
 - Le fichier de mapping consommé par l'application vit à
-  `output/mapping_<documentId>.json` (ou dans le répertoire de sortie choisi)
+  `output/mapping_default.json`
   et a la forme :
   ```json
   { "mapping": { "Jean Dupont": "PERSON_01" },
@@ -49,13 +50,14 @@ qu'en éditant un mapping JSON à la main.
 
 ## Workflow type
 
-1. **Scanner** : convertir en Markdown si nécessaire, puis lancer
-   `presidio-gliner.py` sur le fichier. Lire `<stem>_sensitive_map.json`
-   pour connaître les entités détectées (type, texte, position, score).
-2. **Construire/mettre à jour le mapping** : transformer les entités en
-   paires `{texte: code}` / `{code: [texte, ...]}`, en donnant un code stable
-   par type (`PERSON_01`, `ORGANIZATION_01`, `LOCATION_01`, ...), sans
-   jamais réutiliser un code pour deux textes différents.
+1. **Scanner et mettre à jour** : lancer `convert_and_scan_pipeline.py` sur
+   les pièces. Il fusionne immédiatement les entités dans
+   `mapping_default.json`, sans laisser de sensitive map par pièce.
+2. **État de traitement** : ne jamais déduire les fichiers analysés du mapping.
+   `.piecemaker/anonymization-state.json` ne contient que des clés de chemins
+   hachées et des empreintes taille/mtime distinctes pour conversion et scan ;
+   l'administration l'utilise pour ne relancer que les sources nouvelles ou
+   modifiées.
 3. **Éditer un mapping existant** : lisez toujours le fichier avant de le
    réécrire (`GET /api/anonymize/mapping/:documentId` ou lecture directe du
    JSON) — n'écrasez jamais un mapping sans l'avoir d'abord chargé, un faux

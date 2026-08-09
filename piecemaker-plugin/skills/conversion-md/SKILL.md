@@ -50,5 +50,7 @@ Pour convertir puis scanner en un seul appel, utiliser
 `websocket-server/scripts/convert_and_scan_pipeline.py <file1> [file2 ...] -o <output_dir> [--engine ...] [--mode ...] [--lang ...]`,
 qui appelle `smart_converter.py` puis
 `websocket-server/scripts/presidio-gliner/presidio-gliner.py` pour chaque
-fichier (voir la skill `anonymisation`). Sortie par fichier :
-`{output_dir}/<nom>.md` + `{output_dir}/<nom>_sensitive_map.json`.
+fichier (voir la skill `anonymisation`). Sortie persistante : un Markdown par
+fichier, un unique `{output_dir}/mapping_default.json` cumulatif et le manifeste
+technique caché `.piecemaker/anonymization-state.json`. Les détections brutes
+par fichier restent temporaires et sont supprimées après leur fusion.

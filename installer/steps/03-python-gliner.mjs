@@ -24,6 +24,7 @@ export const meta = {
 const SCRIPTS_DIR = path.join(REPO_ROOT, 'websocket-server', 'scripts');
 const REQUIREMENTS = path.join(SCRIPTS_DIR, 'requirements.txt');
 const WARMUP = path.join(SCRIPTS_DIR, 'warmup.py');
+const BUILD_COREML = path.join(SCRIPTS_DIR, 'presidio-gliner', 'build_coreml.py');
 
 function truncate(text) {
   const width = Math.max(20, columns() - 6);
@@ -135,6 +136,34 @@ export async function install(ctx) {
   }
 
   spin.succeed('Modèles GLiNER2 et spaCy prêts');
+
+  // Encodeur GPU CoreML (macOS) — optionnel. Il fait tourner l'encodeur mdeberta
+  // sur le GPU : ~2× plus rapide, sortie identique, et surtout les cœurs CPU
+  // restent libres pour que la machine ne rame pas pendant un scan. Best-effort :
+  // le runtime retombe sur torch si le modèle n'est pas généré, donc un échec ne
+  // fait jamais échouer l'étape.
+  if (process.platform === 'darwin' && fs.existsSync(BUILD_COREML)) {
+    const buildIt = await confirm(
+      'Générer l\'encodeur GPU CoreML maintenant ? (~4 min une fois, ~620 Mo — rend les scans 2× plus rapides et n\'occupe plus le CPU)',
+      true
+    );
+    if (buildIt) {
+      const coremlSpin = spinner('Génération de l\'encodeur GPU CoreML (peut prendre plusieurs minutes)...');
+      const coremlCode = await run(vp.python, [BUILD_COREML], {
+        cwd: path.dirname(BUILD_COREML),
+        onLine: (line) => coremlSpin.update(truncate(line)),
+      });
+      // build_coreml.py sort toujours 0 (best-effort) ; un code non nul signale un
+      // problème d'exécution, mais l'anonymisation reste fonctionnelle sur torch.
+      if (coremlCode === 0) {
+        coremlSpin.succeed('Encodeur GPU CoreML prêt (repli torch automatique si absent)');
+      } else {
+        coremlSpin.fail('Encodeur GPU CoreML non généré — les scans tourneront sur CPU torch');
+        return { status: 'done', note: 'Modèles prêts. Encodeur GPU non généré (scans sur CPU) — relancez l\'étape pour réessayer.' };
+      }
+    }
+  }
+
   return { status: 'done', note: '' };
 }
 

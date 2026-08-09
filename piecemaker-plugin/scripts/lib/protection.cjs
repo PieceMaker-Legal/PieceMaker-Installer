@@ -34,8 +34,9 @@ const READABLE_EXTENSIONS = new Set(['.md', '.json']);
  * JSON qui trahiraient la frontière s'ils étaient lus :
  *  - `mapping*.json` fait correspondre chaque code au nom réel — le lire, c'est
  *    dé-anonymiser le dossier entier d'un seul appel d'outil ;
- *  - `*_sensitive_map.json` est la sortie brute de GLiNER/Presidio, qui porte les
- *    entités en clair avec leur contexte.
+ *  - `*_sensitive_map.json` est une ancienne sortie brute de GLiNER/Presidio.
+ *    Le pipeline actuel la garde en espace temporaire, mais un ancien dossier
+ *    peut encore en porter pendant sa migration.
  *
  * Appliquer le mapping à leur lecture ne suffirait pas : les entités trop courtes,
  * celles rangées sous `ignored` et les variantes d'`extracted_data` ressortiraient

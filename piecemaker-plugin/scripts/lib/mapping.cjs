@@ -23,7 +23,7 @@ const path = require('node:path');
 const { locateCase } = require('./protection.cjs');
 const { locateConfiguredCase } = require('./case-folders.cjs');
 
-const CANONICAL_MAPPING_FILE = 'mapping_dossier.json';
+const CANONICAL_MAPPING_FILE = 'mapping_default.json';
 
 // ─────────────────────────── Correspondance d'entités ───────────────────────
 // Repris tel quel de `anonymization-server.cjs`, qui require désormais ce
@@ -143,26 +143,32 @@ function readJsonFile(file, fallback = null) {
   }
 }
 
-/**
- * Fichier de mapping du dossier. `mapping_dossier.json` gagne dès qu'il existe :
- * sans cette priorité, un `mapping_default.json` laissé par une ancienne
- * exécution du pipeline passait devant (tri alphabétique) et éclipsait le
- * mapping réellement tenu pour le dossier. À défaut, un `mapping*.json`
- * existant est repris tel quel — c'est celui produit par le CLI.
- */
-function caseMappingFile(caseRoot) {
+/** Tous les mappings présents, le fichier canonique en dernier pour priorité. */
+function existingMappingFiles(caseRoot) {
   let entries = [];
   try {
     entries = fs.readdirSync(caseRoot, { withFileTypes: true });
   } catch {
-    return path.join(caseRoot, CANONICAL_MAPPING_FILE);
+    return [];
   }
-  const existing = entries
+  return entries
     .filter((entry) => entry.isFile() && /^mapping.*\.json$/i.test(entry.name))
     .map((entry) => entry.name)
-    .sort((a, b) => a.localeCompare(b, 'fr'));
-  if (existing.includes(CANONICAL_MAPPING_FILE)) return path.join(caseRoot, CANONICAL_MAPPING_FILE);
-  return path.join(caseRoot, existing[0] || CANONICAL_MAPPING_FILE);
+    .sort((a, b) => {
+      if (a === CANONICAL_MAPPING_FILE) return 1;
+      if (b === CANONICAL_MAPPING_FILE) return -1;
+      return a.localeCompare(b, 'fr');
+    })
+    .map((name) => path.join(caseRoot, name));
+}
+
+/**
+ * Il n'existe qu'une cible d'écriture par dossier. Les anciens
+ * `mapping_dossier.json` / `mapping_<id>.json` sont lus pour migration, mais
+ * toute écriture converge vers `mapping_default.json`.
+ */
+function caseMappingFile(caseRoot) {
+  return path.join(caseRoot, CANONICAL_MAPPING_FILE);
 }
 
 function normalizeMappingDocument(raw) {
@@ -224,8 +230,49 @@ function sortedMapping(mapping) {
 
 function readCaseMapping(caseRoot) {
   const file = caseMappingFile(caseRoot);
-  const raw = fs.existsSync(file) ? readJsonFile(file, null) : null;
-  return { file, exists: raw !== null, ...normalizeMappingDocument(raw) };
+  const sourceFiles = existingMappingFiles(caseRoot);
+  if (!sourceFiles.length) {
+    return { file, sourceFiles: [], exists: false, ...normalizeMappingDocument(null) };
+  }
+
+  // Migration non destructive à la lecture : tous les anciens mappings sont
+  // réunis en mémoire. Le canonique passe en dernier et gagne donc si une même
+  // entité a été recodée. Le prochain enregistrement écrira l'ensemble dans le
+  // seul `mapping_default.json`.
+  const mapping = {};
+  const preferredVariants = {};
+  const extracted_data = {};
+  const ignored = [];
+  const readableFiles = [];
+  for (const sourceFile of sourceFiles) {
+    const raw = readJsonFile(sourceFile, null);
+    if (raw === null) continue;
+    readableFiles.push(sourceFile);
+    const document = normalizeMappingDocument(raw);
+    Object.assign(mapping, document.mapping);
+    ignored.push(...document.ignored);
+    for (const [code, variants] of Object.entries(document.reverse_mapping)) {
+      preferredVariants[code] = [...new Set([...(preferredVariants[code] || []), ...variants])];
+    }
+    for (const [category, codes] of Object.entries(document.extracted_data)) {
+      extracted_data[category] = { ...(extracted_data[category] || {}), ...codes };
+    }
+  }
+
+  const reverse_mapping = {};
+  for (const [entity, code] of Object.entries(mapping)) {
+    if (!reverse_mapping[code]) {
+      const preferred = (preferredVariants[code] || []).filter((variant) => mapping[variant] === code);
+      reverse_mapping[code] = [...preferred];
+    }
+    if (!reverse_mapping[code].includes(entity)) reverse_mapping[code].push(entity);
+  }
+  return {
+    file,
+    sourceFiles: readableFiles,
+    exists: readableFiles.length > 0,
+    ...normalizeMappingDocument({ mapping, reverse_mapping, extracted_data, ignored }),
+  };
 }
 
 // ──────────────────────────────── Substitution ──────────────────────────────

@@ -68,10 +68,12 @@ cas courant — est couvert comme un autre.
 
 ## Le mapping n'est jamais lisible par l'IA
 
-`mapping_dossier.json` fait correspondre chaque code au nom réel : le lire, c'est
-dé-anonymiser le dossier entier d'un seul appel d'outil. `*_sensitive_map.json`,
-la sortie brute de GLiNER/Presidio, porte les entités en clair avec leur
-contexte. `protect-originals.mjs` refuse les deux — sur `Read`, sur `Grep`, sur
+`mapping_default.json` fait correspondre chaque code au nom réel : le lire, c'est
+dé-anonymiser le dossier entier d'un seul appel d'outil. Le pipeline courant ne
+conserve plus les `*_sensitive_map.json` : il les fusionne depuis un répertoire
+temporaire puis les supprime. Les anciens dossiers peuvent toutefois encore en
+porter pendant leur migration, avec les entités en clair et leur contexte.
+`protect-originals.mjs` refuse les deux — sur `Read`, sur `Grep`, sur
 `Glob` et sur `Bash` (`cat`, `jq`, `python`) — et **aucune exception de
 `protection.json` ne les libère**.
 

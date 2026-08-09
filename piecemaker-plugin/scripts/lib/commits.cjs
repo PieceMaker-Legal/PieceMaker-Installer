@@ -11,6 +11,12 @@ const {
   isProtectedFile,
   readProtection,
 } = require('./protection.cjs');
+const {
+  isAnonymizedEntry,
+  isConvertedEntry,
+  readAnonymizationState,
+  stateKey,
+} = require('./anonymization-state.cjs');
 
 const fsp = fs.promises;
 
@@ -42,6 +48,57 @@ const IGNORED_DIRECTORY_NAMES = new Set([
 const MAX_ORIGINALS = 2000;
 const PERF_SLOW_MS = 250;
 const PERF_LOG_ALL = process.env.PIECEMAKER_PERF_LOG === '1';
+const COMMIT_USER_NAME_KEY = 'PIECEMAKER_USER_NAME';
+const TECHNICAL_COMMIT_EMAIL = 'commits@piecemaker.local';
+const GLOBAL_ENV_FILE = path.resolve(__dirname, '..', '..', '..', '.env');
+
+function validateCommitUserName(value) {
+  const cleaned = String(value || '').trim();
+  if (!cleaned) {
+    throw new Error('Identité utilisateur absente : renseignez votre nom dans les paramètres administrateur.');
+  }
+  if (cleaned.length > 160 || /[\x00-\x1f\x7f<>]/.test(cleaned)) {
+    throw new Error('Nom utilisateur invalide pour la signature des commits.');
+  }
+  return cleaned;
+}
+
+function unquoteEnvValue(value) {
+  const raw = String(value || '').trim();
+  if (raw.length >= 2 && ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'")))) {
+    return raw.slice(1, -1);
+  }
+  return raw;
+}
+
+function readCommitIdentityEnv(file = GLOBAL_ENV_FILE) {
+  let value = '';
+  try {
+    if (file && fs.existsSync(file)) {
+      for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
+        const match = line.match(/^\s*PIECEMAKER_USER_NAME\s*=(.*)$/);
+        if (match) value = unquoteEnvValue(match[1]);
+      }
+    }
+  } catch {
+    // Le processus peut encore avoir reçu l'identité depuis son environnement.
+  }
+  return value || process.env[COMMIT_USER_NAME_KEY] || '';
+}
+
+/** Identité personnelle appliquée à l'auteur et au validateur Git. */
+function resolveCommitIdentity({ identity = null, envFile = GLOBAL_ENV_FILE } = {}) {
+  const requestedName = typeof identity === 'string' ? identity : identity?.name;
+  const name = validateCommitUserName(
+    identity ? requestedName : readCommitIdentityEnv(envFile)
+  );
+  return {
+    name,
+    // Git exige une adresse dans son format d'identité, mais PieceMaker ne
+    // collecte aucune adresse personnelle pour signer les tâches.
+    email: TECHNICAL_COMMIT_EMAIL,
+  };
+}
 
 /**
  * Journal de performance volontairement compact : aucun contenu de dossier ni
@@ -241,8 +298,11 @@ async function safeCaseFiles(caseRoot) {
  * lire (sous mapping) et le mapping lui-même.
  *
  * `converted` / `scanned` restent l'état du pipeline ; `protected` est la
- * décision prise dans l'administration et appliquée par les hooks. Les deux
- * sont indépendants : une pièce peut être convertie sans être protégée.
+ * décision prise dans l'administration et appliquée par les hooks. Le scan
+ * n'est plus déduit de la présence d'un mapping sensible par pièce : le
+ * manifeste technique `.piecemaker/anonymization-state.json`, dépourvu de PII,
+ * mémorise les empreintes de conversion et de scan. Les anciens sensitive maps
+ * ne servent que de compatibilité pendant leur migration.
  */
 async function originalFilesOverview(caseRoot, { safeFiles: knownSafeFiles = null } = {}) {
   const startedAt = performance.now();
@@ -254,6 +314,7 @@ async function originalFilesOverview(caseRoot, { safeFiles: knownSafeFiles = nul
       .filter((file) => file.toLowerCase().endsWith('_sensitive_map.json'))
       .map((file) => documentKey(file).replace(/-sensitive-map$/, ''))
   );
+  const anonymizationState = readAnonymizationState(root);
   const protection = readProtection(root);
   const originals = [];
   let truncated = false;
@@ -284,8 +345,15 @@ async function originalFilesOverview(caseRoot, { safeFiles: knownSafeFiles = nul
       if (SAFE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue;
       const stat = await fsp.stat(absolute);
       const key = documentKey(entry.name);
-      const converted = markdownKeys.has(key);
-      const scanned = converted && scanKeys.has(key);
+      const stateEntry = anonymizationState.files[stateKey(relative)];
+      // Un dossier ancien sans manifeste conserve le comportement historique
+      // (Markdown présent = converti). Dès qu'une empreinte existe, elle rend un
+      // Markdown périmé visible au lieu de le réutiliser silencieusement.
+      const converted = markdownKeys.has(key) && (!stateEntry || isConvertedEntry(stateEntry, stat));
+      const scanned = converted && (
+        isAnonymizedEntry(stateEntry, stat)
+        || scanKeys.has(key)
+      );
       originals.push({
         name: entry.name,
         path: relative,
@@ -569,6 +637,8 @@ async function createCommit({
   event = 'manual',
   paths = null,
   waitForLockMs = 0,
+  identity = null,
+  envFile = GLOBAL_ENV_FILE,
 } = {}) {
   const legalCase = resolveCase(casesRoot, caseName);
   caseStateCache.delete(caseStateCacheKey(homeDir, legalCase));
@@ -592,16 +662,17 @@ async function createCommit({
 
     const timestamp = new Date().toISOString();
     const message = `${safeLabel || 'Commit PieceMaker'}\n${safeDescription ? `\n${safeDescription}\n` : ''}`;
-    const identity = {
-      GIT_AUTHOR_NAME: 'PieceMaker',
-      GIT_AUTHOR_EMAIL: 'commits@piecemaker.local',
-      GIT_COMMITTER_NAME: 'PieceMaker',
-      GIT_COMMITTER_EMAIL: 'commits@piecemaker.local',
+    const commitIdentity = resolveCommitIdentity({ identity, envFile });
+    const gitIdentity = {
+      GIT_AUTHOR_NAME: commitIdentity.name,
+      GIT_AUTHOR_EMAIL: commitIdentity.email,
+      GIT_COMMITTER_NAME: commitIdentity.name,
+      GIT_COMMITTER_EMAIL: commitIdentity.email,
       GIT_AUTHOR_DATE: timestamp,
       GIT_COMMITTER_DATE: timestamp,
     };
     const args = ['commit-tree', current.tree, ...(parent ? ['-p', parent] : [])];
-    const commit = (await runGit(legalCase.root, args, { gitDir, env: identity, input: message })).stdout;
+    const commit = (await runGit(legalCase.root, args, { gitDir, env: gitIdentity, input: message })).stdout;
     await runGit(legalCase.root, ['update-ref', await activeHistoryRef(legalCase, gitDir), commit, ...(parent ? [parent] : [])], { gitDir });
     const files = await diffTrees(legalCase, gitDir, parentTree, current.tree);
     return {
@@ -612,6 +683,7 @@ async function createCommit({
       label: safeLabel || 'Commit PieceMaker',
       sessionId,
       event,
+      author: commitIdentity.name,
       caseName: legalCase.name,
       files,
     };
@@ -908,6 +980,8 @@ async function restoreRevision({ casesRoot, caseName, homeDir = path.join(os.hom
 }
 
 module.exports = {
+  COMMIT_USER_NAME_KEY,
+  GLOBAL_ENV_FILE,
   SAFE_EXTENSIONS,
   caseOverview,
   checkoutHistoryBranch,
@@ -923,6 +997,7 @@ module.exports = {
   locateCaseFile,
   originalFilesOverview,
   repositoryOverview,
+  resolveCommitIdentity,
   resolveCase,
   resolveCasesRoot,
   restoreRevision,

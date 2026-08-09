@@ -17,6 +17,7 @@ const {
   logPerformance,
   listHistory,
   repositoryOverview,
+  resolveCommitIdentity,
   resolveCase,
   restoreRevision,
   revisionDetails,
@@ -25,6 +26,8 @@ const {
 } = require('../piecemaker-plugin/scripts/lib/commits.cjs');
 const { isProtectedFile, writeProtection } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
 const { createLegalCase } = require('../websocket-server/admin-routes.cjs');
+
+process.env.PIECEMAKER_USER_NAME = 'Utilisateur Test';
 
 const commitHook = path.resolve(__dirname, '..', 'piecemaker-plugin', 'scripts', 'commit-track.mjs');
 const originalsHook = path.resolve(__dirname, '..', 'piecemaker-plugin', 'scripts', 'protect-originals.mjs');
@@ -92,6 +95,47 @@ test('chaque dossier juridique possède un historique indépendant sans pièces 
   assert.equal(fs.readFileSync(path.join(data.originals, 'contrat.pdf'), 'utf8'), 'CONTENU ORIGINAL SECRET\n');
 });
 
+test('chaque commit porte le nom protégé dans le env global', async (t) => {
+  const data = fixture();
+  const envFile = path.join(data.root, '.env');
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  fs.writeFileSync(envFile, 'PIECEMAKER_USER_NAME=Alice Martin\n', { mode: 0o600 });
+
+  const first = await createCommit({
+    casesRoot: data.casesRoot,
+    caseName: 'Dossier Alpha',
+    homeDir: data.home,
+    envFile,
+    label: 'État signé par Alice',
+  });
+  const legalCase = resolveCase(data.casesRoot, 'Dossier Alpha');
+  const gitDir = historyRepo(data.home, legalCase);
+  assert.equal(
+    git(gitDir, data.caseA, ['show', '-s', '--format=%an%x1f%ae%x1f%cn%x1f%ce', first.commit]),
+    'Alice Martin\x1fcommits@piecemaker.local\x1fAlice Martin\x1fcommits@piecemaker.local',
+  );
+
+  fs.writeFileSync(path.join(data.caseA, 'contrat.md'), '# Version suivante\n');
+  fs.writeFileSync(envFile, 'PIECEMAKER_USER_NAME=Bob Dupont\n', { mode: 0o600 });
+  const second = await createCommit({
+    casesRoot: data.casesRoot,
+    caseName: 'Dossier Alpha',
+    homeDir: data.home,
+    envFile,
+    label: 'État signé par Bob',
+  });
+  assert.equal(git(gitDir, data.caseA, ['show', '-s', '--format=%an', second.commit]), 'Bob Dupont');
+  assert.deepEqual(
+    (await listHistory(data.casesRoot, data.home, { caseName: 'Dossier Alpha' })).map((entry) => entry.author),
+    ['Bob Dupont', 'Alice Martin'],
+  );
+});
+
+test('un nom invalide est refusé pour la signature des commits', () => {
+  assert.throws(() => resolveCommitIdentity({ identity: { name: 'Alice <admin>' } }), /Nom utilisateur invalide/);
+  assert.throws(() => resolveCommitIdentity({ identity: { name: '' } }), /Identité utilisateur absente/);
+});
+
 test('les branches séparent les commits automatiques du dossier', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
@@ -127,7 +171,7 @@ test('la création d’un dossier installe mapping, protection et historique mai
   const gamma = path.join(data.casesRoot, 'Dossier Gamma');
 
   assert.equal(folder.name, 'Dossier Gamma');
-  assert.equal(fs.existsSync(path.join(gamma, 'mapping_dossier.json')), true);
+  assert.equal(fs.existsSync(path.join(gamma, 'mapping_default.json')), true);
   assert.equal(fs.existsSync(path.join(gamma, '.piecemaker', 'protection.json')), true);
   assert.deepEqual(folder.branches, { active: 'main', branches: ['main'] });
   const history = await listHistory(data.casesRoot, data.home, { caseName: 'Dossier Gamma' });

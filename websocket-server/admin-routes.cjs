@@ -13,6 +13,7 @@ const {
 } = require('./case-registry.cjs');
 const { stampedPiecesDirectory } = require('./lib/stamping.cjs');
 const {
+  COMMIT_USER_NAME_KEY,
   caseOverview,
   checkoutHistoryBranch,
   createCommit,
@@ -23,6 +24,7 @@ const {
   listHistory,
   resolveCase,
   resolveCasesRoot,
+  resolveCommitIdentity,
   restoreRevision,
   revisionDetails,
   worktreeDetails,
@@ -60,6 +62,7 @@ const SECRET_KEYS = new Set([
   'LEGIFRANCE_CLIENT_SECRET',
 ]);
 const ENV_KEYS = new Set([
+  COMMIT_USER_NAME_KEY,
   'LEGIFRANCE_CLIENT_ID',
   'LEGIFRANCE_CLIENT_SECRET',
   'LEGIFRANCE_ENV',
@@ -305,6 +308,10 @@ function updateEnvFile(file, updates, clearKeys = []) {
     if (!value || SECRET_KEYS.has(key) && value === '********') continue;
     if (/\r|\n/.test(value)) throw new Error(`Valeur invalide pour ${key}`);
     cleanUpdates.set(key, value);
+  }
+
+  if (cleanUpdates.has(COMMIT_USER_NAME_KEY)) {
+    resolveCommitIdentity({ identity: { name: cleanUpdates.get(COMMIT_USER_NAME_KEY) } });
   }
 
   const original = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split(/\r?\n/) : [];

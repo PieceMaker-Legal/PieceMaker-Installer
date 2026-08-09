@@ -399,6 +399,7 @@ async function loadSettings() {
       byId('workspacePath').value = data.config.workspacePath || '';
       byId('port').value = data.config.port || 43098;
       byId('pythonPath').value = data.config.pythonPath || data.env.PYTHON_PATH || '';
+      byId('commitUserName').value = data.env.PIECEMAKER_USER_NAME || '';
       byId('legifranceEnv').value = 'production';
       document.querySelectorAll('[data-secret-state]').forEach((element) => {
         const state = data.secrets[element.dataset.secretState];
@@ -418,7 +419,9 @@ async function saveSettings(event) {
   button.disabled = true;
   setMessage(message, 'Enregistrement…');
   const form = new FormData(event.currentTarget);
-  const env = {};
+  const env = {
+    PIECEMAKER_USER_NAME: String(form.get('PIECEMAKER_USER_NAME') || '').trim(),
+  };
   for (const key of ['LEGIFRANCE_CLIENT_ID', 'LEGIFRANCE_CLIENT_SECRET']) {
     const value = String(form.get(key) || '').trim();
     if (value) env[key] = value;
@@ -439,7 +442,7 @@ async function saveSettings(event) {
     });
     event.currentTarget.querySelectorAll('input[type="password"]').forEach((input) => { input.value = ''; });
     await loadSettings();
-    setMessage(message, 'Enregistré. Redémarrez le serveur pour appliquer les changements.', 'success');
+    setMessage(message, 'Enregistré. L’identité sera appliquée dès le prochain commit ; redémarrez le serveur pour les autres changements.', 'success');
     toast('Paramètres enregistrés');
   } catch (error) {
     setMessage(message, error.message, 'error');
@@ -959,6 +962,13 @@ function shieldButton(original) {
   return button;
 }
 
+function originalStatusBadge(className, label) {
+  const badge = document.createElement('span');
+  badge.className = `protection-badge ${className}`;
+  badge.textContent = label;
+  return badge;
+}
+
 function statusLabel(original) {
   if (!original.converted) return 'Non converti';
   return original.scanned ? 'Converti et analysé' : 'Converti, analyse PII en attente';
@@ -1044,6 +1054,8 @@ function renderOriginals() {
       body.append(name, detail);
       const badges = document.createElement('span');
       badges.className = 'original-badges';
+      if (original.converted) badges.append(originalStatusBadge('converted', 'Converti'));
+      if (original.scanned) badges.append(originalStatusBadge('scanned', 'Anonymisé'));
       badges.append(shieldButton(original));
       row.append(checkbox, body, badges);
       fragment.append(row);
@@ -1063,7 +1075,9 @@ function originalsToProcess() {
 
 function updateOriginalsActions() {
   const pending = pendingOriginals();
-  const running = Boolean(originalsJob && originalsJob.state === 'running');
+  // Un traitement en file d'attente occupe l'interface au même titre qu'un
+  // traitement en cours : les boutons restent désactivés jusqu'à sa fin.
+  const running = Boolean(originalsJob && ['running', 'queued'].includes(originalsJob.state));
   const count = originalsToProcess().length;
   const selectAll = byId('selectAllOriginals');
   selectAll.disabled = running || !pending.length;
@@ -1089,6 +1103,12 @@ function showOriginalsProgress(message, kind = '') {
 
 function describeJob(job) {
   const phase = { convert: 'Conversion', scan: 'Analyse PII', mapping: 'Mise à jour du mapping', commit: 'Enregistrement du commit' }[job.phase] || 'Traitement';
+  if (job.state === 'queued') {
+    const ahead = (job.queuePosition || 1) - 1;
+    return ahead > 0
+      ? `En file d'attente · ${ahead} traitement${ahead > 1 ? 's' : ''} devant`
+      : 'En file d\'attente · démarrage imminent';
+  }
   if (job.state === 'running') return `${phase} · ${job.processed}/${job.total} · ${job.percent}%`;
   if (job.state === 'error') return `Échec : ${job.error}`;
   const result = job.result || {};
@@ -1130,7 +1150,9 @@ async function pollOriginalsJob() {
     const { job } = await api(`/api/admin/originals/job?id=${encodeURIComponent(originalsJob.id)}`);
     originalsJob = job;
     showOriginalsProgress(describeJob(job), job.state === 'error' ? 'error' : '');
-    if (job.state === 'running') {
+    // On continue à sonder tant que le traitement est en cours OU en file : le
+    // passage de « en attente » à « en cours » se fait côté serveur.
+    if (job.state === 'running' || job.state === 'queued') {
       originalsJobTimer = setTimeout(pollOriginalsJob, 1500);
       return;
     }
