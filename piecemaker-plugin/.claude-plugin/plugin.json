@@ -1,8 +1,8 @@
 {
   "name": "piecemaker",
   "displayName": "PieceMaker",
-  "version": "0.2.0",
-  "description": "Assistant juridique PieceMaker pour Claude Code : anonymisation, conversion Markdown, rédaction juridique, checkpoints Git automatiques, garde-fous PII et agents dédiés.",
+  "version": "0.2.1",
+  "description": "Assistant juridique PieceMaker pour Claude Code : anonymisation, conversion Markdown, rédaction juridique, tamponnage de pièces, checkpoints Git automatiques, garde-fous PII et agents dédiés.",
   "author": {
     "name": "PieceMaker",
     "url": "https://github.com/PieceMaker-Legal"
@@ -18,6 +18,8 @@
     "gliner",
     "presidio",
     "markdown",
+    "tamponnage",
+    "bordereau",
     "france"
   ]
 }

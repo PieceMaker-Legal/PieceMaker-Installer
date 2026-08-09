@@ -10,6 +10,11 @@ const { z } = require('zod');
 const { createAdminRouter, isLocalOrigin } = require('./admin-routes.cjs');
 const { syncClaudeAssets } = require('./claude-assets.cjs');
 const { convertToPdf, findSoffice } = require('./lib/office-to-pdf.cjs');
+const {
+  detectStampImage,
+  stampDataUrl,
+  stampedPiecesDirectory,
+} = require('./lib/stamping.cjs');
 const { resolveLegalCaseFolder } = require('./workspace-paths.cjs');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -82,7 +87,6 @@ function readFileStripBOM(filePath, encoding = 'utf8') {
 // Chaque document Word est rattaché à l'unique dossier juridique qui le
 // contient. Tous ses fichiers (Markdown, mappings, compilations, conversions,
 // brouillons et pièces tamponnées) sont ensuite écrits dans ce même dossier.
-const PIECES_SUBFOLDER = 'Pièces';
 const ORIGINALS_SUBFOLDER = 'pièces originales';
 const DOSSIER_FOLDERS_FILE = 'dossier_folders.json';
 
@@ -2859,9 +2863,21 @@ app.post('/api/tampon/save', (req, res) => {
     const tamponPath = getSystemDataPath('tampon.png');
     fs.mkdirSync(path.dirname(tamponPath), { recursive: true });
 
-    // Décoder le base64 et sauvegarder
-    const base64Data = tamponImage.replace(/^data:image\/\w+;base64,/, '');
+    const match = String(tamponImage).match(/^data:image\/(?:png|jpe?g);base64,([A-Za-z0-9+/=\s]+)$/i);
+    if (!match) {
+      return res.status(400).json({ error: 'Format d’image du tampon non supporté. Utilisez PNG ou JPEG.' });
+    }
+
+    // Le nom historique reste `tampon.png` pour ne pas casser les
+    // installations existantes. La signature binaire fait foi à la lecture.
+    const base64Data = match[1].replace(/\s/g, '');
     const buffer = Buffer.from(base64Data, 'base64');
+    let image;
+    try {
+      image = detectStampImage(buffer);
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
 
     fs.writeFileSync(tamponPath, buffer);
 
@@ -2870,6 +2886,7 @@ app.post('/api/tampon/save', (req, res) => {
     res.json({
       success: true,
       filename: 'tampon.png',
+      format: image.format,
       path: tamponPath
     });
 
@@ -2888,15 +2905,17 @@ app.get('/api/tampon/load', (req, res) => {
       return res.status(404).json({ error: 'Aucun tampon configuré' });
     }
 
-    // Lire et convertir en base64
+    // Lire et convertir en base64 en respectant le format réel. Les versions
+    // historiques pouvaient stocker un JPEG dans le fichier `tampon.png`.
     const buffer = fs.readFileSync(tamponPath);
-    const base64 = buffer.toString('base64');
-    const tamponImage = `data:image/png;base64,${base64}`;
+    const image = detectStampImage(buffer);
+    const tamponImage = stampDataUrl(buffer);
 
     res.json({
       success: true,
       tamponImage: tamponImage,
-      filename: 'tampon.png'
+      filename: 'tampon.png',
+      format: image.format
     });
 
   } catch (error) {
@@ -2957,8 +2976,8 @@ app.post('/api/stamping', async (req, res) => {
       return res.status(400).json({ error: 'ID du document requis' });
     }
 
-    // Les pièces tamponnées vont TOUJOURS dans le dossier de travail (celui du
-    // document Word ouvert), sous-dossier « Pièces ».
+    // Les pièces tamponnées vont TOUJOURS dans le dossier juridique du
+    // document Word ouvert, sous-dossier « Pièces tamponnées ».
     const requestedFolder = String(folder || '').trim() || getDossierFolder(documentId);
 
     if (!requestedFolder) {
@@ -2987,10 +3006,10 @@ app.post('/api/stamping', async (req, res) => {
       });
     }
 
-    // Lire le tampon et le convertir en base64
+    // Lire le tampon et détecter son format réel. Un ancien tampon JPEG peut
+    // légitimement porter le nom de fichier historique `tampon.png`.
     const tamponBuffer = fs.readFileSync(tamponPath);
-    const tamponBase64 = tamponBuffer.toString('base64');
-    const tamponImage = `data:image/png;base64,${tamponBase64}`;
+    const tamponFormat = detectStampImage(tamponBuffer).format;
 
     const compilationPath = path.join(workingFolder, `compilation_dossier_${documentId}.json`);
 
@@ -3018,7 +3037,7 @@ app.post('/api/stamping', async (req, res) => {
       });
     }
 
-    const tamponnedDir = path.join(workingFolder, PIECES_SUBFOLDER);
+    const tamponnedDir = stampedPiecesDirectory(workingFolder);
     fs.mkdirSync(tamponnedDir, { recursive: true });
 
     const { PDFDocument, rgb } = require('pdf-lib');
@@ -3073,26 +3092,10 @@ app.post('/api/stamping', async (req, res) => {
         const pages = pdfDoc.getPages();
         const firstPage = pages[0];
 
-        // Décoder l'image du tampon (base64)
-        const tamponData = tamponImage.replace(/^data:image\/\w+;base64,/, '');
-        const tamponBuffer = Buffer.from(tamponData, 'base64');
-
-        // Embed l'image dans le PDF
-        let tamponImg;
-        if (tamponImage.includes('data:image/png')) {
-          tamponImg = await pdfDoc.embedPng(tamponBuffer);
-        } else if (tamponImage.includes('data:image/jpeg') || tamponImage.includes('data:image/jpg')) {
-          tamponImg = await pdfDoc.embedJpg(tamponBuffer);
-        } else {
-          results.push({
-            pieceNumber,
-            id: pieceId,
-            filename: document.filename,
-            success: false,
-            error: 'Format d\'image du tampon non supporté. Utilisez PNG ou JPEG.'
-          });
-          continue;
-        }
+        // Incorporer l'image en fonction de sa signature binaire.
+        const tamponImg = tamponFormat === 'png'
+          ? await pdfDoc.embedPng(tamponBuffer)
+          : await pdfDoc.embedJpg(tamponBuffer);
 
         // Dimensions du carré pour le tampon
         const squareSize = 100;

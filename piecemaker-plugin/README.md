@@ -15,7 +15,8 @@ agents et hooks de garde-fou pour travailler sur des dossiers juridiques
     français, citations sourcées via legifrance (MCP).
   - `tamponnage` — tampon du cabinet et tamponnage numéroté des pièces d'un
     bordereau : conversion de l'original en PDF (LibreOffice pour Excel/Word,
-    `pdf-lib` pour images et texte), tampon puis renommage « Pièce n°N ».
+    `pdf-lib` pour images et texte), tampon puis renommage « Pièce n°N » dans
+    le sous-dossier « Pièces tamponnées » de chaque dossier juridique.
 - **Agents** (`agents/`) :
   - `verificateur-anonymisation` — audit lecture seule avant sortie de
     cabinet, confirme l'absence de PII résiduelle.

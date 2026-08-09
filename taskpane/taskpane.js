@@ -2873,7 +2873,8 @@ stamping: async (params) => {
             body: JSON.stringify({
                 pieces: pieces,
                 documentId: anonymization.documentId,
-                // Les pièces sont écrites dans <dossier du Word ouvert>/Pièces
+                // Les pièces sont écrites dans
+                // <dossier du Word ouvert>/Pièces tamponnées
                 folder: await getCurrentDocFolder()
             })
         });
@@ -3429,7 +3430,7 @@ L'outil retrouve automatiquement ces pièces via leur chemin sauvegardé, réali
 les convertit en PDF si nécessaire, ajoute un tampon en haut à droite avec le numéro de pièce (1, 2, 3...),
 et renomme chaque fichier "Pièce n°1", "Pièce n°2", etc., dans l'ordre exact donné.
 
-Les fichiers tamponnés sont enregistrés dans le sous-dossier "Pièces" du dossier de travail
+Les fichiers tamponnés sont enregistrés dans le sous-dossier "Pièces tamponnées" du dossier de travail
 (le dossier du document Word ouvert), jamais à la racine.
 
 ⚠️ PRÉREQUIS :

@@ -1,6 +1,6 @@
 {
   "name": "piecemaker",
-  "description": "Marketplace officiel PieceMaker pour Claude Code : anonymisation juridique, conversion de documents et rédaction française.",
+  "description": "Marketplace officiel PieceMaker pour Claude Code : anonymisation juridique, conversion de documents, rédaction française et tamponnage de pièces.",
   "owner": {
     "name": "PieceMaker",
     "url": "https://github.com/PieceMaker-Legal"
@@ -9,15 +9,17 @@
     {
       "name": "piecemaker",
       "source": "./piecemaker-plugin",
-      "description": "Assistant juridique PieceMaker : anonymisation, conversion Markdown, rédaction juridique française.",
-      "version": "0.2.0",
+      "description": "Assistant juridique PieceMaker : anonymisation, conversion Markdown, rédaction juridique française et tamponnage de pièces.",
+      "version": "0.2.1",
       "license": "MIT",
       "homepage": "https://github.com/PieceMaker-Legal/PieceMaker-Installer",
       "keywords": [
         "legal",
         "juridique",
         "anonymisation",
-        "gdpr"
+        "gdpr",
+        "tamponnage",
+        "bordereau"
       ],
       "category": "legal"
     }

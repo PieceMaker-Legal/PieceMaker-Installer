@@ -175,7 +175,7 @@ test('les dossiers tamponnables sont listés par dossier juridique, sans le text
   assert.equal(dossiers[0].documentId, 'ABC');
   assert.equal(dossiers[0].informations.intitule, 'Dupont c/ Martin');
   assert.equal(dossiers[0].folder, legalCase);
-  assert.equal(dossiers[0].stampedDir, path.join(legalCase, 'Pièces'));
+  assert.equal(dossiers[0].stampedDir, path.join(legalCase, 'Pièces tamponnées'));
   assert.deepEqual(dossiers[0].documents, [
     { id: '0001', filename: 'contrat.pdf', type_document: 'Contrat', date_document: '' },
   ]);

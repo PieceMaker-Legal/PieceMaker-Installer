@@ -4,6 +4,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { performance } = require('node:perf_hooks');
 const { configuredWorkspacePath } = require('./workspace-paths.cjs');
+const { stampedPiecesDirectory } = require('./lib/stamping.cjs');
 const {
   caseOverview,
   checkoutHistoryBranch,
@@ -446,7 +447,7 @@ function finishAdminTiming(res, metric, startedAt, details = {}) {
  * Dossiers tamponnables : un par `compilation_dossier_<documentId>.json` écrit
  * dans le dossier de sortie (voir server.cjs). `folder` est le dossier de
  * travail (celui du document Word), où les pièces tamponnées sont écrites dans
- * le sous-dossier « Pièces ». Seules les métadonnées utiles au bordereau sont
+ * le sous-dossier « Pièces tamponnées ». Seules les métadonnées utiles au bordereau sont
  * renvoyées — jamais `texte_integral`, qui contient les pièces en clair.
  */
 function listDossiers(repoRoot, homeDir) {
@@ -466,7 +467,7 @@ function listDossiers(repoRoot, homeDir) {
         documentId,
         informations: Array.isArray(raw) ? {} : raw?.informations_dossier || {},
         folder: legalCase,
-        stampedDir: path.join(legalCase, 'Pièces'),
+        stampedDir: stampedPiecesDirectory(legalCase),
         documents: documents.map((doc) => ({
           id: doc?.id,
           filename: doc?.filename || '',

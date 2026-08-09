@@ -236,25 +236,48 @@
                 <small>Le numéro de pièce est ajouté automatiquement au centre du tampon lors du tamponnage.</small>
               </label>
               <fieldset class="tampon-builder">
-                <legend>… ou créer un tampon</legend>
+                <legend>… ou créer un tampon haute définition</legend>
                 <div class="form-grid">
-                  <label>Ligne du haut<input id="tamponTop" value="PIÈCE N°" maxlength="24"></label>
-                  <label>Ligne du bas<input id="tamponBottom" placeholder="Cabinet / Maître" maxlength="24"></label>
+                  <label>Mention haute<input id="tamponTop" data-tampon-control value="PIÈCE N°" maxlength="40"></label>
+                  <label>Mention basse<input id="tamponBottom" data-tampon-control placeholder="CABINET PIECEMAKER" maxlength="40"></label>
                   <label>Forme
-                    <select id="tamponShape">
+                    <select id="tamponShape" data-tampon-control>
                       <option value="circle">Cercle</option>
+                      <option value="oval">Ovale</option>
+                      <option value="rounded">Rectangle arrondi</option>
                       <option value="rect">Rectangle</option>
                     </select>
                   </label>
-                  <label>Couleur<input id="tamponColor" type="color" value="#1f4f45"></label>
+                  <label>Contour
+                    <select id="tamponBorder" data-tampon-control>
+                      <option value="double">Double</option>
+                      <option value="single">Simple</option>
+                    </select>
+                  </label>
+                  <label>Police
+                    <select id="tamponFont" data-tampon-control>
+                      <option value="sans">Sans serif</option>
+                      <option value="serif">Serif</option>
+                      <option value="mono">Machine à écrire</option>
+                    </select>
+                  </label>
+                  <label>Couleur<input id="tamponColor" data-tampon-control type="color" value="#1f4f45"></label>
+                  <label class="wide">&Eacute;paisseur <output id="tamponLineWidthValue" for="tamponLineWidth">10 px</output>
+                    <input id="tamponLineWidth" data-tampon-control type="range" min="4" max="20" step="1" value="10">
+                  </label>
                 </div>
                 <button id="buildTamponBtn" class="button ghost" type="button">Générer le tampon</button>
+                <small>PNG transparent 600 × 600 px, texte ajusté automatiquement. Le numéro reste dynamique et n’est pas gravé dans l’image.</small>
               </fieldset>
             </div>
             <div class="tampon-preview">
               <span class="toolbar-caption">Aperçu</span>
-              <img id="tamponPreviewImage" alt="Aperçu du tampon" hidden>
+              <div class="tampon-preview-stage">
+                <img id="tamponPreviewImage" alt="Aperçu du tampon" hidden>
+                <span class="tampon-preview-number" aria-hidden="true">1</span>
+              </div>
               <p id="tamponEmpty" class="muted">Aucun tampon configuré.</p>
+              <small>Le chiffre illustre la pièce n°1 ; il sera remplacé automatiquement.</small>
             </div>
           </div>
           <div class="actions">
@@ -272,7 +295,7 @@
           <p id="officeState" class="muted" hidden></p>
           <div class="form-grid">
             <label>Dossier<select id="dossierSelect"></select></label>
-            <label>Dossier de travail<input id="workingFolder" placeholder="Dossier du document Word"><small>Les pièces sont écrites dans son sous-dossier « Pièces ».</small></label>
+            <label>Dossier de travail<input id="workingFolder" placeholder="Dossier du document Word"><small>Les pièces sont écrites dans son sous-dossier « Pièces tamponnées ».</small></label>
           </div>
           <p class="muted">Cliquez les pièces dans l’ordre du bordereau : le rang de sélection donne le numéro de tampon. Les fichiers originaux (et non les <code>.md</code> de conversion) sont tamponnés puis renommés « Pièce n°1 », « Pièce n°2 »… dans <code id="stampedDir">—</code>.</p>
           <div id="piecesList" class="pieces-list"></div>

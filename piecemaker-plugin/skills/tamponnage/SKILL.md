@@ -1,6 +1,6 @@
 ---
 name: tamponnage
-description: Configurer le tampon du cabinet et tamponner les pièces d'un dossier PieceMaker pour un bordereau — sélection des fichiers originaux, apposition du tampon numéroté et écriture dans le sous-dossier « Pièces » du dossier de travail sous la forme « Pièce n°1.pdf ». À utiliser dès qu'il est question de tamponner des pièces, de préparer ou numéroter un bordereau de pièces, ou de créer/enregistrer/supprimer le tampon.
+description: Configurer ou générer le tampon du cabinet et tamponner les pièces d'un dossier PieceMaker pour un bordereau — sélection des originaux, conversion en PDF, apposition du tampon numéroté et écriture dans « Pièces tamponnées/Pièce n°1.pdf ». À utiliser dès qu'il est question de tamponner, classer ou numéroter des pièces, de préparer un bordereau, ou de créer, importer, enregistrer ou supprimer un tampon.
 ---
 
 # Tamponnage des pièces (bordereau)
@@ -9,14 +9,15 @@ description: Configurer le tampon du cabinet et tamponner les pièces d'un dossi
 
 | Rôle | Emplacement |
 | --- | --- |
-| Enregistrer / lire / supprimer le tampon | `websocket-server/server.cjs` — `POST /api/tampon/save` (2761), `GET /api/tampon/load` (2793), `DELETE /api/tampon/delete` (2820) |
+| Enregistrer / lire / supprimer le tampon | `websocket-server/server.cjs` — `POST /api/tampon/save`, `GET /api/tampon/load`, `DELETE /api/tampon/delete` |
 | Tamponner une liste de pièces | `websocket-server/server.cjs` — `POST /api/stamping`, avec `pdf-lib` |
+| Format d'image et dossier de sortie | `websocket-server/lib/stamping.cjs` |
 | Convertir l'original en PDF | `websocket-server/lib/office-to-pdf.cjs` — LibreOffice headless (bureautique) ou `pdf-lib` (images, texte) |
 | Installer LibreOffice | `installer/steps/10-libreoffice.mjs` (`piecemaker --step 10-libreoffice`) |
 | Mémoriser le dossier de travail | `websocket-server/server.cjs` — `rememberDossierFolder` / `getDossierFolder`, registre `<racine PieceMaker>/.piecemaker/dossier_folders.json` alimenté par `POST /api/extract/write-md` |
-| Outil MCP `Stamping` | `mcp-server/mcp-server-local.js` → `POST /api/word/stamping` (server.cjs:3212) → WebSocket → `localTools.stamping` (`taskpane/taskpane.js`:2833) → `POST /api/stamping` |
+| Outil MCP `Stamping` | `mcp-server/mcp-server-local.js` → `POST /api/word/stamping` → WebSocket → `localTools.stamping` (`taskpane/taskpane.js`) → `POST /api/stamping` |
 | Interface Word (modal « 🕹️ Configurer le tampon ») | `taskpane/taskpane.html` (modal `#modalTampon`) + `taskpane/modules/anonymization.js` (`openTamponModal`, `handleTamponImageUpload`, `saveTampon`, `clearTampon`, `loadTamponFromStorage`) |
-| Interface d'administration (`/admin/` → onglet « Tampon et pièces ») | `admin/index.html` (section `#pieces`), `admin/app.js` (bloc « Tampon et tamponnage des pièces »), liste des dossiers via `GET /api/admin/dossiers` (`websocket-server/admin-routes.cjs`) |
+| Interface d'administration (`/admin/` → onglet « Tampon et pièces ») | `admin/index.html`, `admin/app.js`, générateur `admin/stamp-builder.mjs`, dossiers via `GET /api/admin/dossiers` |
 
 Le tampon est **un seul fichier** : `<racine PieceMaker>/.piecemaker/tampon.png`
 (image PNG ou JPEG postée en base64 sur `/api/tampon/save`, cf.
@@ -27,8 +28,9 @@ dossier ni par utilisateur.
 
 1. **Le tampon doit exister.** Sans `.piecemaker/tampon.png`, `/api/stamping`
    répond 400 (« Aucun tampon configuré »). On l'enregistre depuis l'onglet
-   « Tampon et pièces » de `/admin/` (téléversement d'une image *ou* création
-   d'un tampon dessiné dans la page, puis « Enregistrer le tampon ») ou depuis
+   « Tampon et pièces » de `/admin/` (import PNG/JPEG *ou* générateur
+   haute définition : forme, contour, police, couleur et épaisseur, puis
+   « Enregistrer le tampon ») ou depuis
    le menu « 🕹️ Configurer le tampon » du volet Word.
 2. **La liste des pièces vient de la compilation du dossier juridique** :
    `<dossier juridique>/compilation_dossier_<documentId>.json`, champ `documents[]`
@@ -48,7 +50,7 @@ dossier ni par utilisateur.
    le `.md` produit par la conversion Markdown), le charge dans `pdf-lib`,
    appose le tampon sur la **première page**, en haut à droite (carré de
    100 pt, marge de 20 pt), avec le numéro de pièce imprimé au centre.
-5. **Sortie** : `<dossier juridique>/Pièces/Pièce n°N.pdf`.
+5. **Sortie** : `<dossier juridique>/Pièces tamponnées/Pièce n°N.pdf`.
    Le dossier juridique est celui du **document Word ouvert**
    (`getCurrentDocFolder()` côté volet), jamais la racine PieceMaker : les
    pièces tamponnées restent avec le dossier du client. Réponse
@@ -114,8 +116,8 @@ jamais le `.md` d'une pièce, le bordereau doit renvoyer au document d'origine.
 - Compilations et pièces tamponnées contiennent des données de client : ne
   recopiez pas leur contenu dans des logs ou des messages hors du poste local.
 - Relancer `/api/stamping` écrase les `Pièce n°N.pdf` existants du sous-dossier
-  `Pièces` — c'est le comportement attendu lors d'une renumérotation, mais
+  `Pièces tamponnées` — c'est le comportement attendu lors d'une renumérotation, mais
   prévenez avant de le faire sur un bordereau déjà déposé.
 - N'écrivez jamais de pièce tamponnée à la racine du dossier juridique ni à
-  celle de la racine PieceMaker : le sous-dossier `Pièces` est le seul
+  celle de la racine PieceMaker : le sous-dossier `Pièces tamponnées` est le seul
   emplacement.

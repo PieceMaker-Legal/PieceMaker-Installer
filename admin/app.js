@@ -5,6 +5,7 @@ import {
   visualEditorToMarkdown,
 } from './markdown.mjs';
 import { buildMappingDocument, groupMappingByCode } from './mapping-model.mjs';
+import { drawStamp } from './stamp-builder.mjs';
 
 // ---------------------------------------------------------------------------
 // CENTRALIZED LOGGING SYSTEM & LOG VIEWER INTEGRATION
@@ -192,35 +193,25 @@ function handleTamponImageUpload(event) {
   reader.readAsDataURL(file);
 }
 
-function buildTampon() {
+function buildTampon({ announce = true } = {}) {
   const t0 = performance.now();
   dlog('buildTampon', 'Generating canvas tampon');
-  const size = 300;
   const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const context = canvas.getContext('2d');
-  const color = byId('tamponColor').value;
-  context.strokeStyle = color;
-  context.fillStyle = color;
-  context.lineWidth = 10;
-
-  if (byId('tamponShape').value === 'circle') {
-    context.beginPath();
-    context.arc(size / 2, size / 2, size / 2 - 14, 0, Math.PI * 2);
-    context.stroke();
-  } else {
-    context.strokeRect(14, 14, size - 28, size - 28);
-  }
-
-  context.textAlign = 'center';
-  context.font = 'bold 34px Helvetica, Arial, sans-serif';
-  context.fillText(byId('tamponTop').value.slice(0, 24), size / 2, size / 2 - 46);
-  context.font = 'bold 26px Helvetica, Arial, sans-serif';
-  context.fillText(byId('tamponBottom').value.slice(0, 24), size / 2, size / 2 + 86);
+  drawStamp(canvas, {
+    topText: byId('tamponTop').value,
+    bottomText: byId('tamponBottom').value,
+    shape: byId('tamponShape').value,
+    border: byId('tamponBorder').value,
+    font: byId('tamponFont').value,
+    color: byId('tamponColor').value,
+    lineWidth: byId('tamponLineWidth').value,
+  });
 
   showTampon(canvas.toDataURL('image/png'));
-  setMessage(byId('tamponMessage'), 'Tampon généré — le numéro de pièce s’imprimera au centre.');
+  byId('tamponLineWidthValue').textContent = `${byId('tamponLineWidth').value} px`;
+  if (announce) {
+    setMessage(byId('tamponMessage'), 'Tampon haute définition généré — le numéro de pièce s’imprimera au centre.');
+  }
   dlog('buildTampon', `Completed in ${(performance.now() - t0).toFixed(2)}ms`);
 }
 
@@ -260,7 +251,7 @@ function renderPieces() {
   list.innerHTML = '';
   if (dossier && !folderInput.value) folderInput.value = dossier.folder || '';
   byId('stampedDir').textContent = folderInput.value
-    ? `${folderInput.value}/Pièces`
+    ? `${folderInput.value}/Pièces tamponnées`
     : 'dossier de travail à renseigner';
 
   if (!dossier) {
@@ -2132,6 +2123,10 @@ document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click',
 byId('settingsForm').addEventListener('submit', saveSettings);
 byId('tamponImageInput').addEventListener('change', handleTamponImageUpload);
 byId('buildTamponBtn').addEventListener('click', buildTampon);
+document.querySelectorAll('[data-tampon-control]').forEach((control) => {
+  control.addEventListener('input', () => buildTampon({ announce: false }));
+  control.addEventListener('change', () => buildTampon({ announce: false }));
+});
 byId('saveTamponBtn').addEventListener('click', saveTampon);
 byId('clearTamponBtn').addEventListener('click', clearTampon);
 byId('refreshDossiers').addEventListener('click', loadDossiers);

@@ -103,7 +103,8 @@ refusé au même titre qu'un `Read`.
 - `redaction-juridique` — rédiger/réviser conclusions, assignation, courrier,
   mémo, avec citations vérifiées via `legifrance`.
 - `tamponnage` — tampon du cabinet et numérotation des pièces d'un bordereau ;
-  écrit dans le sous-dossier « Pièces » sous la forme « Pièce n°1.pdf ».
+  écrit dans le sous-dossier « Pièces tamponnées » sous la forme
+  « Pièce n°1.pdf ».
 
 **Agents** (via l'outil Agent)
 - `analyste-piece` — synthèse structurée d'une pièce : type, date, faits

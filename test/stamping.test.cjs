@@ -12,6 +12,11 @@ const {
   sanitizeForWinAnsi,
   sofficeArgs,
 } = require('../websocket-server/lib/office-to-pdf.cjs');
+const {
+  detectStampImage,
+  stampDataUrl,
+  stampedPiecesDirectory,
+} = require('../websocket-server/lib/stamping.cjs');
 
 function hasPdfLib() {
   try {
@@ -35,6 +40,22 @@ test('chaque extension est routée vers le bon moteur de conversion', () => {
 
   assert.ok(isSpreadsheet('comptes.xlsm'));
   assert.ok(!isSpreadsheet('courrier.docx'));
+});
+
+test('chaque dossier juridique reçoit son propre sous-dossier de pièces tamponnées', () => {
+  assert.equal(
+    stampedPiecesDirectory(path.join('dossiers', 'Martin')),
+    path.join('dossiers', 'Martin', 'Pièces tamponnées'),
+  );
+});
+
+test('le format réel du tampon est détecté même si son nom historique finit par .png', () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+  assert.deepEqual(detectStampImage(png), { format: 'png', mimeType: 'image/png' });
+  assert.deepEqual(detectStampImage(jpeg), { format: 'jpeg', mimeType: 'image/jpeg' });
+  assert.match(stampDataUrl(jpeg), /^data:image\/jpeg;base64,/);
+  assert.throws(() => detectStampImage(Buffer.from('GIF89a')), /PNG ou JPEG/);
 });
 
 test('LibreOffice est appelé avec un profil isolé, sinon il refuse de convertir quand une instance est ouverte', () => {

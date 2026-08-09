@@ -128,9 +128,10 @@ l'installateur :
 /plugin install piecemaker@piecemaker
 ```
 
-Il apporte les skills d'anonymisation, de conversion et de rédaction
-juridique, deux agents dédiés, les hooks de garde-fou PII et le serveur MCP
-Légifrance. Voir [`piecemaker-plugin/README.md`](./piecemaker-plugin/README.md).
+Il apporte les skills d'anonymisation, de conversion, de rédaction juridique
+et de tamponnage des pièces, deux agents dédiés, les hooks de garde-fou PII
+et le serveur MCP Légifrance. Voir
+[`piecemaker-plugin/README.md`](./piecemaker-plugin/README.md).
 
 ## Structure
 

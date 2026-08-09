@@ -341,8 +341,14 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .tampon-builder { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px 16px; }
 .tampon-builder legend { padding: 0 6px; color: var(--muted); font-size: .78rem; font-weight: 700; }
 .tampon-builder .form-grid { margin-bottom: 14px; }
+.tampon-builder output { float: right; color: var(--muted); font-size: .75rem; font-weight: 700; }
+.tampon-builder input[type="range"] { min-height: 28px; padding: 0; accent-color: var(--brand); }
 .tampon-preview { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; border: 1px dashed #c7ced4; border-radius: 12px; padding: 16px; background: #f7f9f8; text-align: center; }
-.tampon-preview img { max-width: 190px; max-height: 190px; }
+.tampon-preview-stage { position: relative; display: grid; width: 190px; height: 190px; place-items: center; }
+.tampon-preview img { width: 190px; height: 190px; object-fit: contain; }
+.tampon-preview-number { position: absolute; inset: 50% auto auto 50%; color: #111; font: 700 22px/1 Arial, Helvetica, sans-serif; transform: translate(-50%, -50%); }
+.tampon-preview img[hidden] + .tampon-preview-number { display: none; }
+.tampon-preview small { color: var(--muted); font-size: .72rem; line-height: 1.35; }
 .pieces-list { display: grid; gap: 4px; margin: 14px 0; }
 .piece-row { display: grid; width: 100%; grid-template-columns: 54px minmax(0, 1fr) auto; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 9px; padding: 9px 12px; background: #fff; color: var(--ink); cursor: pointer; font-size: .85rem; text-align: left; }
 .piece-row:hover { background: #f3f6f5; }
