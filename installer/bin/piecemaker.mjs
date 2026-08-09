@@ -322,9 +322,6 @@ async function runOperationalCommand(command) {
     try {
       const result = updateRepository(pending);
       log.ok(`PieceMaker mis à jour (${result.ref}, ${result.target.slice(0, 7)}).`);
-      if (!result.linked) {
-        log.warn('La commande « piecemaker » n’a pas pu être réinstallée (npm link). Utilisez « npm link » manuellement si elle a disparu.');
-      }
       if (result.pythonChanged) {
         log.warn('requirements.txt a changé : relancez « piecemaker install » puis l’étape 03 — Python & GLiNER.');
       }

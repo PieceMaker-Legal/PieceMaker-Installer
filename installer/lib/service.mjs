@@ -329,14 +329,9 @@ export function updateRepository(pending = checkForUpdate()) {
   if (pruned.code !== 0 || pruned.error) {
     throw new Error(`Nettoyage des dépendances impossible : ${pruned.stderr || pruned.stdout || pruned.error?.message || `code ${pruned.code}`}`);
   }
-  // npm link needs a writable global prefix; a read-only one must not undo an
-  // otherwise successful update, so it only downgrades to a warning.
-  const linked = runCapture(npmBin('npm'), ['link', '--ignore-scripts'], npmOptions);
-
   return {
     ...pending,
     updated: true,
-    linked: linked.code === 0,
     // requirements.txt is installed into the venv by step 03, not by npm.
     pythonChanged: pending.changed.some((file) => file.endsWith('requirements.txt')),
   };
