@@ -970,7 +970,9 @@ function updateOriginalsActions() {
   selectAll.disabled = running || !originals.length;
   selectAll.checked = Boolean(originals.length) && selectedOriginals.size === originals.length;
   selectAll.indeterminate = selectedOriginals.size > 0 && selectedOriginals.size < originals.length;
-  const suffix = selectedOriginals.size ? ` (${count})` : '';
+  // Sans case cochée les boutons portent sur tout le dossier et ne refont que
+  // ce qui manque ; cocher des pièces revient à demander leur retraitement.
+  const suffix = selectedOriginals.size ? ` (${count} sélectionnée${count > 1 ? 's' : ''})` : ' (tout le dossier)';
   const convert = byId('convertOriginals');
   const anonymize = byId('anonymizeOriginals');
   convert.disabled = running || !count;
@@ -991,9 +993,15 @@ function describeJob(job) {
   if (job.state === 'running') return `${phase} · ${job.processed}/${job.total} · ${job.percent}%`;
   if (job.state === 'error') return `Échec : ${job.error}`;
   const result = job.result || {};
+  if (result.upToDate) {
+    return job.action === 'convert'
+      ? `Rien à convertir : les ${result.skipped} pièce(s) ont déjà leur Markdown.`
+      : `Rien à analyser : les ${result.skipped} pièce(s) sont déjà scannées.`;
+  }
+  const untouched = result.skipped ? ` · ${result.skipped} déjà à jour` : '';
   return job.action === 'convert'
-    ? `${result.converted || job.total} pièce(s) converties en Markdown.`
-    : `${result.scanned || job.total} pièce(s) analysées · ${result.mappingAdded || 0} entrée(s) ajoutée(s) au mapping.`;
+    ? `${result.converted || job.total} pièce(s) converties en Markdown${untouched}.`
+    : `${result.scanned || job.total} pièce(s) analysées · ${result.mappingAdded || 0} entrée(s) ajoutée(s) au mapping${untouched}.`;
 }
 
 async function startOriginalsPipeline(action) {
@@ -1039,7 +1047,11 @@ async function pollOriginalsJob() {
 function renderMappingSummary() {
   const legalCase = currentCase();
   const button = byId('openMapping');
-  const entries = legalCase ? Object.keys(legalCase.mapping?.mapping || {}).length : 0;
+  // `/api/admin/repository` ne joint au dossier que le nombre d'entrées : le
+  // contenu du mapping ne circule que par `/api/admin/mapping`, à l'ouverture
+  // de l'éditeur. Compter les clés d'un `mapping` absent affichait « 0 entrée »
+  // même sur un dossier entièrement mappé.
+  const entries = legalCase?.mapping?.entries || 0;
   byId('mappingCount').textContent = String(entries);
   byId('mappingName').textContent = legalCase?.mapping?.name || 'Aucun mapping';
   byId('mappingState').textContent = !legalCase
