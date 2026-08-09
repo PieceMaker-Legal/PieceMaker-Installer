@@ -400,6 +400,12 @@ npm test
 Electron build commands are intentionally disabled. `npm start` is an alias
 for `piecemaker open`.
 
+`npm test` pins `--test-concurrency=4` on purpose. Several test files spawn
+child processes (`commits.test.cjs` runs `git` in a loop, `cli.test.mjs` and
+`update.test.mjs` spawn `node`), so letting Node fan out to one file per core
+starves them of CPU: the same suite took 468s with 5 load-induced failures at
+the default, against 85s and none at 4. Raise it only with a measurement.
+
 There is no separate task-pane dev server — Word loads it straight off
 `server.cjs`'s static file mount. To sideload manually into Word for
 development, use `taskpane/manifest.xml`-equivalent per current tooling; see

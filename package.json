@@ -13,7 +13,7 @@
     "server": "node websocket-server/server.cjs",
     "start": "node installer/bin/piecemaker.mjs open",
     "status": "node installer/bin/piecemaker.mjs status",
-    "test": "node --test test/*.test.*"
+    "test": "node --test --test-concurrency=4 test/*.test.*"
   },
   "dependencies": {
     "@babel/core": "^7.24.0",

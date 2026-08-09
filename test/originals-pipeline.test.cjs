@@ -5,6 +5,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+  cancelOriginalsJob,
   caseMappingFile,
   getJob,
   listOriginals,
@@ -38,15 +39,36 @@ function fixture() {
 /** Les travaux sont suivis dans une table partagée : un test ne doit pas en
  *  laisser un en cours, le suivant refuserait de démarrer sur le même dossier. */
 async function waitForJob(jobId) {
-  // Très généreux à dessein. `node --test` lance les fichiers en parallèle et
-  // `commits.test.cjs` sature la machine de processus git : un simple spawn a
-  // été mesuré à 25 s dans ces conditions. Un travail qui n'a pas fini bloque
-  // en plus tous les suivants sur le même dossier (« Un traitement est déjà en
-  // cours »), donc abandonner trop tôt fait échouer trois tests d'un coup.
-  for (let attempt = 0; attempt < 1200 && getJob(jobId)?.state === 'running'; attempt += 1) {
+  // Généreux à dessein : `node --test` lance les fichiers en parallèle et
+  // `commits.test.cjs` sature la machine de processus git. Le budget a déjà été
+  // dépassé une fois (61 s mesurées pour 2,5 s isolé), d'où la limite de
+  // parallélisme posée dans `package.json` — celle-ci ramène le même travail à
+  // 16 s. Le budget de 60 s a malgré tout été redépassé une fois de plus, sur le
+  // seul `spawn` : il est porté à 5 min, un travail réellement bloqué étant
+  // désormais lisible via `describeJob` plutôt que masqué par un abandon.
+  // `startJob` empêche par ailleurs qu'un travail abandonné ici en bloque d'autres.
+  for (let attempt = 0; attempt < 6000 && getJob(jobId)?.state === 'running'; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   return getJob(jobId);
+}
+
+/**
+ * Démarre un travail et garantit qu'il ne survive pas au test. Sans cela, le
+ * `t.after` supprime le répertoire temporaire pendant que le git du travail y
+ * tourne encore, et le travail resté `running` bloquait tous les suivants.
+ */
+async function startJob(t, args) {
+  const job = await startOriginalsJob(args);
+  t.after(() => cancelOriginalsJob(job.id));
+  return job;
+}
+
+/** Motif d'échec lisible : « resté en phase commit » plutôt que running !== done. */
+function describeJob(job) {
+  if (!job) return 'travail introuvable';
+  const tail = job.log.slice(-3).join(' | ') || '(journal vide)';
+  return job.error || `état ${job.state}, phase ${job.phase}, ${tail}`;
 }
 
 function writeScan(caseRoot, stem, entities) {
@@ -191,7 +213,7 @@ test('une conversion admin crée un commit ciblé et laisse les changements conc
   fs.writeFileSync(concurrentPath, '{"version":2}\n');
 
   const annexe = (await listOriginals(data.caseRoot)).find((file) => file.name === 'annexe.docx');
-  const started = await startOriginalsJob({
+  const started = await startJob(t, {
     casesRoot: data.casesRoot,
     caseName: 'Dossier Alpha',
     homeDir,
@@ -199,7 +221,7 @@ test('une conversion admin crée un commit ciblé et laisse les changements conc
     files: [annexe.path],
   });
   const finished = await waitForJob(started.id);
-  assert.equal(finished.state, 'done', finished.error);
+  assert.equal(finished.state, 'done', describeJob(finished));
   assert.equal(finished.result.commit.created, true);
   assert.deepEqual(finished.result.commit.files.map((file) => file.path), ['annexe.md']);
   assert.match((await listHistory(data.casesRoot, homeDir, { caseName: 'Dossier Alpha' }))[0].subject, /Conversion de 1 pièce/);
@@ -207,6 +229,57 @@ test('une conversion admin crée un commit ciblé et laisse les changements conc
   const pending = await worktreeDetails(data.casesRoot, homeDir, 'Dossier Alpha', 'autre-session.json');
   assert.equal(pending.filesCount, 1);
   assert.equal(pending.selectedFile.path, 'autre-session.json');
+});
+
+test('le verrou porte sur la racine du dossier, pas sur son nom', async (t) => {
+  // Deux cabinets, deux racines, un dossier de même nom : un traitement en cours
+  // sur l'un ne doit rien empêcher sur l'autre. Le verrou comparait le seul nom
+  // du dossier, si bien qu'un travail lent en bloquait un sans rapport.
+  const first = fixture();
+  const second = fixture();
+  t.after(() => fs.rmSync(first.root, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(second.root, { recursive: true, force: true }));
+  t.after(() => {
+    delete process.env.PYTHON_PATH;
+    delete process.env.SMART_CONVERTER_PATH;
+  });
+
+  // Un convertisseur qui ne rend jamais la main : le premier travail est
+  // certainement encore `running` quand le second démarre. Sans cela le test
+  // passerait même avec le verrou fautif, le premier ayant déjà fini.
+  const slowConverter = path.join(first.root, 'slow-converter.cjs');
+  fs.writeFileSync(slowConverter, 'setTimeout(() => {}, 60_000);\n');
+  process.env.PYTHON_PATH = process.execPath;
+  process.env.SMART_CONVERTER_PATH = slowConverter;
+
+  const running = await startJob(t, {
+    casesRoot: first.casesRoot,
+    caseName: 'Dossier Alpha',
+    action: 'convert',
+    files: ['pièces originales/contrat.pdf'],
+  });
+  const other = await startJob(t, {
+    casesRoot: second.casesRoot,
+    caseName: 'Dossier Alpha',
+    action: 'convert',
+    files: ['pièces originales/annexe.docx'],
+  });
+  assert.notEqual(other.id, running.id);
+
+  assert.equal(getJob(running.id).state, 'running');
+  assert.equal(getJob(other.id).state, 'running');
+
+  // Sur la même racine, en revanche, le verrou tient toujours.
+  await assert.rejects(
+    startOriginalsJob({
+      casesRoot: first.casesRoot,
+      caseName: 'Dossier Alpha',
+      action: 'convert',
+      files: ['pièces originales/annexe.docx'],
+    }),
+    /déjà en cours/
+  );
+  // Les deux travaux sont tués par le `t.after` de `startJob`.
 });
 
 test('un traitement refuse une pièce hors du dossier et une action inconnue', async (t) => {
@@ -237,7 +310,7 @@ test('un convertisseur qui échoue termine le travail en erreur, jamais bloqué'
 
   // 1. Script de conversion absent : refusé avant tout spawn.
   process.env.SMART_CONVERTER_PATH = path.join(data.root, 'smart_converter.py');
-  const missingScript = await waitForJob((await startOriginalsJob({
+  const missingScript = await waitForJob((await startJob(t, {
     casesRoot: data.casesRoot,
     caseName: 'Dossier Alpha',
     action: 'convert',
@@ -249,7 +322,7 @@ test('un convertisseur qui échoue termine le travail en erreur, jamais bloqué'
   // 2. Interpréteur introuvable : `spawn` émet « error », pas « close ».
   delete process.env.SMART_CONVERTER_PATH;
   process.env.PYTHON_PATH = path.join(data.root, 'python-inexistant');
-  const started = await startOriginalsJob({
+  const started = await startJob(t, {
     casesRoot: data.casesRoot,
     caseName: 'Dossier Alpha',
     action: 'convert',
@@ -317,7 +390,7 @@ test('sans sélection, un traitement ne refait que les pièces incomplètes', as
   // contrat.pdf a son Markdown et son scan ; annexe.docx n'a rien.
   writeScan(data.caseRoot, 'contrat', { PERSON: [{ text: 'Jean Dupont', score: 0.9 }] });
 
-  const job = await startOriginalsJob({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', action: 'anonymize' });
+  const job = await startJob(t, { casesRoot: data.casesRoot, caseName: 'Dossier Alpha', action: 'anonymize' });
   assert.deepEqual(job.files, ['pièces originales/annexe.docx'], 'la pièce déjà scannée est laissée de côté');
   assert.equal(job.skipped, 1);
   await waitForJob(job.id);
@@ -333,14 +406,14 @@ test('un dossier déjà à jour rend un travail terminé sans lancer GLiNER', as
   writeScan(data.caseRoot, 'contrat', { PERSON: [{ text: 'Jean Dupont', score: 0.9 }] });
   writeScan(data.caseRoot, 'annexe', { PERSON: [{ text: 'Jean Dupont', score: 0.9 }] });
 
-  const job = await startOriginalsJob({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', action: 'anonymize' });
+  const job = await startJob(t, { casesRoot: data.casesRoot, caseName: 'Dossier Alpha', action: 'anonymize' });
   assert.equal(job.state, 'done');
   assert.equal(job.result.upToDate, true);
   assert.equal(job.result.skipped, 2);
   assert.deepEqual(job.files, []);
 
   // Une sélection explicite vaut demande de retraitement, elle relance le script.
-  const forced = await startOriginalsJob({
+  const forced = await startJob(t, {
     casesRoot: data.casesRoot, caseName: 'Dossier Alpha', action: 'anonymize', files: ['pièces originales/contrat.pdf'],
   });
   assert.equal(forced.state, 'running');

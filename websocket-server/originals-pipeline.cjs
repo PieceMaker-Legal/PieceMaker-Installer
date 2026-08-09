@@ -276,11 +276,12 @@ function pruneJobs() {
 }
 
 /** Travail rendu déjà terminé — rien à traiter, aucun processus lancé. */
-function finishedJob({ case: caseName, action, total, files, result }) {
+function finishedJob({ case: caseName, caseRoot, action, total, files, result }) {
   const now = new Date().toISOString();
   return {
     id: crypto.randomUUID(),
     case: caseName,
+    caseRoot,
     action,
     state: 'done',
     phase: 'mapping',
@@ -299,9 +300,14 @@ function finishedJob({ case: caseName, action, total, files, result }) {
   };
 }
 
+/**
+ * Forme exposée par l'API. `caseRoot` en sort avec `child` : il ne sert qu'au
+ * verrou interne, et la réponse de `GET /api/admin/originals/job` n'a pas à
+ * véhiculer un chemin absolu du disque du cabinet.
+ */
 function publicJob(job) {
   if (!job) return null;
-  const { child, ...rest } = job;
+  const { child, caseRoot, ...rest } = job;
   return rest;
 }
 
@@ -312,9 +318,14 @@ function appendLog(job, line) {
   if (job.log.length > MAX_LOG_LINES) job.log.splice(0, job.log.length - MAX_LOG_LINES);
 }
 
-function runningJobForCase(caseName) {
+/**
+ * Le verrou porte sur la **racine** du dossier, pas sur son nom : deux racines
+ * `workspacePath` distinctes peuvent porter un dossier de même nom, et un
+ * traitement lent sur l'une bloquait alors tout traitement sur l'autre.
+ */
+function runningJobForCase(caseRoot) {
   for (const job of jobs.values()) {
-    if (job.state === 'running' && job.case === caseName) return job;
+    if (job.state === 'running' && job.caseRoot === caseRoot) return job;
   }
   return null;
 }
@@ -489,7 +500,7 @@ async function commitJobArtifacts(job, legalCase, absoluteFiles, homeDir) {
 async function startOriginalsJob({ casesRoot, caseName, action, files = [], options = {}, homeDir = null } = {}) {
   if (!['convert', 'anonymize'].includes(action)) throw new Error('Action inconnue sur les pièces originales.');
   const legalCase = resolveCase(casesRoot, caseName);
-  const busy = runningJobForCase(legalCase.name);
+  const busy = runningJobForCase(legalCase.root);
   if (busy) throw new Error('Un traitement est déjà en cours sur ce dossier.');
 
   const originals = await listOriginals(legalCase.root);
@@ -513,6 +524,7 @@ async function startOriginalsJob({ casesRoot, caseName, action, files = [], opti
     // que l'administration affiche « à jour » et non un échec.
     const job = finishedJob({
       case: legalCase.name,
+      caseRoot: legalCase.root,
       action,
       total: 0,
       files: [],
@@ -537,6 +549,7 @@ async function startOriginalsJob({ casesRoot, caseName, action, files = [], opti
   const job = {
     id: crypto.randomUUID(),
     case: legalCase.name,
+    caseRoot: legalCase.root,
     action,
     state: 'running',
     phase: 'convert',
