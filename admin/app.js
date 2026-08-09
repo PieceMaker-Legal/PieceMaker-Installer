@@ -107,6 +107,7 @@ let historyItems = [];
 let selectedFolder = '';
 let historyView = 'changes';
 let selectedRevision = null;
+let revisionRequestSerial = 0;
 let tamponImage = null;
 let dossiers = [];
 let selectedPieces = [];
@@ -889,9 +890,11 @@ function renderFolders() {
     const option = document.createElement('option');
     option.value = folder.path;
     option.textContent = folder.changes ? `${folder.name} (${folder.changes})` : folder.name;
-    option.selected = selectedFolder === folder.path;
     select.append(option);
   }
+  // La valeur active est synchronisée une fois la liste complète insérée : le
+  // menu natif conserve ainsi une option distincte pour chaque dossier.
+  select.value = selectedFolder;
   select.disabled = !folders.length;
   renderOriginals();
   dlog('renderFolders', `Rendered ${folders.length} folders in ${(performance.now() - t0).toFixed(2)}ms`);
@@ -1286,6 +1289,10 @@ function setDetailView(view) {
   byId('mappingView').hidden = view !== 'mapping';
   byId('telegramCaseView').hidden = view !== 'telegram';
   byId('caseTelegramCard').classList.toggle('active', view === 'telegram');
+  if (view !== 'diff') {
+    revisionRequestSerial += 1;
+    setChangedFilesPane(false);
+  }
 }
 
 function showMappingEditorHeader() {
@@ -1445,8 +1452,12 @@ function renderHistoryItems() {
 }
 
 function showRevisionPlaceholder(title) {
+  revisionRequestSerial += 1;
   selectedRevision = null;
   setDetailView('diff');
+  setChangedFilesPane(false);
+  byId('revisionFiles').textContent = '';
+  byId('revisionFileCount').textContent = '0';
   byId('revisionKind').textContent = 'Révision';
   byId('revisionSha').textContent = '';
   byId('revisionTitle').textContent = title;
@@ -1455,6 +1466,48 @@ function showRevisionPlaceholder(title) {
   byId('diffStats').textContent = '';
   byId('diffContent').className = 'diff-content empty-state';
   byId('diffContent').textContent = 'Cliquez sur une modification ou un commit pour produire son diff.';
+}
+
+const REVISION_FILE_BATCH = 250;
+
+function setChangedFilesPane(visible) {
+  byId('changedFilesPane').hidden = !visible;
+  byId('changedFilesPane').parentElement.classList.toggle('has-file-list', visible);
+}
+
+function renderRevisionFiles(files, hash, selectedPath, limit = REVISION_FILE_BATCH) {
+  const list = byId('revisionFiles');
+  const safeFiles = Array.isArray(files) ? files : [];
+  setChangedFilesPane(true);
+  byId('revisionFileCount').textContent = String(safeFiles.length);
+  list.textContent = '';
+
+  const fragment = document.createDocumentFragment();
+  for (const file of safeFiles.slice(0, limit)) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `changed-file-row${file.path === selectedPath ? ' active' : ''}`;
+    button.title = file.path;
+    if (file.path === selectedPath) button.setAttribute('aria-current', 'true');
+    const badge = document.createElement('span');
+    badge.className = `file-status ${file.kind || 'modified'}`;
+    badge.textContent = statusLetter(file);
+    const name = document.createElement('span');
+    name.textContent = file.path;
+    button.append(badge, name);
+    button.addEventListener('click', () => loadRevision(hash, file.path));
+    fragment.append(button);
+  }
+
+  if (limit < safeFiles.length) {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'changed-files-more';
+    more.textContent = `Afficher ${Math.min(REVISION_FILE_BATCH, safeFiles.length - limit)} fichier(s) de plus`;
+    more.addEventListener('click', () => renderRevisionFiles(safeFiles, hash, selectedPath, limit + REVISION_FILE_BATCH));
+    fragment.append(more);
+  }
+  list.append(fragment);
 }
 
 function renderPatch(patch) {
@@ -1479,15 +1532,22 @@ function renderPatch(patch) {
 
 async function loadRevision(hash, filePath = '') {
   return traceAsync(`loadRevision(${hash}, ${filePath})`, async () => {
+    const requestSerial = ++revisionRequestSerial;
     setDetailView('diff');
+    setChangedFilesPane(hash !== 'WORKTREE');
+    if (hash !== 'WORKTREE' && !filePath) {
+      byId('revisionFiles').textContent = 'Chargement des fichiers…';
+      byId('revisionFileCount').textContent = '…';
+    }
     byId('diffContent').className = 'diff-content empty-state';
-    byId('diffContent').textContent = 'Chargement du diff…';
+    byId('diffContent').textContent = filePath ? 'Chargement du diff…' : 'Chargement de la révision…';
     try {
       if (!selectedFolder) return;
       const query = new URLSearchParams({ hash, case: selectedFolder });
       if (filePath) query.set('path', filePath);
       if (hash === 'WORKTREE' && currentCase()?.snapshot) query.set('snapshot', currentCase().snapshot);
       const revision = await api(`/api/admin/revision?${query}`);
+      if (requestSerial !== revisionRequestSerial) return;
       selectedRevision = { hash, path: revision.selectedPath || '' };
       document.querySelectorAll('.commit-row').forEach((row) => row.classList.toggle('active', row.dataset.hash === hash));
       document.querySelectorAll('.change-row').forEach((row) => row.classList.toggle('active', hash === 'WORKTREE' && row.querySelector('.change-path')?.textContent === revision.selectedPath));
@@ -1497,14 +1557,21 @@ async function loadRevision(hash, filePath = '') {
       byId('revisionTitle').textContent = revision.subject;
       byId('revisionMeta').textContent = revision.kind === 'worktree'
         ? `${revision.filesCount} fichier${revision.filesCount > 1 ? 's' : ''} modifié${revision.filesCount > 1 ? 's' : ''}`
-        : `${revision.author} · ${new Date(revision.timestamp).toLocaleString('fr-FR')}`;
-      byId('diffFile').textContent = revision.selectedPath
-        || (revision.filesCount == null ? 'Diff du commit' : `${revision.filesCount} fichier${revision.filesCount > 1 ? 's' : ''}`);
+        : `${revision.author} · ${new Date(revision.timestamp).toLocaleString('fr-FR')} · ${revision.filesCount} fichier${revision.filesCount > 1 ? 's' : ''}`;
+      if (revision.kind === 'commit') renderRevisionFiles(revision.files, hash, revision.selectedPath);
+      else setChangedFilesPane(false);
+      byId('diffFile').textContent = revision.selectedPath || 'Sélectionnez un fichier';
       const stats = revision.stats || {};
       const statLabel = stats.added || stats.deleted ? `+${stats.added || 0}  −${stats.deleted || 0}` : '';
       byId('diffStats').textContent = `${statLabel}${revision.truncated ? `${statLabel ? ' · ' : ''}Diff tronqué` : ''}`;
-      renderPatch(revision.patch);
+      if (revision.selectedPath) {
+        renderPatch(revision.patch);
+      } else {
+        byId('diffContent').className = 'diff-content empty-state';
+        byId('diffContent').textContent = 'Sélectionnez un fichier modifié pour afficher uniquement son diff.';
+      }
     } catch (error) {
+      if (requestSerial !== revisionRequestSerial) return;
       byId('diffContent').textContent = error.message;
       toast(error.message);
       showRevisionPlaceholder('Révision indisponible');

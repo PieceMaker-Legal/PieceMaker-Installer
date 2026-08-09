@@ -216,9 +216,14 @@ test('les modifications sont calculées par rapport au dernier commit complet du
   assert.equal(Object.hasOwn(history[0], 'files'), false);
   const details = await revisionDetails(data.casesRoot, data.home, 'Dossier Alpha', version2.commit);
   assert.equal(details.kind, 'commit');
-  assert.equal(details.filesCount, null);
+  assert.equal(details.filesCount, 1);
+  assert.deepEqual(details.files.map((file) => file.path), ['contrat.md']);
   assert.equal(details.selectedPath, '');
-  assert.match(details.patch, /Contrat anonymisé v2/);
+  assert.equal(details.patch, '');
+
+  const selected = await revisionDetails(data.casesRoot, data.home, 'Dossier Alpha', version2.commit, 'contrat.md');
+  assert.equal(selected.selectedFile.path, 'contrat.md');
+  assert.match(selected.patch, /Contrat anonymisé v2/);
 });
 
 test('un commit automatique ciblé laisse les fichiers des autres sessions hors du commit', async (t) => {
@@ -260,7 +265,7 @@ test('un diff volumineux est interrompu à la limite au lieu d’être entièrem
   fs.writeFileSync(path.join(data.caseA, 'volumineux.md'), `${huge}\n`);
   const commit = await createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'Gros diff' });
 
-  const details = await revisionDetails(data.casesRoot, data.home, 'Dossier Alpha', commit.commit);
+  const details = await revisionDetails(data.casesRoot, data.home, 'Dossier Alpha', commit.commit, 'volumineux.md');
   assert.equal(details.truncated, true);
   assert.ok(Buffer.byteLength(details.patch, 'utf8') <= 768 * 1024 + 3);
 });

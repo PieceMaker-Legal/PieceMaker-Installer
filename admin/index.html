@@ -124,6 +124,13 @@
                 </div>
               </header>
               <div class="revision-content">
+                <aside id="changedFilesPane" class="changed-files-pane" hidden>
+                  <div class="column-title">
+                    <span>Fichiers modifiés</span>
+                    <span id="revisionFileCount" class="count-badge">0</span>
+                  </div>
+                  <div id="revisionFiles" class="changed-file-list" aria-live="polite"></div>
+                </aside>
                 <div id="diffView" class="diff-pane">
                   <div class="diff-toolbar">
                     <strong id="diffFile">Aucun fichier sélectionné</strong>

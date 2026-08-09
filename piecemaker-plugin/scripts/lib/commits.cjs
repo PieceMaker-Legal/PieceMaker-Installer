@@ -688,16 +688,12 @@ async function revisionDetails(casesRoot, homeDir, caseName, hash, filePath = ''
   const legalCase = resolveCase(casesRoot, caseName);
   const gitDir = await ensureHistoryRepo(homeDir, legalCase);
   const meta = await revisionMetadata(legalCase, gitDir, hash);
+  const files = parseNameStatus((await runGit(legalCase.root, [
+    'diff-tree', '--root', '--no-commit-id', '--name-status', '-r', meta.commit,
+  ], { gitDir })).stdout).map((file) => ({ ...file, kind: statusKind(file.status) }));
   const selectedPath = filePath ? validateRelativeSafePath(legalCase, filePath) : '';
-  let selectedFile = null;
-  if (selectedPath) {
-    const nameStatus = (await runGit(legalCase.root, [
-      'diff-tree', '--root', '--no-commit-id', '--name-status', '-r', meta.commit, '--', selectedPath,
-    ], { gitDir })).stdout;
-    const file = parseNameStatus(nameStatus)[0];
-    if (!file || file.path !== selectedPath) throw new Error('Ce fichier ne fait pas partie de cette révision.');
-    selectedFile = { ...file, kind: statusKind(file.status) };
-  }
+  const selectedFile = selectedPath ? files.find((file) => file.path === selectedPath) : null;
+  if (selectedPath && !selectedFile) throw new Error('Ce fichier ne fait pas partie de cette révision.');
   // Sur un commit complet, Git doit parcourir tous les blobs une deuxième fois
   // pour produire le shortstat. Le patch contient déjà l'information utile et
   // est borné ci-dessous : ne calculer les statistiques que pour un fichier
@@ -707,16 +703,23 @@ async function revisionDetails(casesRoot, homeDir, caseName, hash, filePath = ''
       'diff-tree', '--root', '--no-commit-id', '--shortstat', '-r', meta.commit, '--', selectedPath,
     ], { gitDir })).stdout)
     : { files: 0, added: 0, deleted: 0 };
-  const args = ['show', '--format=', '--no-ext-diff', '--unified=3', meta.commit, ...(selectedPath ? ['--', selectedPath] : [])];
-  const patchResult = await runGit(legalCase.root, args, {
-    gitDir,
-    maxOutputBytes: MAX_PATCH_BYTES,
-    truncateOutput: true,
-  });
+  // Le premier clic sur un commit ne calcule que sa liste de fichiers. Le
+  // patch, potentiellement volumineux, n'est demandé qu'après sélection d'un
+  // fichier dans la colonne dédiée.
+  const patchResult = selectedPath
+    ? await runGit(legalCase.root, [
+      'show', '--format=', '--no-ext-diff', '--unified=3', meta.commit, '--', selectedPath,
+    ], {
+      gitDir,
+      maxOutputBytes: MAX_PATCH_BYTES,
+      truncateOutput: true,
+    })
+    : { stdout: '', truncated: false };
   const result = {
     ...meta,
     kind: 'commit',
-    filesCount: selectedPath ? stats.files : null,
+    files,
+    filesCount: files.length,
     stats,
     selectedFile,
     selectedPath,
@@ -764,6 +767,7 @@ async function worktreeDetails(casesRoot, homeDir, caseName, filePath = '', snap
     timestamp: new Date().toISOString(),
     subject: 'Modifications depuis le dernier commit',
     kind: 'worktree',
+    files: state.changes,
     filesCount: state.changes.length,
     stats,
     selectedFile,

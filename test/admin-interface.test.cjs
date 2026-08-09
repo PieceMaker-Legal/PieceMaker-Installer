@@ -20,14 +20,19 @@ test('Dossiers est le premier onglet et Vue d’ensemble est intégrée aux para
   }
 });
 
-test('le diff est produit uniquement après un clic et rendu sans milliers de nœuds', () => {
+test('un commit liste ses fichiers puis ne calcule que le diff sélectionné', () => {
   const html = read('admin/index.html');
   const app = read('admin/app.js');
   const css = read('admin/styles.css');
 
-  assert.doesNotMatch(html, /changed-file-list|revisionFiles|revisionFileCount/);
-  assert.doesNotMatch(app, /revisionFiles|revisionFileCount|changed-file-row/);
-  assert.doesNotMatch(css, /changed-file-list|changed-file-row|changed-files-pane/);
+  for (const id of ['changedFilesPane', 'revisionFiles', 'revisionFileCount']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(app, /renderRevisionFiles\(revision\.files, hash, revision\.selectedPath\)/);
+  assert.match(app, /button\.addEventListener\('click', \(\) => loadRevision\(hash, file\.path\)\)/);
+  assert.match(app, /const REVISION_FILE_BATCH = 250/);
+  assert.match(css, /\.changed-file-list/);
+  assert.match(css, /\.changed-file-row\.active/);
   assert.match(app, /loadRevision\(item\.hash\)/);
   assert.doesNotMatch(app, /loadRevision\(historyItems\[0\]\.hash\)/);
   assert.doesNotMatch(app, /loadRevision\('WORKTREE', selectedChange/);
@@ -67,6 +72,23 @@ test('la vue Dossiers suit le bureau Git avec trois onglets et des détails int�
   assert.match(app, /\/api\/admin\/repository\/cases/);
   assert.match(app, /\/api\/admin\/branches\/current/);
   assert.match(app, /\/api\/admin\/telegram\/dossiers/);
+});
+
+test('l’administration reste claire, tient dans le viewport et conserve les dossiers visibles', () => {
+  const app = read('admin/app.js');
+  const css = read('admin/styles.css');
+
+  assert.match(css, /html, body \{ height: 100%; min-height: 0; \}/);
+  assert.match(css, /body \{[^}]*overflow: hidden;[^}]*background: var\(--paper\)/);
+  assert.match(css, /\.shell \{[^}]*height: 100dvh;[^}]*overflow: hidden/);
+  assert.match(css, /\.panel \{[^}]*height: 100%;[^}]*overflow: auto/);
+  assert.match(css, /#history\.panel \{ overflow: hidden; \}/);
+  assert.match(css, /#history \.desktop-card \{[^}]*background: #fff/);
+  assert.match(css, /#history \.repository-toolbar \{[^}]*background: #fff;[^}]*color: #24292f/);
+  assert.match(css, /#history \.toolbar-select-row select option \{ background: #fff; color: #24292f; \}/);
+  assert.match(css, /\.revision-content\.has-file-list \{ grid-template-columns:/);
+  assert.match(css, /\.changed-file-list \{[^}]*overflow: auto/);
+  assert.match(app, /for \(const folder of folders\)[\s\S]*select\.append\(option\);[\s\S]*select\.value = selectedFolder;/);
 });
 
 test('les écritures automatiques déclarent des commits limités à leurs chemins', () => {
