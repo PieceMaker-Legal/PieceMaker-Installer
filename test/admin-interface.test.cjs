@@ -84,7 +84,7 @@ test('l’administration reste claire, tient dans le viewport et conserve les do
   assert.match(css, /\.panel \{[^}]*height: 100%;[^}]*overflow: auto/);
   assert.match(css, /#history\.panel \{ overflow: hidden; \}/);
   assert.match(css, /#history \.desktop-card \{[^}]*background: #fff/);
-  assert.match(css, /#history \.repository-toolbar \{[^}]*background: #fff;[^}]*color: #24292f/);
+  assert.match(css, /#history \.repository-toolbar \{[^}]*background: var\(--brand\);[^}]*color: #fff/);
   assert.match(css, /#history \.toolbar-select-row select option \{ background: #fff; color: #24292f; \}/);
   assert.match(css, /\.revision-content\.has-file-list \{ grid-template-columns:/);
   assert.match(css, /\.changed-file-list \{[^}]*overflow: auto/);
