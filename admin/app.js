@@ -414,11 +414,12 @@ async function loadSettings() {
 
 async function saveSettings(event) {
   event.preventDefault();
+  const formElement = event.currentTarget;
   const message = byId('settingsMessage');
-  const button = event.submitter || event.currentTarget.querySelector('button[type="submit"]');
+  const button = event.submitter || formElement.querySelector('button[type="submit"]');
   button.disabled = true;
   setMessage(message, 'Enregistrement…');
-  const form = new FormData(event.currentTarget);
+  const form = new FormData(formElement);
   const env = {
     PIECEMAKER_USER_NAME: String(form.get('PIECEMAKER_USER_NAME') || '').trim(),
   };
@@ -440,7 +441,7 @@ async function saveSettings(event) {
         env,
       }),
     });
-    event.currentTarget.querySelectorAll('input[type="password"]').forEach((input) => { input.value = ''; });
+    formElement.querySelectorAll('input[type="password"]').forEach((input) => { input.value = ''; });
     await loadSettings();
     setMessage(message, 'Enregistré. L’identité sera appliquée dès le prochain commit ; redémarrez le serveur pour les autres changements.', 'success');
     toast('Paramètres enregistrés');
@@ -616,9 +617,10 @@ async function loadTelegram({ quiet = false } = {}) {
 
 async function saveTelegram(event) {
   event.preventDefault();
-  const button = event.submitter || event.currentTarget.querySelector('button[type="submit"]');
+  const formElement = event.currentTarget;
+  const button = event.submitter || formElement.querySelector('button[type="submit"]');
   const message = byId('telegramMessage');
-  const form = new FormData(event.currentTarget);
+  const form = new FormData(formElement);
   button.disabled = true;
   setMessage(message, 'Enregistrement sécurisé…');
   try {
@@ -631,7 +633,7 @@ async function saveTelegram(event) {
         monitorToken: form.get('monitorToken'),
       }),
     });
-    event.currentTarget.querySelectorAll('input[type="password"]').forEach((input) => { input.value = ''; });
+    formElement.querySelectorAll('input[type="password"]').forEach((input) => { input.value = ''; });
     renderTelegram(data);
     setMessage(message, 'Configurations enregistrées. Les tokens complets restent uniquement sur cet ordinateur.', 'success');
     toast('Configuration Telegram enregistrée');

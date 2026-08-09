@@ -23,13 +23,26 @@ test('Dossiers est le premier onglet et Vue d’ensemble est intégrée aux para
 test('les paramètres permettent de modifier le nom appliqué à chaque commit', () => {
   const html = read('admin/index.html');
   const app = read('admin/app.js');
+  const saveSettings = app.match(/async function saveSettings\(event\) \{[\s\S]*?\n\}/)?.[0] || '';
 
   assert.match(html, /id="commitUserName"[^>]*name="PIECEMAKER_USER_NAME"[^>]*required/);
   assert.match(html, /Identité des tâches/);
   assert.match(app, /data\.env\.PIECEMAKER_USER_NAME/);
   assert.match(app, /form\.get\('PIECEMAKER_USER_NAME'\)/);
+  assert.match(saveSettings, /const formElement = event\.currentTarget/);
+  assert.doesNotMatch(saveSettings, /await[\s\S]*event\.currentTarget/);
   assert.doesNotMatch(html, /PIECEMAKER_USER_EMAIL/);
   assert.doesNotMatch(app, /PIECEMAKER_USER_EMAIL/);
+});
+
+test('les formulaires asynchrones conservent leur cible après la propagation de l\'événement', () => {
+  const app = read('admin/app.js');
+
+  for (const functionName of ['saveSettings', 'saveTelegram']) {
+    const handler = app.match(new RegExp(`async function ${functionName}\\(event\\) \\{[\\s\\S]*?\\n\\}`))?.[0] || '';
+    assert.match(handler, /const formElement = event\.currentTarget/);
+    assert.doesNotMatch(handler, /await[\s\S]*event\.currentTarget/);
+  }
 });
 
 test('un commit liste ses fichiers puis ne calcule que le diff sélectionné', () => {
