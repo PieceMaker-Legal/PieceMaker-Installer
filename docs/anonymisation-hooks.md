@@ -66,6 +66,30 @@ La protection est une propriété **du fichier**, pas de son emplacement : un
 cabinet qui range ses pièces à plat, à côté du Markdown qui en est issu — le
 cas courant — est couvert comme un autre.
 
+## Le mapping n'est jamais lisible par l'IA
+
+`mapping_dossier.json` fait correspondre chaque code au nom réel : le lire, c'est
+dé-anonymiser le dossier entier d'un seul appel d'outil. `*_sensitive_map.json`,
+la sortie brute de GLiNER/Presidio, porte les entités en clair avec leur
+contexte. `protect-originals.mjs` refuse les deux — sur `Read`, sur `Grep`, sur
+`Glob` et sur `Bash` (`cat`, `jq`, `python`) — et **aucune exception de
+`protection.json` ne les libère**.
+
+Laisser `anonymize-read.mjs` les coder à la volée ne suffisait pas : les entités
+trop courtes, celles rangées sous `ignored` et les variantes d'`extracted_data`
+ressortent telles quelles. Le seul traitement correct est le refus, et ce
+refus-là ne renvoie vers rien — il n'existe pas de version anonymisée de ces
+fichiers. L'administration y accède par ses propres routes
+(`GET/PUT /api/admin/mapping`), qui ne passent pas par les hooks.
+
+La règle est portée par `isMappingFile` (`lib/protection.cjs`) et non par
+`isProtectedFile` : l'historique du cabinet doit continuer à versionner le
+mapping (`commit-track.mjs`), qui n'est protégé que vis-à-vis du modèle.
+
+Un `Grep` récursif à la racine d'un dossier est refusé pour la même raison — il
+ramènerait le contenu du mapping. Un `Glob` ne ramène que des noms de fichiers
+et reste permis.
+
 ## Le contrat d'exécution
 
 Confirmé contre <https://code.claude.com/docs/en/hooks>, et implémenté dans
@@ -90,32 +114,19 @@ bloque pas la session non plus.
 
 ## Pas de plafond
 
-**Tout texte est substitué, quelle qu'en soit la taille.** Il n'y a pas de seuil
-au-delà duquel `applyMapping` rende la main : un tel seuil laissait passer en
-clair exactement les documents les plus volumineux.
+**Tout texte est substitué, quelle qu'en soit la taille.** Il a existé un seuil
+de 2 Mo au-delà duquel `applyMapping` rendait le texte tel quel : il laissait
+passer en clair exactement les documents les plus volumineux. Il est supprimé.
 
-Deux propriétés rendent cela tenable :
+La boucle reste ce qu'elle doit être : les entrées triées de la plus longue
+entité à la plus courte, une regex par entité, un `replace`. Rien d'autre. Sur
+un mapping réel de 13 entités, 4 Mo de texte prennent 23 ms — il n'y a pas de
+problème de coût à résoudre, et un pré-filtre serait une surface de plus où une
+entité pourrait être silencieusement sautée.
 
-- **Un index de mots, pas un balayage par entité.** Le coût brut est le produit
-  du nombre d'entités par la taille du texte. `wordIndex` parcourt le texte une
-  seule fois et met ses mots dans un `Set` ; chaque entité est ensuite écartée
-  ou retenue en temps constant sur son premier mot. Mesuré : 500 entités sur
-  50 Mo passent de plusieurs secondes à ~830 ms quand aucune n'est présente.
-- **Le pré-filtre ne peut pas écarter une entité présente.** La sonde est la
-  suite maximale de caractères de mot en tête de l'entité — exactement ce que
-  `buildEntityRegex` exige en début de correspondance, précédé d'une frontière
-  de mot. Une entité présente a donc toujours sa sonde dans l'index. Vérifié en
-  plus par différentiel : 4 000 textes aléatoires (casse mélangée, retours à la
-  ligne au milieu des entités, variantes Unicode du trait d'union et de
-  l'apostrophe, ponctuation en tête) donnent le même résultat qu'une boucle sans
-  aucun pré-filtre.
-
-Reste le cas où beaucoup d'entités sont réellement présentes dans un très gros
-texte : la substitution est alors séquentielle par construction (500 entités
-toutes présentes sur 20 Mo ≈ 7 s). Ce temps est **payé, jamais abandonné** —
-`runHook` n'y coupe pas court. Son délai ne préempte pas le travail synchrone :
-la promesse du corps se règle en micro-tâche, devant la macro-tâche du
-minuteur. Vérifié avec un corps synchrone de 8 s sous un délai de 5 s — la
+Le délai de `runHook` ne coupe pas court à cette substitution : elle est
+synchrone, la promesse du corps se règle en micro-tâche, devant la macro-tâche
+du minuteur. Vérifié avec un corps synchrone de 8 s sous un délai de 5 s — la
 sortie part entière. Le délai garde son rôle d'origine : le travail asynchrone
 qui se bloque.
 
@@ -130,7 +141,7 @@ npm test          # la suite complète
 
 `test/mapping.test.cjs` couvre le moteur de substitution : imbrication des
 entités, idempotence, variantes typographiques, aller-retour exact, absence de
-plafond et innocuité du pré-filtre.
+plafond et orthographes piégeuses.
 
 `test/hooks-anonymize.test.mjs` lance les scripts **comme Claude Code le fait**
 — charge utile JSON sur stdin, `HOME` redirigé vers un faux

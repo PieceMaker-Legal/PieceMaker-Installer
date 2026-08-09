@@ -5,6 +5,7 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+  isMappingFile,
   isProtectedFile,
   locateCase,
   markdownCounterpart,
@@ -36,6 +37,16 @@ test('tout ce qui n’est ni Markdown ni JSON est protégé par défaut', (t) =>
   assert.equal(isProtectedFile(path.join(data.caseRoot, 'mapping_dossier.json'), data.caseRoot), false);
   // Hors du dossier, rien à protéger.
   assert.equal(isProtectedFile(path.join(data.casesRoot, 'ailleurs.pdf'), data.caseRoot), false);
+});
+
+test('le mapping et les scans PII sont reconnus où qu’ils soient rangés', () => {
+  assert.equal(isMappingFile('mapping_dossier.json'), true);
+  assert.equal(isMappingFile('/dossier/annexes/mapping_default.json'), true);
+  assert.equal(isMappingFile('contrat_sensitive_map.json'), true);
+  // Un JSON ordinaire du dossier reste lisible.
+  assert.equal(isMappingFile('metadata.json'), false);
+  assert.equal(isMappingFile('remapping.json'), false);
+  assert.equal(isMappingFile(''), false);
 });
 
 test('une exception enregistrée libère exactement une pièce', (t) => {

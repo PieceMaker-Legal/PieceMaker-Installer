@@ -64,6 +64,45 @@ test('une pièce protégée est refusée et le refus indique le Markdown à lire
   }, data), null);
 });
 
+test('le mapping et les scans PII sont hors d’atteinte, quel que soit l’outil', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(data.caseRoot, 'contrat_sensitive_map.json'), '{"entities":[]}');
+  fs.writeFileSync(path.join(data.caseRoot, 'metadata.json'), '{"ok":true}');
+
+  for (const name of ['mapping_dossier.json', 'contrat_sensitive_map.json']) {
+    const denied = runHook(PROTECT, {
+      tool_name: 'Read',
+      cwd: data.caseRoot,
+      tool_input: { file_path: path.join(data.caseRoot, name) },
+    }, data);
+    assert.equal(denied?.hookSpecificOutput.permissionDecision, 'deny', name);
+    // Aucun renvoi : il n'existe pas de version anonymisée de ces fichiers.
+    assert.doesNotMatch(denied.hookSpecificOutput.permissionDecisionReason, /\.md/);
+  }
+
+  // Le contournement évident — `cat` — est fermé du même coup.
+  const viaBash = runHook(PROTECT, {
+    tool_name: 'Bash',
+    cwd: data.caseRoot,
+    tool_input: { command: 'cat mapping_dossier.json | head -5' },
+  }, data);
+  assert.equal(viaBash?.hookSpecificOutput.permissionDecision, 'deny');
+
+  // Un `Grep` récursif à la racine lirait le mapping ; un JSON ordinaire, non.
+  const viaGrep = runHook(PROTECT, {
+    tool_name: 'Grep',
+    cwd: data.caseRoot,
+    tool_input: { pattern: 'PERSONNE', path: data.caseRoot },
+  }, data);
+  assert.equal(viaGrep?.hookSpecificOutput.permissionDecision, 'deny');
+  assert.equal(runHook(PROTECT, {
+    tool_name: 'Read',
+    cwd: data.caseRoot,
+    tool_input: { file_path: path.join(data.caseRoot, 'metadata.json') },
+  }, data), null);
+});
+
 test('le garde-fou couvre Bash, par où passe le skill docx', (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));

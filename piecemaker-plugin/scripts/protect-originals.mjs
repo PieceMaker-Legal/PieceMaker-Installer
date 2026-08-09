@@ -24,7 +24,7 @@ import { createRequire } from 'node:module';
 import { loadPieceMakerConfig, readHookPayload, runHook, noop } from './lib/hook-io.mjs';
 
 const require = createRequire(import.meta.url);
-const { isProtectedFile, locateCase, markdownCounterpart, readProtection } = require('./lib/protection.cjs');
+const { isMappingFile, isProtectedFile, locateCase, markdownCounterpart, readProtection } = require('./lib/protection.cjs');
 
 /** Au-delà, on ne cherche pas de chemin : une commande pareille n'en cite pas un. */
 const MAX_COMMAND_LENGTH = 20_000;
@@ -50,6 +50,17 @@ function protectionReason(absolute, caseRoot) {
   return counterpart.exists
     ? `${head} Lisez le Markdown anonymisé à la place : ${counterpart.path}`
     : `${head} Aucun Markdown n’a encore été produit pour cette pièce — lancez « Convertir en Markdown » dans l’administration PieceMaker, ou retirez sa protection si elle n’en a pas besoin.`;
+}
+
+/**
+ * Le mapping et les scans PII sont hors d'atteinte, sans exception possible : le
+ * mapping donne le nom réel derrière chaque code, un scan porte les entités en
+ * clair. Une seule lecture annulerait toute la frontière — et ce refus-ci ne
+ * renvoie vers rien, il n'existe pas de version anonymisée de ces fichiers.
+ * L'administration y accède par ses propres routes, qui ne passent pas par les hooks.
+ */
+function mappingReason(absolute) {
+  return `[PieceMaker] « ${path.basename(absolute)} » est le mapping d’anonymisation du dossier (ou un scan PII) : il n’est jamais accessible à l’IA. Consultez-le depuis l’administration PieceMaker si besoin.`;
 }
 
 function statSafe(target) {
@@ -99,9 +110,12 @@ function commandPaths(command, cwd) {
  * protégées et en ramène des extraits. On refuse à la première pièce protégée
  * rencontrée plutôt que de filtrer les résultats un à un.
  */
-function isBroadCaseSearch(target, located) {
-  if (!target || !located) return false;
-  if (path.resolve(target) !== located.caseRoot) return false;
+function isBroadCaseSearch(located) {
+  if (!located) return false;
+  // `located.absolute` est déjà passé par realpath, `caseRoot` aussi : comparer
+  // un `path.resolve(target)` brut ne recouvrait jamais la racine sur macOS
+  // (`/var/…` contre `/private/var/…`), et la recherche large passait toujours.
+  if (located.absolute !== located.caseRoot) return false;
   const protection = readProtection(located.caseRoot);
   try {
     return fs.readdirSync(located.caseRoot, { withFileTypes: true })
@@ -109,6 +123,17 @@ function isBroadCaseSearch(target, located) {
         && isProtectedFile(path.join(located.caseRoot, entry.name), located.caseRoot, protection));
   } catch {
     // Dossier illisible : on refuse, faute de pouvoir prouver qu'il est sûr.
+    return true;
+  }
+}
+
+/** Le répertoire visé est la racine du dossier et un mapping y est posé. */
+function caseRootHasMapping(located) {
+  if (!located) return false;
+  if (located.absolute !== located.caseRoot) return false;
+  try {
+    return fs.readdirSync(located.caseRoot).some((name) => isMappingFile(name));
+  } catch {
     return true;
   }
 }
@@ -125,7 +150,9 @@ async function main() {
   if (toolName === 'Bash') {
     for (const candidate of commandPaths(payload.tool_input?.command, cwd)) {
       const located = locateCase(casesRoot, candidate);
-      if (located && isProtectedFile(candidate, located.caseRoot)) {
+      if (!located) continue;
+      if (isMappingFile(candidate)) return deny(mappingReason(candidate));
+      if (isProtectedFile(candidate, located.caseRoot)) {
         return deny(protectionReason(candidate, located.caseRoot));
       }
     }
@@ -141,12 +168,20 @@ async function main() {
 
   // Un répertoire n'est pas une pièce : `Grep`/`Glob` en visent un couramment,
   // et c'est `isBroadCaseSearch` qui décide s'il est sûr de le parcourir.
+  if (isMappingFile(target)) return deny(mappingReason(target));
+
   const stat = statSafe(target);
   if (!stat?.isDirectory() && isProtectedFile(target, located.caseRoot)) {
     return deny(protectionReason(target, located.caseRoot));
   }
 
-  if ((toolName === 'Grep' || toolName === 'Glob') && isBroadCaseSearch(target, located)) {
+  // Un `Grep` récursif ramène le *contenu* du mapping ; un `Glob` n'en ramène
+  // que le nom, qui ne trahit rien — d'où la restriction à Grep ici.
+  if (toolName === 'Grep' && caseRootHasMapping(located)) {
+    return deny(`[PieceMaker] Une recherche récursive à la racine de « ${located.caseName} » lirait le mapping d’anonymisation. Ciblez un fichier Markdown précis, ou un sous-dossier qui n’en contient pas.`);
+  }
+
+  if ((toolName === 'Grep' || toolName === 'Glob') && isBroadCaseSearch(located)) {
     return deny(`[PieceMaker] Une recherche récursive à la racine de « ${located.caseName} » parcourrait des pièces protégées. Ciblez un fichier Markdown précis, ou un sous-dossier qui n’en contient pas.`);
   }
   return null;

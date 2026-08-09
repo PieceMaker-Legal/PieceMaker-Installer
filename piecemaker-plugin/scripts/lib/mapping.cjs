@@ -117,51 +117,6 @@ function buildEntityRegex(entity) {
 }
 
 /**
- * Premier mot d'une entité, tel qu'il apparaîtra dans le texte.
- *
- * Il n'existe pas de plafond de taille : tout texte doit être substitué, quelle
- * qu'en soit la longueur. Le coût brut est le produit du nombre d'entités par la
- * taille du texte — 500 entités sur 20 Mo passaient des secondes à chercher très
- * majoritairement des entités absentes du document. D'où l'index de mots
- * ci-dessous, qui ramène ce produit à un seul parcours.
- *
- * La sonde est la suite maximale de caractères de mot en tête de l'entité. C'est
- * exactement ce que `buildEntityRegex` exige de trouver en début de
- * correspondance : la frontière de mot précède l'entité, et tout ce qui suit
- * cette suite dans le motif est une classe de ponctuation ou un `\s+`, jamais un
- * caractère de mot. Si l'entité est présente, sa sonde est donc présente comme
- * mot entier — le filtre ne peut écarter qu'une entité certainement absente.
- *
- * @returns {string} sonde en minuscules, ou '' quand il n'y en a pas d'exploitable.
- */
-function literalProbe(entity) {
-  const match = /^[\p{L}\p{N}_]+/u.exec(String(entity).trim());
-  const probe = match ? match[0] : '';
-  // Un mot d'un seul caractère filtre trop peu pour valoir son indexation.
-  return probe.length >= 2 ? probe.toLowerCase() : '';
-}
-
-/**
- * Index des mots d'un texte, en minuscules. Un seul parcours, puis une
- * appartenance en temps constant par entité.
- *
- * `extra` reçoit ce que la boucle de substitution va elle-même insérer (codes à
- * l'aller, orthographes canoniques au retour) : l'index reste ainsi un
- * sur-ensemble de tout ce que le texte peut contenir à n'importe quel moment.
- */
-function wordIndex(text, extra) {
-  const index = new Set();
-  const regex = /[\p{L}\p{N}_]+/gu;
-  for (const source of [text, ...extra]) {
-    if (!source) continue;
-    regex.lastIndex = 0;
-    let match;
-    while ((match = regex.exec(source)) !== null) index.add(match[0].toLowerCase());
-  }
-  return index;
-}
-
-/**
  * Ordonne les entrées d'un mapping de la plus longue entité à la plus courte.
  *
  * La substitution est séquentielle : une entité imbriquée ne doit jamais passer
@@ -284,12 +239,8 @@ function applyMapping(text, mapping) {
   const entries = Object.entries(mapping || {});
   if (!entries.length) return text;
 
-  const index = wordIndex(text, entries.map(([, code]) => code));
-
   let output = text;
   for (const [entity, code] of entries.sort(byDescendingEntityLength(([key]) => key))) {
-    const probe = literalProbe(entity);
-    if (probe && !index.has(probe)) continue;
     const regex = buildEntityRegex(entity);
     if (!regex) continue;
     output = output.replace(regex, code);
@@ -314,17 +265,10 @@ function revertMapping(text, reverseMapping) {
   const entries = Object.entries(reverseMapping || {});
   if (!entries.length) return text;
 
-  // Même pré-filtre qu'à l'aller ; l'index intègre les noms réinsérés.
-  const index = wordIndex(text, entries.map(([, variants]) => (
-    Array.isArray(variants) ? variants[0] : variants
-  )));
-
   let output = text;
   for (const [code, variants] of entries.sort(byDescendingEntityLength(([key]) => key))) {
     const canonical = Array.isArray(variants) ? variants[0] : variants;
     if (!canonical) continue;
-    // Un code est un identifiant ASCII : c'est un mot entier de l'index.
-    if (!index.has(String(code).toLowerCase())) continue;
     // Un code est un identifiant ASCII : pas de variantes Unicode à gérer, mais
     // les mêmes frontières de mots, pour ne pas réécrire un code cité dans un
     // mot plus long.

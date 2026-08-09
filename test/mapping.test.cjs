@@ -120,9 +120,9 @@ test('aucun plafond de taille : une entité est substituée où qu’elle se tro
   assert.equal(restored, text, 'l’aller-retour reste exact quelle que soit la taille');
 });
 
-test('le pré-filtre n’écarte jamais une entité réellement présente', () => {
-  // Chaque cas piège l'index de mots : ponctuation en tête, variante Unicode,
-  // casse, espaces multiples et retour à la ligne au milieu de l'entité.
+test('les orthographes piégeuses sont substituées comme les autres', () => {
+  // Ponctuation en tête, variante Unicode du trait d'union, casse, espaces
+  // multiples et retour à la ligne au milieu de l'entité.
   const mapping = {
     'S.A.R.L. Dupont': 'SOCIETE_SARL_01',
     'Kreos‑A': 'PERSONNE_MORALE_02',

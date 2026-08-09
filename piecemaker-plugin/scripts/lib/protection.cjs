@@ -14,7 +14,12 @@
  * protéger) laisserait fuiter tout nouveau document.
  *
  * `.md` et `.json` ne sont jamais protégés : ce sont les surfaces que les hooks
- * anonymisent à la volée (`anonymize-read.mjs`), et le mapping lui-même.
+ * anonymisent à la volée (`anonymize-read.mjs`).
+ *
+ * Une exception, portée par `isMappingFile` : le mapping du dossier et les scans
+ * PII sont interdits à l'IA en toute circonstance. Ils ne passent pas par
+ * `isProtectedFile` — l'historique du cabinet doit continuer à versionner le
+ * mapping (`commits.cjs`) — mais par un refus dédié dans `protect-originals.mjs`.
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -24,6 +29,25 @@ const PROTECTION_FILE = 'protection.json';
 
 /** Extensions lisibles par l'IA, sous réserve du mapping appliqué à la lecture. */
 const READABLE_EXTENSIONS = new Set(['.md', '.json']);
+
+/**
+ * JSON qui trahiraient la frontière s'ils étaient lus :
+ *  - `mapping*.json` fait correspondre chaque code au nom réel — le lire, c'est
+ *    dé-anonymiser le dossier entier d'un seul appel d'outil ;
+ *  - `*_sensitive_map.json` est la sortie brute de GLiNER/Presidio, qui porte les
+ *    entités en clair avec leur contexte.
+ *
+ * Appliquer le mapping à leur lecture ne suffirait pas : les entités trop courtes,
+ * celles rangées sous `ignored` et les variantes d'`extracted_data` ressortiraient
+ * telles quelles. Le seul traitement correct est le refus.
+ */
+const FORBIDDEN_JSON_PATTERNS = [/^mapping.*\.json$/i, /_sensitive_map\.json$/i];
+
+/** Vrai pour un mapping de dossier ou un scan PII, où qu'il soit rangé. */
+function isMappingFile(filePath) {
+  const base = path.basename(String(filePath || ''));
+  return FORBIDDEN_JSON_PATTERNS.some((pattern) => pattern.test(base));
+}
 
 function normalizeOriginalName(value) {
   return String(value || '')
@@ -185,6 +209,7 @@ function markdownCounterpart(absolutePath, caseRoot) {
 
 module.exports = {
   documentKey,
+  isMappingFile,
   locateCase,
   isProtectedFile,
   markdownCounterpart,
@@ -196,4 +221,5 @@ module.exports = {
   PROTECTION_DIR,
   PROTECTION_FILE,
   READABLE_EXTENSIONS,
+  FORBIDDEN_JSON_PATTERNS,
 };

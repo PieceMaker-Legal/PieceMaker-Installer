@@ -182,10 +182,9 @@ tracking what has already been substituted.
 ## Piece protection and the anonymisation hooks
 
 `docs/anonymisation-hooks.md` is the full account of this boundary — the
-execution contract, why the substitution has no size ceiling and what keeps it
-fast anyway, how to prove the chain works on a real case, and why a hook edit
-needs a `claude plugin update` before it affects anything. What follows is the
-summary.
+execution contract, why the substitution has no size ceiling, how to prove the
+chain works on a real case, and why a hook edit needs a `claude plugin update`
+before it affects anything. What follows is the summary.
 
 The protection boundary is a property of the **file**, not of its location.
 `piecemaker-plugin/scripts/lib/protection.cjs` owns it:
@@ -195,7 +194,11 @@ The protection boundary is a property of the **file**, not of its location.
   *exceptions* (`{ version: 1, unprotected: [...] }`). A piece dropped into a
   case between two visits to `/admin/` is therefore protected with no action.
   `.md`/`.json` are never protected — they are the surfaces the hooks
-  anonymise on the fly.
+  anonymise on the fly. The one exception is `isMappingFile`: `mapping*.json`
+  and `*_sensitive_map.json` are refused to the model on `Read`/`Grep`/`Glob`/
+  `Bash` with no exception possible — reading the mapping de-anonymises the
+  whole case at once. It is enforced in `protect-originals.mjs`, not in
+  `isProtectedFile`, so case history keeps versioning the mapping.
 - `locateCase` / `relativeKey` resolve **both** sides through `realpath`. On
   macOS a `/var/…` tool argument against a `/private/var/…` root never
   overlaps, which silently protected nothing.
