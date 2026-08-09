@@ -80,7 +80,9 @@ const api = async (url, options = {}) => {
     });
     const data = await response.json().catch(() => ({}));
     const elapsed = performance.now() - t0;
-    dlog('api', `api#${callId}: DONE ${method} ${url} status=${response.status} (${elapsed.toFixed(2)}ms)`);
+    const serverTiming = response.headers.get('Server-Timing') || '';
+    const serverTimingSuffix = serverTiming ? `, server=${serverTiming}` : '';
+    dlog('api', `api#${callId}: DONE ${method} ${url} status=${response.status} (${elapsed.toFixed(2)}ms${serverTimingSuffix})`);
     if (elapsed > 800) dwarn('api', `SLOW API CALL — ${method} ${url} took ${elapsed.toFixed(2)}ms`);
     if (!response.ok) throw new Error(data.error || `Erreur HTTP ${response.status}`);
     return data;
@@ -1036,7 +1038,7 @@ async function pollOriginalsJob() {
     }
     updateOriginalsActions();
     toast(job.state === 'error' ? 'Traitement interrompu' : 'Traitement terminé');
-    await loadRepositoryHistory({ quiet: true });
+    await loadSelectedCase({ quiet: true });
   } catch (error) {
     showOriginalsProgress(error.message, 'error');
     originalsJob = null;
@@ -1192,7 +1194,7 @@ async function saveMapping() {
     renderMappingRows(data.mapping);
     setMessage(byId('mappingMessage'), '');
     toast(`Mapping enregistré · ${Object.keys(data.mapping).length} entrée(s)`);
-    await loadRepositoryHistory({ quiet: true });
+    await loadSelectedCase({ quiet: true });
   } catch (error) {
     setMessage(byId('mappingMessage'), error.message, 'error');
   } finally {
@@ -1213,7 +1215,7 @@ async function rebuildMapping() {
     byId('mappingDialogTitle').textContent = data.name;
     renderMappingRows(data.mapping);
     setMessage(byId('mappingMessage'), `${data.added} entrée(s) ajoutée(s), ${data.total} au total.`);
-    await loadRepositoryHistory({ quiet: true });
+    await loadSelectedCase({ quiet: true });
   } catch (error) {
     setMessage(byId('mappingMessage'), error.message, 'error');
   } finally {
@@ -1248,10 +1250,8 @@ function renderHistoryItems() {
       button.addEventListener('click', () => loadRevision('WORKTREE', change.path));
       list.append(button);
     }
-    const selectedChange = selectedRevision?.hash === 'WORKTREE'
-      ? changes.find((change) => change.path === selectedRevision.path)
-      : null;
-    loadRevision('WORKTREE', selectedChange?.path || changes[0].path);
+    // Le diff est volontairement paresseux : aucun calcul au rendu ou au
+    // rafraîchissement, seulement après un clic explicite sur une modification.
     return;
   }
 
@@ -1296,9 +1296,6 @@ function renderHistoryItems() {
     list.append(button);
   }
 
-  if (!selectedRevision || selectedRevision.hash === 'WORKTREE' || !historyItems.some((item) => item.hash === selectedRevision.hash)) {
-    loadRevision(historyItems[0].hash);
-  }
   const elapsed = performance.now() - t0;
   dlog('renderHistoryItems', `Rendered history items in ${elapsed.toFixed(2)}ms`);
 }
@@ -1308,11 +1305,11 @@ function showRevisionPlaceholder(title) {
   byId('revisionKind').textContent = 'Révision';
   byId('revisionSha').textContent = '';
   byId('revisionTitle').textContent = title;
-  byId('revisionMeta').textContent = 'Les fichiers et leur diff apparaîtront ici.';
+  byId('revisionMeta').textContent = 'Le diff sera calculé uniquement après votre clic.';
   byId('diffFile').textContent = 'Aucun fichier sélectionné';
   byId('diffStats').textContent = '';
   byId('diffContent').className = 'diff-content empty-state';
-  byId('diffContent').textContent = 'Sélectionnez un commit dans l’historique.';
+  byId('diffContent').textContent = 'Cliquez sur une modification ou un commit pour produire son diff.';
   byId('restoreRevision').hidden = true;
 }
 
@@ -1326,22 +1323,14 @@ function renderPatch(patch) {
     container.textContent = 'Aucune différence textuelle à afficher.';
     return;
   }
-  const lines = patch.split('\n');
-  const fragment = document.createDocumentFragment();
-  for (const line of lines) {
-    const row = document.createElement('div');
-    row.className = 'diff-line';
-    if (line.startsWith('@@')) row.classList.add('hunk');
-    else if (line.startsWith('+') && !line.startsWith('+++')) row.classList.add('addition');
-    else if (line.startsWith('-') && !line.startsWith('---')) row.classList.add('deletion');
-    else if (line.startsWith('diff --git') || line.startsWith('index ') || line.startsWith('---') || line.startsWith('+++')) row.classList.add('diff-header-line');
-    row.textContent = line || ' ';
-    fragment.append(row);
-  }
-  container.append(fragment);
+  const lineCount = patch.split('\n').length;
+  // Un unique nœud texte évite les dizaines de milliers de <div> qui
+  // bloquaient ensuite style/layout/paint pendant plusieurs centaines de ms.
+  container.classList.add('diff-pre');
+  container.textContent = patch;
   const elapsed = performance.now() - t0;
-  dlog('renderPatch', `Rendered ${lines.length} patch lines in ${elapsed.toFixed(2)}ms`);
-  if (elapsed > 100) dwarn('renderPatch', `Slow diff patch rendering: ${elapsed.toFixed(2)}ms for ${lines.length} lines`);
+  dlog('renderPatch', `Rendered ${lineCount} patch lines in ${elapsed.toFixed(2)}ms`);
+  if (elapsed > 100) dwarn('renderPatch', `Slow diff patch rendering: ${elapsed.toFixed(2)}ms for ${lineCount} lines`);
 }
 
 async function loadRevision(hash, filePath = '') {
@@ -1352,6 +1341,7 @@ async function loadRevision(hash, filePath = '') {
       if (!selectedFolder) return;
       const query = new URLSearchParams({ hash, case: selectedFolder });
       if (filePath) query.set('path', filePath);
+      if (hash === 'WORKTREE' && currentCase()?.snapshot) query.set('snapshot', currentCase().snapshot);
       const revision = await api(`/api/admin/revision?${query}`);
       selectedRevision = { hash, path: revision.selectedPath || '' };
       document.querySelectorAll('.commit-row').forEach((row) => row.classList.toggle('active', row.dataset.hash === hash));
@@ -1361,32 +1351,20 @@ async function loadRevision(hash, filePath = '') {
       byId('revisionSha').textContent = revision.shortHash || '';
       byId('revisionTitle').textContent = revision.subject;
       byId('revisionMeta').textContent = revision.kind === 'worktree'
-        ? `${revision.files.length} fichier${revision.files.length > 1 ? 's' : ''} modifié${revision.files.length > 1 ? 's' : ''}`
+        ? `${revision.filesCount} fichier${revision.filesCount > 1 ? 's' : ''} modifié${revision.filesCount > 1 ? 's' : ''}`
         : `${revision.author} · ${new Date(revision.timestamp).toLocaleString('fr-FR')}`;
       byId('restoreRevision').hidden = revision.kind === 'worktree';
 
-      const selected = revision.files.find((file) => file.path === revision.selectedPath);
-      const totals = revision.files.reduce((sum, file) => ({
-        added: sum.added + (Number.isFinite(file.added) ? file.added : 0),
-        deleted: sum.deleted + (Number.isFinite(file.deleted) ? file.deleted : 0),
-      }), { added: 0, deleted: 0 });
-      byId('diffFile').textContent = revision.selectedPath || `${revision.files.length} fichier${revision.files.length > 1 ? 's' : ''}`;
-      byId('diffStats').textContent = selected && selected.added != null
-        ? `+${selected.added}  −${selected.deleted}`
-        : !revision.selectedPath && (totals.added || totals.deleted)
-          ? `+${totals.added}  −${totals.deleted}`
-        : revision.truncated ? 'Diff tronqué' : '';
+      byId('diffFile').textContent = revision.selectedPath
+        || (revision.filesCount == null ? 'Diff du commit' : `${revision.filesCount} fichier${revision.filesCount > 1 ? 's' : ''}`);
+      const stats = revision.stats || {};
+      const statLabel = stats.added || stats.deleted ? `+${stats.added || 0}  −${stats.deleted || 0}` : '';
+      byId('diffStats').textContent = `${statLabel}${revision.truncated ? `${statLabel ? ' · ' : ''}Diff tronqué` : ''}`;
       renderPatch(revision.patch);
     } catch (error) {
       byId('diffContent').textContent = error.message;
       toast(error.message);
-      // showRevisionPlaceholder() resets selectedRevision to null, so call it
-      // first, then mark this hash as "attempted". Otherwise
-      // renderHistoryItems() sees selectedRevision as still unset/stale and
-      // retries the same broken hash forever (e.g. on every periodic
-      // repository refresh) — this is what causes the apparent freeze.
       showRevisionPlaceholder('Révision indisponible');
-      selectedRevision = { hash, path: filePath || '' };
     }
   });
 }
@@ -1408,6 +1386,43 @@ async function loadHistoryItems() {
   renderHistoryItems();
 }
 
+function mergeSelectedCase(folder) {
+  const index = repositoryData?.folders?.findIndex((item) => item.path === folder.path) ?? -1;
+  if (index >= 0) repositoryData.folders[index] = { ...repositoryData.folders[index], ...folder };
+}
+
+async function loadSelectedCase({ quiet = false } = {}) {
+  if (!selectedFolder) {
+    historyItems = [];
+    renderFolders();
+    renderHistoryItems();
+    return;
+  }
+  if (!quiet) byId('historyList').textContent = 'Chargement du dossier…';
+  const detailQuery = new URLSearchParams({ case: selectedFolder });
+  const detailRequest = api(`/api/admin/repository/case?${detailQuery}`);
+  const historyRequest = historyView === 'commits'
+    ? api(`/api/admin/history?${new URLSearchParams({ limit: '120', case: selectedFolder })}`)
+    : Promise.resolve(null);
+  const [{ folder }, historyData] = await Promise.all([detailRequest, historyRequest]);
+  mergeSelectedCase(folder);
+  if (historyData) historyItems = historyData.history;
+
+  if (selectedRevision?.hash === 'WORKTREE'
+      && !folder.workingChanges.some((change) => change.path === selectedRevision.path)) {
+    showRevisionPlaceholder('Sélectionnez une modification');
+  }
+  if (selectedRevision && selectedRevision.hash !== 'WORKTREE'
+      && historyView === 'commits'
+      && !historyItems.some((item) => item.hash === selectedRevision.hash)) {
+    showRevisionPlaceholder('Sélectionnez un commit');
+  }
+  updateCaseToolbar();
+  renderFolders();
+  renderHistoryItems();
+  historyLoaded = true;
+}
+
 let repositoryRefreshInFlight = false;
 
 async function loadRepositoryHistory({ quiet = false } = {}) {
@@ -1422,11 +1437,11 @@ async function loadRepositoryHistory({ quiet = false } = {}) {
     if (!repositoryData.folders.some((folder) => folder.path === selectedFolder)) {
       selectedFolder = repositoryData.folders[0]?.path || '';
       selectedRevision = null;
+      showRevisionPlaceholder('Sélectionnez une modification');
     }
     updateCaseToolbar();
     renderFolders();
-    await loadHistoryItems();
-    historyLoaded = true;
+    await loadSelectedCase({ quiet });
   } catch (error) {
     byId('historyList').textContent = error.message;
     if (!quiet) toast(error.message);
@@ -1440,9 +1455,15 @@ async function selectHistoryFolder(folder) {
   selectedRevision = null;
   selectedOriginals = new Set();
   if (originalsJob?.case !== folder) showOriginalsProgress('');
+  showRevisionPlaceholder('Sélectionnez une modification');
   updateCaseToolbar();
   renderFolders();
-  await loadHistoryItems();
+  try {
+    await loadSelectedCase();
+  } catch (error) {
+    byId('historyList').textContent = error.message;
+    toast(error.message);
+  }
 }
 
 function desktopPlatform() {
@@ -1496,8 +1517,9 @@ function updateCaseToolbar() {
 async function setHistoryView(view) {
   historyView = view;
   selectedRevision = null;
+  showRevisionPlaceholder(view === 'changes' ? 'Sélectionnez une modification' : 'Sélectionnez un commit');
   document.querySelectorAll('[data-history-view]').forEach((button) => button.classList.toggle('active', button.dataset.historyView === view));
-  await loadRepositoryHistory({ quiet: true });
+  await loadHistoryItems();
 }
 
 async function createManualCommit() {
@@ -1509,7 +1531,7 @@ async function createManualCommit() {
   try {
     const result = await api('/api/admin/commits', { method: 'POST', body: JSON.stringify({ label, case: selectedFolder }) });
     toast(result.created ? 'Commit enregistré' : 'Aucune nouvelle modification à enregistrer');
-    await loadRepositoryHistory({ quiet: true });
+    await loadSelectedCase({ quiet: true });
   } catch (error) {
     toast(error.message);
   } finally {
@@ -1534,7 +1556,7 @@ async function restoreSelectedRevision() {
     historyView = 'changes';
     document.querySelectorAll('[data-history-view]').forEach((item) => item.classList.toggle('active', item.dataset.historyView === 'changes'));
     selectedRevision = null;
-    await loadRepositoryHistory({ quiet: true });
+    await loadSelectedCase({ quiet: true });
   } catch (error) {
     toast(error.message);
   } finally {
@@ -1564,6 +1586,36 @@ function initLogViewer() {
     const text = (window.__PM_LOGS || []).map((l) => `[${l.timestamp}] [${l.source}] [${l.level}] ${l.message} ${l.data ? JSON.stringify(l.data) : ''}`).join('\n');
     navigator.clipboard.writeText(text).then(() => toast('Logs copiés dans le presse-papier'));
   });
+}
+
+function initPerformanceMonitoring() {
+  if ('PerformanceObserver' in window && PerformanceObserver.supportedEntryTypes?.includes('longtask')) {
+    const longTaskObserver = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        const attribution = entry.attribution?.[0];
+        dwarn('longtask', `Main thread blocked for ${entry.duration.toFixed(2)}ms`, {
+          startTime: Number(entry.startTime.toFixed(2)),
+          container: attribution?.containerName || attribution?.name || 'unknown',
+        });
+      }
+    });
+    longTaskObserver.observe({ type: 'longtask', buffered: true });
+    window.__PM_LONG_TASK_OBSERVER = longTaskObserver;
+  } else {
+    dlog('performance', 'Long Task API unavailable in this browser');
+  }
+
+  window.addEventListener('load', () => {
+    requestAnimationFrame(() => {
+      const navigation = performance.getEntriesByType('navigation')[0];
+      if (!navigation) return;
+      dlog('performance', 'Window load completed', {
+        domContentLoadedMs: Number(navigation.domContentLoadedEventEnd.toFixed(2)),
+        loadEventMs: Number(navigation.loadEventEnd.toFixed(2)),
+        transferredBytes: navigation.transferSize,
+      });
+    });
+  }, { once: true });
 }
 
 document.querySelectorAll('[data-history-view]').forEach((button) => button.addEventListener('click', () => setHistoryView(button.dataset.historyView)));
@@ -1687,18 +1739,8 @@ window.addEventListener('beforeunload', (event) => {
 });
 
 initLogViewer();
+initPerformanceMonitoring();
 
 const requestedTab = location.hash.slice(1);
 setActiveTab(['history', 'settings', 'pieces', 'telegram', 'files'].includes(requestedTab) ? requestedTab : 'history');
 loadStatus();
-
-const REPOSITORY_REFRESH_MS = 30000;
-
-async function scheduleRepositoryRefresh() {
-  if (document.visibilityState === 'visible' && byId('history').classList.contains('active')) {
-    await loadRepositoryHistory({ quiet: true });
-  }
-  setTimeout(scheduleRepositoryRefresh, REPOSITORY_REFRESH_MS);
-}
-
-setTimeout(scheduleRepositoryRefresh, REPOSITORY_REFRESH_MS);

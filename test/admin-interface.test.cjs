@@ -20,7 +20,7 @@ test('Dossiers est le premier onglet et Vue d’ensemble est intégrée aux para
   }
 });
 
-test('le diff est affiché directement sans colonne de fichiers dupliquée', () => {
+test('le diff est produit uniquement après un clic et rendu sans milliers de nœuds', () => {
   const html = read('admin/index.html');
   const app = read('admin/app.js');
   const css = read('admin/styles.css');
@@ -29,6 +29,11 @@ test('le diff est affiché directement sans colonne de fichiers dupliquée', () 
   assert.doesNotMatch(app, /revisionFiles|revisionFileCount|changed-file-row/);
   assert.doesNotMatch(css, /changed-file-list|changed-file-row|changed-files-pane/);
   assert.match(app, /loadRevision\(item\.hash\)/);
+  assert.doesNotMatch(app, /loadRevision\(historyItems\[0\]\.hash\)/);
+  assert.doesNotMatch(app, /loadRevision\('WORKTREE', selectedChange/);
+  assert.match(app, /container\.textContent = patch/);
+  assert.doesNotMatch(css, /\.diff-line/);
+  assert.doesNotMatch(app, /REPOSITORY_REFRESH_MS|scheduleRepositoryRefresh/);
 });
 
 test('le MCP local ne charge ni ne relaie aucun MCP distant', () => {
@@ -44,4 +49,18 @@ test('le MCP local ne charge ni ne relaie aucun MCP distant', () => {
   assert.doesNotMatch(sources, /MCP_REMOTE|MCP_URL|mcpRemote|api\/mcp-config|MCP SERVEUR REMOTE|serveur distant/i);
   assert.doesNotMatch(read('admin/index.html'), /MCP distante|MCP_REMOTE_URL|MCP_API_KEY/i);
   assert.doesNotMatch(read('admin/app.js'), /mcpRemoteUrl|MCP_REMOTE_URL|MCP_API_KEY/);
+});
+
+test('l’administration journalise les tâches longues et les temps serveur', () => {
+  const app = read('admin/app.js');
+  const routes = read('websocket-server/admin-routes.cjs');
+  const commits = read('piecemaker-plugin/scripts/lib/commits.cjs');
+
+  assert.match(app, /PerformanceObserver\.supportedEntryTypes\?\.includes\('longtask'\)/);
+  assert.match(app, /response\.headers\.get\('Server-Timing'\)/);
+  assert.match(routes, /res\.set\('Server-Timing'/);
+  assert.match(routes, /router\.get\('\/repository\/case'/);
+  assert.match(commits, /\[PM-PERF\]/);
+  assert.match(commits, /logPerformance\('buildCurrentTree'/);
+  assert.match(commits, /logPerformance\('revisionDetails'/);
 });

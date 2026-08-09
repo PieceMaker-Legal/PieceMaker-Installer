@@ -2,11 +2,13 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const { performance } = require('node:perf_hooks');
 const { configuredWorkspacePath } = require('./workspace-paths.cjs');
 const {
+  caseOverview,
   createCommit,
+  listCases,
   listHistory,
-  repositoryOverview,
   resolveCase,
   resolveCasesRoot,
   restoreRevision,
@@ -386,6 +388,15 @@ function legalWorkspaceDirectory(repoRoot, homeDir) {
   return configuredWorkspacePath(homeDir);
 }
 
+function finishAdminTiming(res, metric, startedAt, details = {}) {
+  const durationMs = Number((performance.now() - startedAt).toFixed(1));
+  res.set('Server-Timing', `${metric};dur=${durationMs}`);
+  if (process.env.PIECEMAKER_PERF_LOG === '1' || durationMs >= 250) {
+    const write = durationMs >= 250 ? console.warn : console.log;
+    write(`[PM-PERF] admin.${metric}`, { durationMs, ...details });
+  }
+}
+
 /**
  * Dossiers tamponnables : un par `compilation_dossier_<documentId>.json` écrit
  * dans le dossier de sortie (voir server.cjs). `folder` est le dossier de
@@ -624,25 +635,36 @@ function createAdminRouter({
   });
 
   router.get('/repository', async (req, res) => {
+    const startedAt = performance.now();
     try {
-      const overview = await repositoryOverview(casesRoot(), homeDir);
-      // Le résumé du mapping accompagne le dossier : l'administration l'affiche
-      // à côté des pièces originales, sans second aller-retour. Seul le nombre
-      // d'entrées circule ici — leur contenu passe par `/mapping`.
-      for (const folder of overview.folders) {
-        // Le cadre « Pièces originales » ne montre que les pièces déposées :
-        // le Markdown issu de la conversion vit déjà dans l'historique.
-        folder.originals = folder.originals.filter((file) => file.extension !== '.md');
-        const mapping = readCaseMapping(path.join(overview.root, folder.path));
-        folder.mapping = {
-          exists: mapping.exists,
-          name: path.basename(mapping.file),
-          entries: Object.keys(mapping.mapping).length,
-        };
-      }
+      const overview = listCases(casesRoot());
+      finishAdminTiming(res, 'repository', startedAt, { folders: overview.folders.length });
       res.json(overview);
     } catch (error) {
       res.status(503).json({ error: error.message });
+    }
+  });
+
+  router.get('/repository/case', async (req, res) => {
+    const startedAt = performance.now();
+    try {
+      const folder = await caseOverview(casesRoot(), homeDir, String(req.query.case || '').trim());
+      // Les Markdown convertis vivent déjà dans l'historique ; ce cadre ne
+      // présente que les pièces originales et un résumé non sensible du mapping.
+      folder.originals = folder.originals.filter((file) => file.extension !== '.md');
+      const mapping = readCaseMapping(path.join(casesRoot(), folder.path));
+      folder.mapping = {
+        exists: mapping.exists,
+        name: path.basename(mapping.file),
+        entries: Object.keys(mapping.mapping).length,
+      };
+      finishAdminTiming(res, 'case', startedAt, {
+        changes: folder.changes,
+        originals: folder.originals.length,
+      });
+      res.json({ folder });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
     }
   });
 
@@ -761,23 +783,34 @@ function createAdminRouter({
   });
 
   router.get('/history', async (req, res) => {
+    const startedAt = performance.now();
     try {
       const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 250);
       const caseName = String(req.query.case || '').trim();
-      res.json({ history: await listHistory(casesRoot(), homeDir, { limit, caseName }) });
+      const history = await listHistory(casesRoot(), homeDir, { limit, caseName });
+      finishAdminTiming(res, 'history', startedAt, { commits: history.length, limit });
+      res.json({ history });
     } catch (error) {
       res.status(400).json({ error: error.message });
     }
   });
 
   router.get('/revision', async (req, res) => {
+    const startedAt = performance.now();
     try {
       const hash = String(req.query.hash || '');
       const filePath = String(req.query.path || '');
+      const snapshot = String(req.query.snapshot || '');
       const caseName = String(req.query.case || '').trim();
-      res.json(hash === 'WORKTREE'
-        ? await worktreeDetails(casesRoot(), homeDir, caseName, filePath)
-        : await revisionDetails(casesRoot(), homeDir, caseName, hash, filePath));
+      const revision = hash === 'WORKTREE'
+        ? await worktreeDetails(casesRoot(), homeDir, caseName, filePath, snapshot)
+        : await revisionDetails(casesRoot(), homeDir, caseName, hash, filePath);
+      finishAdminTiming(res, 'revision', startedAt, {
+        files: revision.filesCount,
+        patchBytes: Buffer.byteLength(revision.patch || '', 'utf8'),
+        truncated: revision.truncated,
+      });
+      res.json(revision);
     } catch (error) {
       res.status(400).json({ error: error.message });
     }

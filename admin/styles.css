@@ -264,11 +264,7 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .diff-toolbar strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .diff-stats { color: #1a7f37; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: nowrap; }
 .diff-content { min-height: 0; flex: 1; overflow: auto; padding: 8px 0 24px; background: #fff; font: 11.5px/1.52 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 4; }
-.diff-line { min-width: max-content; padding: 0 14px; white-space: pre; }
-.diff-line.addition { background: #dafbe1; color: #116329; }
-.diff-line.deletion { background: #ffebe9; color: #82071e; }
-.diff-line.hunk { margin: 5px 0; background: #ddf4ff; color: #0550ae; }
-.diff-line.diff-header-line { color: #57606a; font-weight: 700; }
+.diff-content.diff-pre { padding: 8px 14px 24px; white-space: pre; }
 .diff-content.empty-state { display: grid; place-items: center; padding: 30px; color: #6e7781; font-family: inherit; font-size: .8rem; text-align: center; }
 
 @media (max-width: 800px) {
