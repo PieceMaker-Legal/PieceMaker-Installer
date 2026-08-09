@@ -4,6 +4,7 @@ import {
   splitMarkdownDocument,
   visualEditorToMarkdown,
 } from './markdown.mjs';
+import { buildMappingDocument, groupMappingByCode } from './mapping-model.mjs';
 
 // ---------------------------------------------------------------------------
 // CENTRALIZED LOGGING SYSTEM & LOG VIEWER INTEGRATION
@@ -1168,48 +1169,82 @@ function refreshMappingCount() {
   byId('mappingDialogCount').textContent = String(mappingEntries().length);
 }
 
-function addMappingEntry(entity = '', code = '', { focus = false } = {}) {
+function watchMappingInput(input) {
+  input.addEventListener('input', () => {
+    input.classList.remove('invalid');
+    setMessage(byId('mappingMessage'));
+  });
+  return input;
+}
+
+function addMappingVariant(container, value = '', { focus = false } = {}) {
+  const variantRow = document.createElement('div');
+  variantRow.className = 'mapping-variant-row';
+  const input = watchMappingInput(document.createElement('input'));
+  input.className = 'mapping-variant';
+  input.value = value;
+  input.placeholder = 'M. Dupont';
+  input.setAttribute('aria-label', 'Autre variant');
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'remove-mapping-variant';
+  remove.title = 'Supprimer ce variant';
+  remove.textContent = '×';
+  remove.addEventListener('click', () => variantRow.remove());
+  variantRow.append(input, remove);
+  container.append(variantRow);
+  if (focus) input.focus();
+}
+
+function addMappingEntry(group = {}, { focus = false } = {}) {
   const rows = byId('mappingRows');
   const empty = rows.querySelector('.mapping-empty');
   if (empty) empty.remove();
   const row = document.createElement('div');
   row.className = 'mapping-entry';
-  const entityInput = document.createElement('input');
-  entityInput.value = entity;
-  entityInput.placeholder = 'Jean Dupont';
-  entityInput.setAttribute('aria-label', 'Donnée d’origine');
-  const codeInput = document.createElement('input');
-  codeInput.className = 'code';
-  codeInput.value = code;
-  codeInput.placeholder = 'PERSON_01';
-  codeInput.setAttribute('aria-label', 'Code de remplacement');
+  const codeInput = watchMappingInput(document.createElement('input'));
+  codeInput.className = 'mapping-code code';
+  codeInput.value = group.code || '';
+  codeInput.placeholder = 'PERSONNE_PHYSIQUE_01';
+  codeInput.setAttribute('aria-label', 'Nom anonymisé');
+  const principalInput = watchMappingInput(document.createElement('input'));
+  principalInput.className = 'mapping-primary';
+  principalInput.value = group.principal || '';
+  principalInput.placeholder = 'Jean Dupont';
+  principalInput.setAttribute('aria-label', 'Variant principal pour le revert');
+  const variants = document.createElement('div');
+  variants.className = 'mapping-variants';
+  const variantList = document.createElement('div');
+  variantList.className = 'mapping-variant-list';
+  for (const variant of group.variants || []) addMappingVariant(variantList, variant);
+  const addVariant = document.createElement('button');
+  addVariant.type = 'button';
+  addVariant.className = 'add-mapping-variant';
+  addVariant.textContent = '+ Variant';
+  addVariant.addEventListener('click', () => addMappingVariant(variantList, '', { focus: true }));
+  variants.append(variantList, addVariant);
   const remove = document.createElement('button');
   remove.type = 'button';
+  remove.className = 'remove-mapping-entry';
   remove.title = 'Supprimer cette entrée';
   remove.textContent = '×';
   remove.addEventListener('click', () => {
     row.remove();
     refreshMappingCount();
-    if (!mappingEntries().length) renderMappingRows({});
+    if (!mappingEntries().length) renderMappingRows({}, {});
   });
-  for (const input of [entityInput, codeInput]) {
-    input.addEventListener('input', () => {
-      input.classList.remove('invalid');
-      setMessage(byId('mappingMessage'));
-    });
-  }
-  row.append(entityInput, codeInput, remove);
+  row.append(codeInput, principalInput, variants, remove);
   rows.append(row);
   refreshMappingCount();
-  if (focus) entityInput.focus();
+  if (focus) codeInput.focus();
 }
 
-function renderMappingRows(mapping) {
+function renderMappingRows(mapping, reverseMapping) {
   const t0 = performance.now();
   const rows = byId('mappingRows');
   rows.textContent = '';
-  const pairs = Object.entries(mapping || {});
-  if (!pairs.length) {
+  const groups = groupMappingByCode(mapping, reverseMapping);
+  if (!groups.length) {
     const empty = document.createElement('p');
     empty.className = 'mapping-empty';
     empty.textContent = 'Aucune entrée. Ajoutez-en une ou régénérez depuis les scans PII.';
@@ -1217,47 +1252,32 @@ function renderMappingRows(mapping) {
     refreshMappingCount();
     return;
   }
-  for (const [entity, code] of pairs) addMappingEntry(entity, code);
-  dlog('renderMappingRows', `Rendered ${pairs.length} rows in ${(performance.now() - t0).toFixed(2)}ms`);
+  for (const group of groups) addMappingEntry(group);
+  dlog('renderMappingRows', `Rendered ${groups.length} grouped rows in ${(performance.now() - t0).toFixed(2)}ms`);
 }
 
-function collectMapping() {
-  const mapping = {};
-  const codes = new Map();
-  for (const row of mappingEntries()) {
-    const [entityInput, codeInput] = row.querySelectorAll('input');
-    const entity = entityInput.value.trim();
-    const code = codeInput.value.trim();
-    if (!entity && !code) continue;
-    if (!entity || !code) {
-      (entity ? codeInput : entityInput).classList.add('invalid');
-      throw new Error('Chaque entrée demande une donnée d’origine et un code.');
+function collectMappingDocument() {
+  const rows = [...mappingEntries()];
+  const groups = rows.map((row) => ({
+    code: row.querySelector('.mapping-code')?.value,
+    principal: row.querySelector('.mapping-primary')?.value,
+    variants: [...row.querySelectorAll('.mapping-variant')].map((input) => input.value),
+  }));
+  try {
+    return buildMappingDocument(groups);
+  } catch (error) {
+    const row = rows[error.rowIndex];
+    let input = null;
+    if (error.field === 'code') input = row?.querySelector('.mapping-code');
+    if (error.field === 'principal') input = row?.querySelector('.mapping-primary');
+    if (error.field === 'variant') {
+      input = [...(row?.querySelectorAll('.mapping-variant') || [])]
+        .find((candidate) => candidate.value.trim() === error.variant);
     }
-    if (mapping[entity]) {
-      entityInput.classList.add('invalid');
-      throw new Error(`« ${entity} » apparaît deux fois.`);
-    }
-    if (codes.has(code) && codes.get(code) !== entity) {
-      codeInput.classList.add('invalid');
-      throw new Error(`Le code « ${code} » est déjà utilisé par une autre donnée.`);
-    }
-    mapping[entity] = code;
-    codes.set(code, entity);
+    input?.classList.add('invalid');
+    input?.focus();
+    throw error;
   }
-  return mapping;
-}
-
-function buildReverseMapping(mapping) {
-  const previous = mappingDocument?.reverse_mapping || {};
-  const reverse = {};
-  for (const [entity, code] of Object.entries(mapping)) {
-    const variants = new Set([entity]);
-    for (const variant of previous[code] || []) {
-      if (!Object.prototype.hasOwnProperty.call(mapping, variant) || mapping[variant] === code) variants.add(variant);
-    }
-    reverse[code] = [...variants];
-  }
-  return reverse;
 }
 
 function setDetailView(view) {
@@ -1286,7 +1306,7 @@ async function openMappingEditor() {
     const data = await api(`/api/admin/mapping?case=${encodeURIComponent(selectedFolder)}`);
     mappingDocument = { mapping: data.mapping, reverse_mapping: data.reverse_mapping };
     byId('mappingDialogTitle').textContent = data.name;
-    renderMappingRows(data.mapping);
+    renderMappingRows(data.mapping, data.reverse_mapping);
     setMessage(byId('mappingMessage'), data.exists ? '' : 'Ce dossier n’a pas encore de fichier de mapping.');
   } catch (error) {
     setMessage(byId('mappingMessage'), error.message, 'error');
@@ -1297,15 +1317,15 @@ async function saveMapping() {
   const button = byId('saveMapping');
   button.disabled = true;
   try {
-    const mapping = collectMapping();
+    const document = collectMappingDocument();
     const data = await api('/api/admin/mapping', {
       method: 'PUT',
-      body: JSON.stringify({ case: selectedFolder, mapping, reverse_mapping: buildReverseMapping(mapping) }),
+      body: JSON.stringify({ case: selectedFolder, ...document }),
     });
     mappingDocument = { mapping: data.mapping, reverse_mapping: data.reverse_mapping };
-    renderMappingRows(data.mapping);
+    renderMappingRows(data.mapping, data.reverse_mapping);
     setMessage(byId('mappingMessage'), '');
-    toast(`Mapping enregistré${data.commit?.created ? ' et commité' : ''} · ${Object.keys(data.mapping).length} entrée(s)`);
+    toast(`Mapping enregistré${data.commit?.created ? ' et commité' : ''} · ${Object.keys(data.reverse_mapping).length} nom(s) anonymisé(s)`);
     await loadSelectedCase({ quiet: true });
     showMappingEditorHeader();
   } catch (error) {
@@ -1326,7 +1346,7 @@ async function rebuildMapping() {
     });
     mappingDocument = { mapping: data.mapping, reverse_mapping: data.reverse_mapping };
     byId('mappingDialogTitle').textContent = data.name;
-    renderMappingRows(data.mapping);
+    renderMappingRows(data.mapping, data.reverse_mapping);
     setMessage(byId('mappingMessage'), `${data.added} entrée(s) ajoutée(s), ${data.total} au total${data.commit?.created ? ' · commit enregistré' : ''}.`);
     await loadSelectedCase({ quiet: true });
     showMappingEditorHeader();
@@ -1942,7 +1962,7 @@ byId('selectAllOriginals').addEventListener('change', (event) => {
 byId('convertOriginals').addEventListener('click', () => startOriginalsPipeline('convert'));
 byId('anonymizeOriginals').addEventListener('click', () => startOriginalsPipeline('anonymize'));
 byId('openMapping').addEventListener('click', openMappingEditor);
-byId('addMappingRow').addEventListener('click', () => addMappingEntry('', '', { focus: true }));
+byId('addMappingRow').addEventListener('click', () => addMappingEntry({}, { focus: true }));
 byId('rebuildMapping').addEventListener('click', rebuildMapping);
 byId('saveMapping').addEventListener('click', saveMapping);
 byId('caseTelegramCard').addEventListener('click', openCaseTelegramEditor);
