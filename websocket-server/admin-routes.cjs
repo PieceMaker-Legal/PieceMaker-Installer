@@ -6,7 +6,11 @@ const { performance } = require('node:perf_hooks');
 const { configuredWorkspacePath } = require('./workspace-paths.cjs');
 const {
   caseOverview,
+  checkoutHistoryBranch,
   createCommit,
+  createHistoryBranch,
+  historyBranches,
+  isTechnicalCaseDirectoryName,
   listCases,
   listHistory,
   resolveCase,
@@ -18,11 +22,16 @@ const {
 const {
   cancelOriginalsJob,
   getJob,
+  listOriginals,
   readCaseMapping,
   rebuildCaseMapping,
   saveCaseMapping,
   startOriginalsJob,
+  writeCaseMapping,
 } = require('./originals-pipeline.cjs');
+const {
+  writeProtection,
+} = require('../piecemaker-plugin/scripts/lib/protection.cjs');
 const {
   claudeAssetStatus,
   registerClaudeAsset,
@@ -48,6 +57,42 @@ const ENV_KEYS = new Set([
   'PYTHON_PATH',
   'SMART_CONVERTER_PATH',
 ]);
+
+function validateNewCaseName(value) {
+  const name = String(value || '').trim();
+  if (!name || name.length > 120 || name === '.' || name === '..' || path.basename(name) !== name
+      || name.startsWith('.') || /[\x00-\x1f\x7f]/.test(name) || isTechnicalCaseDirectoryName(name)) {
+    throw new Error('Nom de dossier juridique invalide.');
+  }
+  return name;
+}
+
+async function createLegalCase({ casesRoot, homeDir, name }) {
+  const root = resolveCasesRoot(casesRoot);
+  const safeName = validateNewCaseName(name);
+  const directory = path.join(root, safeName);
+  if (fs.existsSync(directory)) throw new Error(`Le dossier juridique « ${safeName} » existe déjà.`);
+  fs.mkdirSync(directory);
+  try {
+    writeProtection(directory, { unprotected: [] });
+    const mapping = writeCaseMapping(directory, { mapping: {}, reverse_mapping: {} });
+    await createCommit({
+      casesRoot: root,
+      caseName: safeName,
+      homeDir,
+      label: 'Création du dossier juridique',
+      event: 'admin-case-create',
+      paths: [path.basename(mapping.file)],
+      waitForLockMs: 10_000,
+    });
+    const folder = await caseOverview(root, homeDir, safeName);
+    folder.branches = await historyBranches(root, homeDir, safeName);
+    return folder;
+  } catch (error) {
+    fs.rmSync(directory, { recursive: true, force: true });
+    throw error;
+  }
+}
 
 function defaultConfig(repoRoot, homeDir = path.join(os.homedir(), '.piecemaker')) {
   return {
@@ -645,6 +690,19 @@ function createAdminRouter({
     }
   });
 
+  router.post('/repository/cases', async (req, res) => {
+    try {
+      const folder = await createLegalCase({
+        casesRoot: casesRoot(),
+        homeDir,
+        name: req.body?.name,
+      });
+      res.status(201).json({ ok: true, folder });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   router.get('/repository/case', async (req, res) => {
     const startedAt = performance.now();
     try {
@@ -658,11 +716,42 @@ function createAdminRouter({
         name: path.basename(mapping.file),
         entries: Object.keys(mapping.mapping).length,
       };
+      folder.branches = await historyBranches(casesRoot(), homeDir, folder.name);
       finishAdminTiming(res, 'case', startedAt, {
         changes: folder.changes,
         originals: folder.originals.length,
       });
       res.json({ folder });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  router.post('/branches', async (req, res) => {
+    try {
+      const branches = await createHistoryBranch({
+        casesRoot: casesRoot(),
+        caseName: String(req.body?.case || '').trim(),
+        homeDir,
+        name: req.body?.name,
+      });
+      if (branches.skipped === 'busy') throw new Error('L’historique est occupé. Réessayez dans quelques secondes.');
+      res.status(201).json({ ok: true, ...branches });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  router.put('/branches/current', async (req, res) => {
+    try {
+      const branches = await checkoutHistoryBranch({
+        casesRoot: casesRoot(),
+        caseName: String(req.body?.case || '').trim(),
+        homeDir,
+        name: req.body?.name,
+      });
+      if (branches.skipped === 'busy') throw new Error('L’historique est occupé. Réessayez dans quelques secondes.');
+      res.json({ ok: true, ...branches });
     } catch (error) {
       res.status(400).json({ error: error.message });
     }
@@ -693,6 +782,7 @@ function createAdminRouter({
       const job = await startOriginalsJob({
         casesRoot: casesRoot(),
         caseName: String(req.body?.case || '').trim(),
+        homeDir,
         action: String(req.body?.action || ''),
         files: Array.isArray(req.body?.files) ? req.body.files : [],
         options: {
@@ -722,6 +812,46 @@ function createAdminRouter({
     res.json({ ok: true, job });
   });
 
+  // ── Protection des pièces ────────────────────────────────────────────────
+  // La protection est une propriété du fichier, pas de son emplacement : c'est
+  // ici qu'on la décide, et les hooks Claude Code l'appliquent
+  // (`piecemaker-plugin/scripts/protect-originals.mjs`). Tout est protégé par
+  // défaut ; `protection.json` n'enregistre que les exceptions.
+
+  router.get('/protection', async (req, res) => {
+    const startedAt = performance.now();
+    try {
+      const legalCase = resolveCase(casesRoot(), String(req.query.case || '').trim());
+      const files = await listOriginals(legalCase.root);
+      finishAdminTiming(res, 'protection', startedAt, { files: files.length });
+      res.json({
+        case: legalCase.name,
+        files,
+        protectedCount: files.filter((file) => file.protected).length,
+        truncated: Boolean(files.truncated),
+      });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  router.put('/protection', (req, res) => {
+    try {
+      if (!Array.isArray(req.body?.unprotected)) {
+        throw new Error('« unprotected » doit être la liste des pièces laissées accessibles à l’IA.');
+      }
+      const legalCase = resolveCase(casesRoot(), String(req.body?.case || '').trim());
+      const saved = writeProtection(legalCase.root, { unprotected: req.body.unprotected });
+      res.json({
+        ok: true,
+        case: legalCase.name,
+        unprotected: [...saved.unprotected],
+      });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   // Le mapping du dossier est le seul fichier de l'administration qui contient
   // des données personnelles en clair : il n'est jamais journalisé, seulement
   // rendu au navigateur local qui l'a demandé.
@@ -741,7 +871,7 @@ function createAdminRouter({
     }
   });
 
-  router.put('/mapping', (req, res) => {
+  router.put('/mapping', async (req, res) => {
     try {
       if (!req.body?.mapping || typeof req.body.mapping !== 'object' || Array.isArray(req.body.mapping)) {
         throw new Error('Le mapping doit être un objet { entité: code }.');
@@ -751,6 +881,16 @@ function createAdminRouter({
         mapping: req.body.mapping,
         reverse_mapping: req.body.reverse_mapping,
       });
+      const commit = await createCommit({
+        casesRoot: legalCase.casesRoot,
+        caseName: legalCase.name,
+        homeDir,
+        label: 'Modification du mapping d’anonymisation',
+        event: 'admin-mapping-edit',
+        paths: [path.relative(legalCase.root, saved.file).split(path.sep).join('/')],
+        waitForLockMs: 10_000,
+      });
+      if (commit.skipped === 'busy') throw new Error('Mapping enregistré, mais historique occupé : commit automatique non créé.');
       res.json({
         ok: true,
         case: legalCase.name,
@@ -758,6 +898,7 @@ function createAdminRouter({
         exists: true,
         mapping: saved.mapping,
         reverse_mapping: saved.reverse_mapping,
+        commit: { created: commit.created, hash: commit.commit || null },
       });
     } catch (error) {
       res.status(400).json({ error: error.message });
@@ -768,6 +909,16 @@ function createAdminRouter({
     try {
       const legalCase = resolveCase(casesRoot(), String(req.body?.case || '').trim());
       const rebuilt = await rebuildCaseMapping(legalCase.root);
+      const commit = await createCommit({
+        casesRoot: legalCase.casesRoot,
+        caseName: legalCase.name,
+        homeDir,
+        label: 'Régénération du mapping d’anonymisation',
+        event: 'admin-mapping-rebuild',
+        paths: [path.relative(legalCase.root, rebuilt.file).split(path.sep).join('/')],
+        waitForLockMs: 10_000,
+      });
+      if (commit.skipped === 'busy') throw new Error('Mapping régénéré, mais historique occupé : commit automatique non créé.');
       res.json({
         ok: true,
         case: legalCase.name,
@@ -776,6 +927,7 @@ function createAdminRouter({
         total: rebuilt.total,
         mapping: rebuilt.mapping,
         reverse_mapping: rebuilt.reverse_mapping,
+        commit: { created: commit.created, hash: commit.commit || null },
       });
     } catch (error) {
       res.status(400).json({ error: error.message });
@@ -819,13 +971,17 @@ function createAdminRouter({
   router.post('/commits', async (req, res) => {
     try {
       const label = String(req.body?.label || 'Commit manuel').trim().slice(0, 140);
+      const description = String(req.body?.description || '').trim().slice(0, 4000);
       const result = await createCommit({
         casesRoot: casesRoot(),
         caseName: String(req.body?.case || '').trim(),
         homeDir,
         label,
+        description,
         event: 'manual',
+        waitForLockMs: 10_000,
       });
+      if (result.skipped === 'busy') throw new Error('L’historique est occupé. Réessayez dans quelques secondes.');
       res.status(result.created ? 201 : 200).json({ ok: true, ...result });
     } catch (error) {
       res.status(400).json({ error: error.message });
@@ -889,6 +1045,7 @@ function createAdminRouter({
 }
 
 module.exports = {
+  createLegalCase,
   createAdminRouter,
   createManagedFile,
   isLocalOrigin,

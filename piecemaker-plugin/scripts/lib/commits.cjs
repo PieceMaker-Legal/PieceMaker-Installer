@@ -1,10 +1,16 @@
-/** Full-state Git commit history for independent PieceMaker legal matters. */
+/** Git commit history for independent PieceMaker legal matters. */
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { performance } = require('node:perf_hooks');
+
+const {
+  documentKey,
+  isProtectedFile,
+  readProtection,
+} = require('./protection.cjs');
 
 const fsp = fs.promises;
 
@@ -22,6 +28,18 @@ const HISTORY_REF = 'refs/heads/main';
 const LEGACY_HISTORY_REF = 'refs/heads/checkpoints';
 const SAFE_EXTENSIONS = new Set(['.md', '.json']);
 const TECHNICAL_CASE_NAMES = new Set(['piecemaker_output']);
+/**
+ * Arborescences techniques jamais parcourues. Un dossier juridique finit par
+ * héberger autre chose que des pièces : le dossier de test embarque une copie
+ * complète d'un projet Node, dont les 53 000 fichiers noyaient la liste de
+ * l'administration (47 000 entrées) et faisaient entrer les `package.json` de
+ * `node_modules` dans l'historique du dossier.
+ */
+const IGNORED_DIRECTORY_NAMES = new Set([
+  'node_modules', 'dist', 'build', 'out', 'coverage', 'vendor', 'target', '__pycache__', 'venv',
+]);
+/** Plafond de la liste de l'administration ; au-delà, `truncated` le signale. */
+const MAX_ORIGINALS = 2000;
 const PERF_SLOW_MS = 250;
 const PERF_LOG_ALL = process.env.PIECEMAKER_PERF_LOG === '1';
 
@@ -120,30 +138,14 @@ async function runGit(cwd, args, {
   });
 }
 
-function normalizeOriginalName(value) {
-  return String(value || '')
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[\s_-]+/g, ' ')
-    .trim();
-}
-
-function isOriginalDirectoryName(value) {
-  return normalizeOriginalName(value) === 'pieces originales';
-}
-
+/** `PieceMaker_Output` et consorts ne sont pas des dossiers juridiques. */
 function isTechnicalCaseDirectoryName(value) {
   return TECHNICAL_CASE_NAMES.has(String(value || '').trim().toLowerCase());
 }
 
-function isProtectedOriginalPath(filePath, casesRoot = '') {
-  if (!filePath) return false;
-  const candidate = path.resolve(String(filePath));
-  const root = casesRoot ? path.resolve(String(casesRoot)) : null;
-  if (root && candidate !== root && !candidate.startsWith(`${root}${path.sep}`)) return false;
-  const relative = root ? path.relative(root, candidate) : candidate;
-  return relative.split(path.sep).some(isOriginalDirectoryName);
+function isIgnoredDirectoryName(value) {
+  const name = String(value || '').trim().toLowerCase();
+  return IGNORED_DIRECTORY_NAMES.has(name) || TECHNICAL_CASE_NAMES.has(name);
 }
 
 function resolveCasesRoot(casesRoot) {
@@ -188,7 +190,7 @@ function locateCaseFile(casesRoot, filePath) {
   const [caseName, ...parts] = relativeToRoot.split(path.sep);
   if (!caseName || parts.length === 0) return null;
   const legalCase = resolveCase(root, caseName);
-  if (isProtectedOriginalPath(absolute, legalCase.root)) {
+  if (isProtectedFile(absolute, legalCase.root)) {
     return { ...legalCase, absolute, protected: true, relative: parts.join('/') };
   }
   if (path.extname(absolute).toLowerCase() && !SAFE_EXTENSIONS.has(path.extname(absolute).toLowerCase())) {
@@ -207,11 +209,11 @@ async function safeCaseFiles(caseRoot) {
 
   async function visit(directory, prefix = '') {
     for (const entry of await fsp.readdir(directory, { withFileTypes: true })) {
-      if (entry.name.startsWith('.') || isOriginalDirectoryName(entry.name) || entry.isSymbolicLink()) continue;
+      if (entry.name.startsWith('.') || entry.isSymbolicLink()) continue;
       const absolute = path.join(directory, entry.name);
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
-        await visit(absolute, relative);
+        if (!isIgnoredDirectoryName(entry.name)) await visit(absolute, relative);
         continue;
       }
       if (!entry.isFile() || !SAFE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue;
@@ -229,10 +231,19 @@ async function safeCaseFiles(caseRoot) {
   return sorted;
 }
 
-function documentKey(filePath) {
-  return normalizeOriginalName(path.basename(filePath, path.extname(filePath))).replaceAll(' ', '-');
-}
-
+/**
+ * Les pièces d'un dossier juridique, sous-dossiers compris.
+ *
+ * Le recensement ne dépend plus d'un sous-dossier « Pièces originales » : un
+ * cabinet range ses pièces à plat, à côté du Markdown qu'il en tire, et cette
+ * organisation-là ne protégeait donc rien. Est une pièce tout fichier qui n'est
+ * ni Markdown ni JSON — le reste, ce sont les dérivés que l'IA a le droit de
+ * lire (sous mapping) et le mapping lui-même.
+ *
+ * `converted` / `scanned` restent l'état du pipeline ; `protected` est la
+ * décision prise dans l'administration et appliquée par les hooks. Les deux
+ * sont indépendants : une pièce peut être convertie sans être protégée.
+ */
 async function originalFilesOverview(caseRoot, { safeFiles: knownSafeFiles = null } = {}) {
   const startedAt = performance.now();
   const root = await fsp.realpath(caseRoot);
@@ -243,18 +254,34 @@ async function originalFilesOverview(caseRoot, { safeFiles: knownSafeFiles = nul
       .filter((file) => file.toLowerCase().endsWith('_sensitive_map.json'))
       .map((file) => documentKey(file).replace(/-sensitive-map$/, ''))
   );
+  const protection = readProtection(root);
   const originals = [];
+  let truncated = false;
 
   async function visit(directory, prefix = '') {
-    for (const entry of await fsp.readdir(directory, { withFileTypes: true })) {
-      if (entry.name.startsWith('.') || entry.isSymbolicLink()) continue;
+    const entries = await fsp.readdir(directory, { withFileTypes: true });
+    // MinerU écrit sa sortie dans `<nom de la pièce>/auto/` à côté de la pièce.
+    // Ces dérivés portent le même contenu que l'original — ils restent donc
+    // protégés par défaut — mais les lister doublerait chaque pièce dans
+    // l'administration.
+    const conversionOutputs = new Set(
+      entries.filter((entry) => entry.isFile()).map((entry) => documentKey(entry.name))
+    );
+    for (const entry of entries) {
+      if (entry.name.startsWith('.') || entry.name.startsWith('~$') || entry.isSymbolicLink()) continue;
       const absolute = path.join(directory, entry.name);
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
+        if (isIgnoredDirectoryName(entry.name) || conversionOutputs.has(documentKey(entry.name))) continue;
         await visit(absolute, relative);
         continue;
       }
+      if (originals.length >= MAX_ORIGINALS) {
+        truncated = true;
+        return;
+      }
       if (!entry.isFile()) continue;
+      if (SAFE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue;
       const stat = await fsp.stat(absolute);
       const key = documentKey(entry.name);
       const converted = markdownKeys.has(key);
@@ -267,21 +294,19 @@ async function originalFilesOverview(caseRoot, { safeFiles: knownSafeFiles = nul
         modifiedAt: stat.mtime.toISOString(),
         converted,
         scanned,
-        protected: converted && scanned,
-        status: converted ? (scanned ? 'protected' : 'awaiting-scan') : 'not-converted',
+        protected: isProtectedFile(absolute, root, protection),
+        status: converted ? (scanned ? 'ready' : 'awaiting-scan') : 'not-converted',
       });
     }
   }
 
-  for (const entry of await fsp.readdir(root, { withFileTypes: true })) {
-    if (entry.isDirectory() && !entry.isSymbolicLink() && isOriginalDirectoryName(entry.name)) {
-      await visit(path.join(root, entry.name));
-    }
-  }
+  await visit(root);
   const sorted = originals.sort((a, b) => a.path.localeCompare(b.path, 'fr'));
+  if (truncated) sorted.truncated = true;
   logPerformance('originalFilesOverview', startedAt, {
     safeFiles: safeFiles.length,
     originals: sorted.length,
+    truncated,
   });
   return sorted;
 }
@@ -316,34 +341,109 @@ async function ensureHistoryRepo(homeDir, legalCase) {
   if (!fs.existsSync(gitDir)) {
     fs.mkdirSync(path.dirname(gitDir), { recursive: true });
     await runGit(legalCase.root, ['init', '--bare', gitDir]);
+    await runGit(legalCase.root, ['symbolic-ref', 'HEAD', HISTORY_REF], { gitDir });
   }
   const main = await runGit(legalCase.root, ['rev-parse', '--verify', HISTORY_REF], { gitDir, allowFailure: true });
   if (main.code !== 0) {
     const legacy = await runGit(legalCase.root, ['rev-parse', '--verify', LEGACY_HISTORY_REF], { gitDir, allowFailure: true });
     if (legacy.code === 0) await runGit(legalCase.root, ['update-ref', HISTORY_REF, legacy.stdout], { gitDir });
   }
+  const head = await runGit(legalCase.root, ['symbolic-ref', '-q', 'HEAD'], { gitDir, allowFailure: true });
+  const headCommit = head.code === 0
+    ? await runGit(legalCase.root, ['rev-parse', '--verify', head.stdout], { gitDir, allowFailure: true })
+    : { code: 1 };
+  const migratedMain = await runGit(legalCase.root, ['rev-parse', '--verify', HISTORY_REF], { gitDir, allowFailure: true });
+  if (head.code !== 0 || !head.stdout.startsWith('refs/heads/') || (headCommit.code !== 0 && migratedMain.code === 0)) {
+    await runGit(legalCase.root, ['symbolic-ref', 'HEAD', HISTORY_REF], { gitDir });
+  }
   return gitDir;
 }
 
+async function activeHistoryRef(legalCase, gitDir) {
+  const result = await runGit(legalCase.root, ['symbolic-ref', '-q', 'HEAD'], { gitDir, allowFailure: true });
+  return result.code === 0 && result.stdout.startsWith('refs/heads/') ? result.stdout : HISTORY_REF;
+}
+
 async function latestCommit(legalCase, gitDir) {
-  const result = await runGit(legalCase.root, ['rev-parse', '--verify', HISTORY_REF], { gitDir, allowFailure: true });
+  const result = await runGit(legalCase.root, ['rev-parse', '--verify', await activeHistoryRef(legalCase, gitDir)], { gitDir, allowFailure: true });
   return result.code === 0 ? result.stdout : '';
 }
 
-async function withCaseLock(homeDir, legalCase, callback) {
+async function historyBranches(casesRoot, homeDir, caseName) {
+  const legalCase = resolveCase(casesRoot, caseName);
+  const gitDir = await ensureHistoryRepo(homeDir, legalCase);
+  const activeRef = await activeHistoryRef(legalCase, gitDir);
+  const active = activeRef.slice('refs/heads/'.length);
+  const result = await runGit(legalCase.root, ['for-each-ref', '--format=%(refname:short)', 'refs/heads'], { gitDir });
+  const branches = [...new Set([active, ...result.stdout.split('\n').map((name) => name.trim()).filter(Boolean)])]
+    .sort((a, b) => a.localeCompare(b, 'fr'));
+  return { active, branches };
+}
+
+async function validatedBranchName(legalCase, gitDir, value) {
+  const name = String(value || '').trim();
+  if (!name || name.length > 120) throw new Error('Le nom de branche est requis.');
+  const valid = await runGit(legalCase.root, ['check-ref-format', '--branch', name], { gitDir, allowFailure: true });
+  if (valid.code !== 0) throw new Error('Nom de branche Git invalide.');
+  return name;
+}
+
+async function createHistoryBranch({ casesRoot, caseName, homeDir = path.join(os.homedir(), '.piecemaker'), name } = {}) {
+  const legalCase = resolveCase(casesRoot, caseName);
+  return withCaseLock(homeDir, legalCase, async () => {
+    const gitDir = await ensureHistoryRepo(homeDir, legalCase);
+    const branch = await validatedBranchName(legalCase, gitDir, name);
+    const ref = `refs/heads/${branch}`;
+    const exists = await runGit(legalCase.root, ['show-ref', '--verify', '--quiet', ref], { gitDir, allowFailure: true });
+    if (exists.code === 0) throw new Error(`La branche « ${branch} » existe déjà.`);
+    const parent = await latestCommit(legalCase, gitDir);
+    if (parent) await runGit(legalCase.root, ['update-ref', ref, parent], { gitDir });
+    await runGit(legalCase.root, ['symbolic-ref', 'HEAD', ref], { gitDir });
+    caseStateCache.delete(caseStateCacheKey(homeDir, legalCase));
+    return historyBranches(casesRoot, homeDir, legalCase.name);
+  }, { waitMs: 10_000 });
+}
+
+async function checkoutHistoryBranch({ casesRoot, caseName, homeDir = path.join(os.homedir(), '.piecemaker'), name } = {}) {
+  const legalCase = resolveCase(casesRoot, caseName);
+  return withCaseLock(homeDir, legalCase, async () => {
+    const gitDir = await ensureHistoryRepo(homeDir, legalCase);
+    const branch = await validatedBranchName(legalCase, gitDir, name);
+    const ref = `refs/heads/${branch}`;
+    const exists = await runGit(legalCase.root, ['show-ref', '--verify', '--quiet', ref], { gitDir, allowFailure: true });
+    const current = await activeHistoryRef(legalCase, gitDir);
+    if (exists.code !== 0 && current !== ref) throw new Error(`La branche « ${branch} » n’existe pas.`);
+    await runGit(legalCase.root, ['symbolic-ref', 'HEAD', ref], { gitDir });
+    caseStateCache.delete(caseStateCacheKey(homeDir, legalCase));
+    return historyBranches(casesRoot, homeDir, legalCase.name);
+  }, { waitMs: 10_000 });
+}
+
+async function withCaseLock(homeDir, legalCase, callback, { waitMs = 0 } = {}) {
   const directory = historyDirectory(homeDir);
   fs.mkdirSync(directory, { recursive: true });
   const lock = path.join(directory, `${historyId(legalCase)}.lock`);
+  const deadline = Date.now() + Math.max(Number(waitMs) || 0, 0);
   let fd;
   try {
-    try {
-      fd = fs.openSync(lock, 'wx');
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-      const age = Date.now() - fs.statSync(lock).mtimeMs;
-      if (age < 60_000) return { created: false, skipped: 'busy' };
-      fs.unlinkSync(lock);
-      fd = fs.openSync(lock, 'wx');
+    while (fd === undefined) {
+      try {
+        fd = fs.openSync(lock, 'wx');
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+        let age = 0;
+        try {
+          age = Date.now() - fs.statSync(lock).mtimeMs;
+        } catch {
+          continue;
+        }
+        if (age >= 60_000) {
+          try { fs.unlinkSync(lock); } catch {}
+          continue;
+        }
+        if (Date.now() >= deadline) return { created: false, skipped: 'busy' };
+        await new Promise((resolve) => setTimeout(resolve, Math.min(50, Math.max(deadline - Date.now(), 1))));
+      }
     }
     fs.writeFileSync(fd, `${process.pid}\n`, 'utf8');
     return await callback();
@@ -383,6 +483,39 @@ async function buildCurrentTree(legalCase, gitDir, homeDir) {
       gitAddBatches: files.length ? 1 : 0,
     });
     return { tree, files };
+  } finally {
+    try { fs.unlinkSync(temporaryIndex); } catch {}
+  }
+}
+
+/**
+ * Construit un arbre à partir du parent en n'y appliquant que les chemins de
+ * l'opération courante. Les autres modifications présentes dans le work-tree
+ * restent donc locales et ne peuvent pas fuiter dans un commit automatique.
+ */
+async function buildSelectedTree(legalCase, gitDir, homeDir, parent, selectedPaths) {
+  const startedAt = performance.now();
+  const temporaryIndex = path.join(historyDirectory(homeDir), `index-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const env = { GIT_INDEX_FILE: temporaryIndex };
+  try {
+    await runGit(legalCase.root, ['read-tree', ...(parent ? [parent] : ['--empty'])], {
+      gitDir,
+      workTree: legalCase.root,
+      env,
+    });
+    if (selectedPaths.length) {
+      await runGit(legalCase.root, [
+        'add', '-f', '-A', '--pathspec-from-file=-', '--pathspec-file-nul',
+      ], {
+        gitDir,
+        workTree: legalCase.root,
+        env,
+        input: Buffer.from(`${selectedPaths.map((file) => process.platform === 'darwin' ? file.normalize('NFC') : file).join('\0')}\0`, 'utf8'),
+      });
+    }
+    const tree = (await runGit(legalCase.root, ['write-tree'], { gitDir, workTree: legalCase.root, env })).stdout;
+    logPerformance('buildSelectedTree', startedAt, { files: selectedPaths.length });
+    return { tree, files: selectedPaths };
   } finally {
     try { fs.unlinkSync(temporaryIndex); } catch {}
   }
@@ -431,16 +564,25 @@ async function createCommit({
   caseName,
   homeDir = path.join(os.homedir(), '.piecemaker'),
   label = 'Commit PieceMaker',
+  description = '',
   sessionId = null,
   event = 'manual',
+  paths = null,
+  waitForLockMs = 0,
 } = {}) {
   const legalCase = resolveCase(casesRoot, caseName);
   caseStateCache.delete(caseStateCacheKey(homeDir, legalCase));
   const safeLabel = String(label || 'Commit PieceMaker').replace(/[\r\n]+/g, ' ').trim().slice(0, 140);
+  const safeDescription = String(description || '').replaceAll('\0', '').replaceAll('\r\n', '\n').trim().slice(0, 4000);
+  const selectedPaths = paths == null
+    ? null
+    : [...new Set((Array.isArray(paths) ? paths : [paths]).map((file) => validateRelativeSafePath(legalCase, file)))];
   return withCaseLock(homeDir, legalCase, async () => {
     const gitDir = await ensureHistoryRepo(homeDir, legalCase);
     const parent = await latestCommit(legalCase, gitDir);
-    const current = await buildCurrentTree(legalCase, gitDir, homeDir);
+    const current = selectedPaths === null
+      ? await buildCurrentTree(legalCase, gitDir, homeDir)
+      : await buildSelectedTree(legalCase, gitDir, homeDir, parent, selectedPaths);
     const parentTree = parent
       ? (await runGit(legalCase.root, ['rev-parse', `${parent}^{tree}`], { gitDir })).stdout
       : await emptyTree(legalCase, gitDir);
@@ -449,7 +591,7 @@ async function createCommit({
     }
 
     const timestamp = new Date().toISOString();
-    const message = `${safeLabel || 'Commit PieceMaker'}\n`;
+    const message = `${safeLabel || 'Commit PieceMaker'}\n${safeDescription ? `\n${safeDescription}\n` : ''}`;
     const identity = {
       GIT_AUTHOR_NAME: 'PieceMaker',
       GIT_AUTHOR_EMAIL: 'commits@piecemaker.local',
@@ -460,7 +602,7 @@ async function createCommit({
     };
     const args = ['commit-tree', current.tree, ...(parent ? ['-p', parent] : [])];
     const commit = (await runGit(legalCase.root, args, { gitDir, env: identity, input: message })).stdout;
-    await runGit(legalCase.root, ['update-ref', HISTORY_REF, commit, ...(parent ? [parent] : [])], { gitDir });
+    await runGit(legalCase.root, ['update-ref', await activeHistoryRef(legalCase, gitDir), commit, ...(parent ? [parent] : [])], { gitDir });
     const files = await diffTrees(legalCase, gitDir, parentTree, current.tree);
     return {
       created: true,
@@ -473,7 +615,7 @@ async function createCommit({
       caseName: legalCase.name,
       files,
     };
-  });
+  }, { waitMs: waitForLockMs });
 }
 
 function parseLog(raw) {
@@ -499,9 +641,10 @@ async function listHistory(casesRoot, homeDir, { caseName, limit = 120 } = {}) {
     return [];
   }
   const safeLimit = Math.min(Math.max(Number(limit) || 120, 1), 250);
+  const historyRef = await activeHistoryRef(legalCase, gitDir);
   const raw = (await runGit(legalCase.root, [
     'log', `--max-count=${safeLimit}`, '--date=iso-strict',
-    '--pretty=format:%x1e%H%x1f%h%x1f%an%x1f%aI%x1f%s', HISTORY_REF,
+    '--pretty=format:%x1e%H%x1f%h%x1f%an%x1f%aI%x1f%s', historyRef,
   ], { gitDir })).stdout;
   const history = parseLog(raw);
   logPerformance('listHistory', startedAt, { commits: history.length, limit: safeLimit });
@@ -514,7 +657,7 @@ function validateRelativeSafePath(legalCase, relativePath) {
     throw new Error('Chemin de fichier invalide.');
   }
   const absolute = path.join(legalCase.root, ...normalized.split('/'));
-  if (isProtectedOriginalPath(absolute, legalCase.root) || !SAFE_EXTENSIONS.has(path.extname(normalized).toLowerCase())) {
+  if (isProtectedFile(absolute, legalCase.root) || !SAFE_EXTENSIONS.has(path.extname(normalized).toLowerCase())) {
     throw new Error('Ce fichier n’est pas accessible à l’IA.');
   }
   return normalized;
@@ -523,7 +666,7 @@ function validateRelativeSafePath(legalCase, relativePath) {
 async function revisionMetadata(legalCase, gitDir, hash) {
   if (!/^[0-9a-f]{7,64}$/i.test(String(hash || ''))) throw new Error('Identifiant de révision invalide.');
   const commit = (await runGit(legalCase.root, ['rev-parse', '--verify', `${hash}^{commit}`], { gitDir })).stdout;
-  if ((await runGit(legalCase.root, ['merge-base', '--is-ancestor', commit, HISTORY_REF], { gitDir, allowFailure: true })).code !== 0) {
+  if ((await runGit(legalCase.root, ['merge-base', '--is-ancestor', commit, await activeHistoryRef(legalCase, gitDir)], { gitDir, allowFailure: true })).code !== 0) {
     throw new Error('Cette révision ne fait pas partie de ce dossier juridique.');
   }
   const raw = (await runGit(legalCase.root, ['show', '-s', '--date=iso-strict', '--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s', commit], { gitDir })).stdout;
@@ -647,7 +790,6 @@ function listCases(casesRoot) {
     .filter((entry) => entry.isDirectory()
       && !entry.isSymbolicLink()
       && !entry.name.startsWith('.')
-      && !isOriginalDirectoryName(entry.name)
       && !isTechnicalCaseDirectoryName(entry.name))
     .sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   return {
@@ -764,10 +906,12 @@ async function restoreRevision({ casesRoot, caseName, homeDir = path.join(os.hom
 module.exports = {
   SAFE_EXTENSIONS,
   caseOverview,
+  checkoutHistoryBranch,
   createCommit,
+  createHistoryBranch,
+  historyBranches,
   historyRepo,
-  isOriginalDirectoryName,
-  isProtectedOriginalPath,
+  isProtectedFile,
   isTechnicalCaseDirectoryName,
   listCases,
   logPerformance,

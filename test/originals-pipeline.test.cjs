@@ -11,9 +11,16 @@ const {
   readCaseMapping,
   rebuildCaseMapping,
   saveCaseMapping,
+  sessionArtifactPaths,
   startOriginalsJob,
   writeCaseMapping,
 } = require('../websocket-server/originals-pipeline.cjs');
+const {
+  createCommit,
+  listHistory,
+  resolveCase,
+  worktreeDetails,
+} = require('../piecemaker-plugin/scripts/lib/commits.cjs');
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-originals-test-'));
@@ -31,7 +38,12 @@ function fixture() {
 /** Les travaux sont suivis dans une table partagée : un test ne doit pas en
  *  laisser un en cours, le suivant refuserait de démarrer sur le même dossier. */
 async function waitForJob(jobId) {
-  for (let attempt = 0; attempt < 100 && getJob(jobId)?.state === 'running'; attempt += 1) {
+  // Très généreux à dessein. `node --test` lance les fichiers en parallèle et
+  // `commits.test.cjs` sature la machine de processus git : un simple spawn a
+  // été mesuré à 25 s dans ces conditions. Un travail qui n'a pas fini bloque
+  // en plus tous les suivants sur le même dossier (« Un traitement est déjà en
+  // cours »), donc abandonner trop tôt fait échouer trois tests d'un coup.
+  for (let attempt = 0; attempt < 1200 && getJob(jobId)?.state === 'running'; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   return getJob(jobId);
@@ -50,7 +62,12 @@ test('le cadre des pièces originales liste tout sauf le Markdown, avec ses deux
   writeScan(data.caseRoot, 'contrat', { PERSON: [{ text: 'Jean Dupont', start: 0, end: 11, score: 0.9 }] });
 
   const originals = await listOriginals(data.caseRoot);
-  assert.deepEqual(originals.map((file) => file.name), ['annexe.docx', 'contrat.pdf']);
+  // Les chemins sont relatifs au dossier juridique : une pièce n'a plus à vivre
+  // dans un sous-dossier dédié pour être recensée.
+  assert.deepEqual(originals.map((file) => file.path), [
+    'pièces originales/annexe.docx',
+    'pièces originales/contrat.pdf',
+  ]);
   const contrat = originals.find((file) => file.name === 'contrat.pdf');
   assert.equal(contrat.converted, true);
   assert.equal(contrat.scanned, true);
@@ -129,6 +146,69 @@ test('un mapping écrit à la main sans sens inverse reste exploitable', async (
   assert.equal(path.basename(saved.file), 'mapping_dossier.json');
 });
 
+test('les artefacts d’un lot excluent les fichiers modifiés par une autre session', async (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(data.caseRoot, 'annexe.md'), '# Annexe convertie\n');
+  fs.writeFileSync(path.join(data.caseRoot, 'annexe_sensitive_map.json'), '{"entities":{}}\n');
+  fs.writeFileSync(path.join(data.caseRoot, 'autre-session.md'), '# Concurrent\n');
+  writeCaseMapping(data.caseRoot, { mapping: { Martin: 'PERSONNE_PHYSIQUE_01' } });
+
+  const legalCase = resolveCase(data.casesRoot, 'Dossier Alpha');
+  const source = path.join(data.originals, 'annexe.docx');
+  assert.deepEqual(
+    await sessionArtifactPaths(legalCase, [source], 'convert'),
+    ['annexe.md'],
+  );
+  assert.deepEqual(
+    await sessionArtifactPaths(legalCase, [source], 'anonymize'),
+    ['annexe_sensitive_map.json', 'annexe.md', 'mapping_dossier.json'],
+  );
+});
+
+test('une conversion admin crée un commit ciblé et laisse les changements concurrents locaux', async (t) => {
+  const data = fixture();
+  const homeDir = path.join(data.root, 'home', '.piecemaker');
+  const fakeConverter = path.join(data.root, 'fake-converter.cjs');
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  t.after(() => {
+    delete process.env.PYTHON_PATH;
+    delete process.env.SMART_CONVERTER_PATH;
+  });
+  fs.writeFileSync(fakeConverter, [
+    "const fs = require('node:fs');",
+    "const path = require('node:path');",
+    "const input = process.argv[2];",
+    "const output = process.argv[process.argv.indexOf('-o') + 1];",
+    "fs.writeFileSync(path.join(output, `${path.basename(input, path.extname(input))}.md`), '# Conversion admin\\n');",
+  ].join('\n'));
+  process.env.PYTHON_PATH = process.execPath;
+  process.env.SMART_CONVERTER_PATH = fakeConverter;
+
+  const concurrentPath = path.join(data.caseRoot, 'autre-session.json');
+  fs.writeFileSync(concurrentPath, '{"version":1}\n');
+  await createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir, label: 'État initial' });
+  fs.writeFileSync(concurrentPath, '{"version":2}\n');
+
+  const annexe = (await listOriginals(data.caseRoot)).find((file) => file.name === 'annexe.docx');
+  const started = await startOriginalsJob({
+    casesRoot: data.casesRoot,
+    caseName: 'Dossier Alpha',
+    homeDir,
+    action: 'convert',
+    files: [annexe.path],
+  });
+  const finished = await waitForJob(started.id);
+  assert.equal(finished.state, 'done', finished.error);
+  assert.equal(finished.result.commit.created, true);
+  assert.deepEqual(finished.result.commit.files.map((file) => file.path), ['annexe.md']);
+  assert.match((await listHistory(data.casesRoot, homeDir, { caseName: 'Dossier Alpha' }))[0].subject, /Conversion de 1 pièce/);
+
+  const pending = await worktreeDetails(data.casesRoot, homeDir, 'Dossier Alpha', 'autre-session.json');
+  assert.equal(pending.filesCount, 1);
+  assert.equal(pending.selectedFile.path, 'autre-session.json');
+});
+
 test('un traitement refuse une pièce hors du dossier et une action inconnue', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
@@ -138,7 +218,7 @@ test('un traitement refuse une pièce hors du dossier et une action inconnue', a
   );
   await assert.rejects(
     startOriginalsJob({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', action: 'convert', files: ['../../secret.pdf'] }),
-    /Aucune pièce originale à traiter/
+    /Aucune pièce à traiter/
   );
   assert.equal(getJob('inexistant'), null);
 });
@@ -153,18 +233,15 @@ test('le traitement d’une pièce absente échoue sans créer de travail', asyn
     casesRoot: data.casesRoot,
     caseName: 'Dossier Alpha',
     action: 'convert',
-    files: ['contrat.pdf'],
+    files: ['pièces originales/contrat.pdf'],
   });
   assert.equal(job.state, 'running');
   assert.equal(job.total, 1);
-  assert.deepEqual(job.files, ['contrat.pdf']);
+  assert.deepEqual(job.files, ['pièces originales/contrat.pdf']);
 
   // Node exécuté à la place de Python échoue : le travail doit finir en erreur,
   // jamais rester bloqué en « running ».
-  for (let attempt = 0; attempt < 60 && getJob(job.id).state === 'running'; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  const finished = getJob(job.id);
+  const finished = await waitForJob(job.id);
   assert.equal(finished.state, 'error');
   assert.match(finished.error, /smart_converter\.py/);
 });
@@ -220,7 +297,7 @@ test('sans sélection, un traitement ne refait que les pièces incomplètes', as
   writeScan(data.caseRoot, 'contrat', { PERSON: [{ text: 'Jean Dupont', score: 0.9 }] });
 
   const job = await startOriginalsJob({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', action: 'anonymize' });
-  assert.deepEqual(job.files, ['annexe.docx'], 'la pièce déjà scannée est laissée de côté');
+  assert.deepEqual(job.files, ['pièces originales/annexe.docx'], 'la pièce déjà scannée est laissée de côté');
   assert.equal(job.skipped, 1);
   await waitForJob(job.id);
 });
@@ -243,9 +320,9 @@ test('un dossier déjà à jour rend un travail terminé sans lancer GLiNER', as
 
   // Une sélection explicite vaut demande de retraitement, elle relance le script.
   const forced = await startOriginalsJob({
-    casesRoot: data.casesRoot, caseName: 'Dossier Alpha', action: 'anonymize', files: ['contrat.pdf'],
+    casesRoot: data.casesRoot, caseName: 'Dossier Alpha', action: 'anonymize', files: ['pièces originales/contrat.pdf'],
   });
   assert.equal(forced.state, 'running');
-  assert.deepEqual(forced.files, ['contrat.pdf']);
+  assert.deepEqual(forced.files, ['pièces originales/contrat.pdf']);
   await waitForJob(forced.id);
 });

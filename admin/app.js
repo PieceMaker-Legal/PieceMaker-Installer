@@ -104,15 +104,22 @@ let historyLoaded = false;
 let repositoryData = null;
 let historyItems = [];
 let selectedFolder = '';
-let historyView = 'commits';
+let historyView = 'changes';
 let selectedRevision = null;
 let tamponImage = null;
 let dossiers = [];
 let selectedPieces = [];
 let selectedOriginals = new Set();
+// « pending » ne montre que ce qui reste à convertir ou à scanner ; « all »
+// montre tout le dossier, sous-dossiers compris, ce qui est indispensable pour
+// décider de la protection d'une pièce déjà traitée.
+let originalsScope = 'all';
 let originalsJob = null;
 let originalsJobTimer = null;
 let mappingDocument = null;
+let detailView = 'diff';
+let caseTelegram = null;
+let caseTelegramFolder = '';
 
 function toast(message) {
   const element = byId('toast');
@@ -868,29 +875,25 @@ function createHistoryEmpty(message, detail = '') {
 
 function renderFolders() {
   const t0 = performance.now();
-  const list = byId('folderList');
-  list.textContent = '';
-  byId('folderCount').textContent = String(repositoryData.folders.length);
-
-  for (const folder of repositoryData.folders) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = `folder-row${selectedFolder === folder.path ? ' active' : ''}`;
-    button.dataset.folder = folder.path;
-    const icon = document.createElement('span');
-    icon.className = 'folder-icon';
-    icon.textContent = '▸';
-    const label = document.createElement('span');
-    label.textContent = folder.name;
-    const count = document.createElement('span');
-    count.className = 'row-count';
-    count.textContent = folder.changes || '';
-    button.append(icon, label, count);
-    button.addEventListener('click', () => selectHistoryFolder(folder.path));
-    list.append(button);
+  const select = byId('caseSelect');
+  select.textContent = '';
+  const folders = repositoryData?.folders || [];
+  if (!folders.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'Aucun dossier';
+    select.append(option);
   }
+  for (const folder of folders) {
+    const option = document.createElement('option');
+    option.value = folder.path;
+    option.textContent = folder.changes ? `${folder.name} (${folder.changes})` : folder.name;
+    option.selected = selectedFolder === folder.path;
+    select.append(option);
+  }
+  select.disabled = !folders.length;
   renderOriginals();
-  dlog('renderFolders', `Rendered ${repositoryData.folders.length} folders in ${(performance.now() - t0).toFixed(2)}ms`);
+  dlog('renderFolders', `Rendered ${folders.length} folders in ${(performance.now() - t0).toFixed(2)}ms`);
 }
 
 function caseOriginals() {
@@ -904,14 +907,81 @@ function formatBytes(size) {
   return `${(value / (1024 * 1024)).toFixed(1)} Mo`;
 }
 
+function pendingOriginals() {
+  return caseOriginals().filter((original) => !original.converted || !original.scanned);
+}
+
+function visibleOriginals() {
+  return originalsScope === 'all' ? caseOriginals() : pendingOriginals();
+}
+
+/**
+ * Bascule de protection. L'état complet est renvoyé au serveur à chaque clic :
+ * `protection.json` ne stocke que les exceptions, donc la liste des pièces
+ * laissées accessibles est la seule chose à écrire.
+ */
+async function toggleProtection(original, button) {
+  const unprotected = caseOriginals()
+    .filter((file) => (file.path === original.path ? original.protected : !file.protected))
+    .map((file) => file.path);
+  button.disabled = true;
+  try {
+    await api('/api/admin/protection', {
+      method: 'PUT',
+      body: JSON.stringify({ case: selectedFolder, unprotected }),
+    });
+    original.protected = !original.protected;
+    toast(original.protected ? 'Pièce protégée' : 'Pièce accessible à l’IA');
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+    renderOriginals();
+  }
+}
+
+function shieldButton(original) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `shield-toggle ${original.protected ? 'on' : 'off'}`;
+  button.textContent = original.protected ? '🛡 Protégé' : '🔓 Accessible';
+  button.title = original.protected
+    ? 'L’IA ne peut pas ouvrir cette pièce. Cliquez pour la lui rendre accessible.'
+    : 'L’IA peut ouvrir cette pièce. Cliquez pour la protéger.';
+  button.addEventListener('click', (event) => {
+    // La ligne est un <label> : sans ça, le clic cocherait aussi la sélection.
+    event.preventDefault();
+    event.stopPropagation();
+    toggleProtection(original, button);
+  });
+  return button;
+}
+
+function statusLabel(original) {
+  if (!original.converted) return 'Non converti';
+  return original.scanned ? 'Converti et analysé' : 'Converti, analyse PII en attente';
+}
+
 function renderOriginals() {
   const t0 = performance.now();
   const list = byId('originalList');
-  const unhandledOriginals = caseOriginals().filter((original) => !original.converted || !original.scanned);
+  const originals = visibleOriginals().slice().sort((a, b) => {
+    if (a.protected !== b.protected) return a.protected ? 1 : -1;
+    return a.path.localeCompare(b.path, 'fr');
+  });
   list.textContent = '';
-  byId('originalCount').textContent = String(unhandledOriginals.length);
+  if (historyView === 'protected') {
+    byId('historyTitle').textContent = originalsScope === 'all' ? 'Pièces du dossier' : 'Pièces non traitées';
+    byId('historyCount').textContent = `${originals.length} pièce${originals.length > 1 ? 's' : ''}`;
+  }
+  for (const button of document.querySelectorAll('.scope-button')) {
+    button.classList.toggle('active', button.dataset.scope === originalsScope);
+  }
 
-  const known = new Set(unhandledOriginals.map((original) => original.path));
+  // La sélection pilote le pipeline, qui ne porte que sur les pièces non
+  // traitées : la restreindre à celles-là évite de lancer une conversion sur
+  // une pièce cochée dans la vue « Toutes » puis devenue à jour.
+  const known = new Set(pendingOriginals().map((original) => original.path));
   for (const selected of [...selectedOriginals]) {
     if (!known.has(selected)) selectedOriginals.delete(selected);
   }
@@ -922,56 +992,81 @@ function renderOriginals() {
     renderMappingSummary();
     return;
   }
-  if (!unhandledOriginals.length) {
-    list.append(createHistoryEmpty('Toutes les pièces sont traitées', 'Aucune pièce originale en attente.'));
+  if (!originals.length) {
+    list.append(originalsScope === 'all'
+      ? createHistoryEmpty('Aucune pièce', 'Ce dossier ne contient aucun document hors Markdown.')
+      : createHistoryEmpty('Toutes les pièces sont traitées', 'Basculez sur « Toutes » pour gérer leur protection.'));
     updateOriginalsActions();
     renderMappingSummary();
     return;
   }
 
   const fragment = document.createDocumentFragment();
-  for (const original of unhandledOriginals) {
-    const row = document.createElement('label');
-    row.className = `original-row${selectedOriginals.has(original.path) ? ' selected' : ''}`;
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.checked = selectedOriginals.has(original.path);
-    checkbox.addEventListener('change', () => {
-      if (checkbox.checked) selectedOriginals.add(original.path);
-      else selectedOriginals.delete(original.path);
-      row.classList.toggle('selected', checkbox.checked);
-      updateOriginalsActions();
-    });
-    const body = document.createElement('span');
-    body.className = 'original-body';
-    const name = document.createElement('strong');
-    name.textContent = original.path;
-    const detail = document.createElement('span');
-    detail.textContent = `${formatBytes(original.size)} · Non traité`;
-    body.append(name, detail);
-    row.append(checkbox, body);
-    fragment.append(row);
+  const groups = [
+    { protected: false, label: 'Pièces accessibles à l’IA' },
+    { protected: true, label: 'Pièces protégées' },
+  ];
+  for (const group of groups) {
+    const groupOriginals = originals.filter((original) => original.protected === group.protected);
+    if (!groupOriginals.length) continue;
+    const heading = document.createElement('div');
+    heading.className = 'original-group-title';
+    const headingLabel = document.createElement('span');
+    headingLabel.textContent = group.label;
+    const headingCount = document.createElement('span');
+    headingCount.className = 'count-badge';
+    headingCount.textContent = String(groupOriginals.length);
+    heading.append(headingLabel, headingCount);
+    fragment.append(heading);
+    for (const original of groupOriginals) {
+      const selectable = known.has(original.path);
+      const row = document.createElement('label');
+      row.className = `original-row${selectedOriginals.has(original.path) ? ' selected' : ''}`;
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = selectedOriginals.has(original.path);
+      checkbox.disabled = !selectable;
+      checkbox.title = selectable ? 'Sélectionner pour la conversion ou l’analyse' : 'Pièce déjà convertie et analysée';
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) selectedOriginals.add(original.path);
+        else selectedOriginals.delete(original.path);
+        row.classList.toggle('selected', checkbox.checked);
+        updateOriginalsActions();
+      });
+      const body = document.createElement('span');
+      body.className = 'original-body';
+      const name = document.createElement('strong');
+      name.textContent = original.path;
+      const detail = document.createElement('span');
+      detail.textContent = `${formatBytes(original.size)} · ${statusLabel(original)}`;
+      body.append(name, detail);
+      const badges = document.createElement('span');
+      badges.className = 'original-badges';
+      badges.append(shieldButton(original));
+      row.append(checkbox, body, badges);
+      fragment.append(row);
+    }
   }
   list.append(fragment);
   updateOriginalsActions();
   renderMappingSummary();
-  dlog('renderOriginals', `Rendered ${unhandledOriginals.length} originals in ${(performance.now() - t0).toFixed(2)}ms`);
+  dlog('renderOriginals', `Rendered ${originals.length} originals in ${(performance.now() - t0).toFixed(2)}ms`);
 }
 
 function originalsToProcess() {
-  const unhandledOriginals = caseOriginals().filter((original) => !original.converted || !original.scanned);
-  if (!selectedOriginals.size) return unhandledOriginals.map((original) => original.path);
-  return unhandledOriginals.filter((original) => selectedOriginals.has(original.path)).map((original) => original.path);
+  const pending = pendingOriginals();
+  if (!selectedOriginals.size) return pending.map((original) => original.path);
+  return pending.filter((original) => selectedOriginals.has(original.path)).map((original) => original.path);
 }
 
 function updateOriginalsActions() {
-  const originals = caseOriginals();
+  const pending = pendingOriginals();
   const running = Boolean(originalsJob && originalsJob.state === 'running');
   const count = originalsToProcess().length;
   const selectAll = byId('selectAllOriginals');
-  selectAll.disabled = running || !originals.length;
-  selectAll.checked = Boolean(originals.length) && selectedOriginals.size === originals.length;
-  selectAll.indeterminate = selectedOriginals.size > 0 && selectedOriginals.size < originals.length;
+  selectAll.disabled = running || !pending.length;
+  selectAll.checked = Boolean(pending.length) && selectedOriginals.size === pending.length;
+  selectAll.indeterminate = selectedOriginals.size > 0 && selectedOriginals.size < pending.length;
   // Sans case cochée les boutons portent sur tout le dossier et ne refont que
   // ce qui manque ; cocher des pièces revient à demander leur retraitement.
   const suffix = selectedOriginals.size ? ` (${count} sélectionnée${count > 1 ? 's' : ''})` : ' (tout le dossier)';
@@ -991,7 +1086,7 @@ function showOriginalsProgress(message, kind = '') {
 }
 
 function describeJob(job) {
-  const phase = { convert: 'Conversion', scan: 'Analyse PII', mapping: 'Mise à jour du mapping' }[job.phase] || 'Traitement';
+  const phase = { convert: 'Conversion', scan: 'Analyse PII', mapping: 'Mise à jour du mapping', commit: 'Enregistrement du commit' }[job.phase] || 'Traitement';
   if (job.state === 'running') return `${phase} · ${job.processed}/${job.total} · ${job.percent}%`;
   if (job.state === 'error') return `Échec : ${job.error}`;
   const result = job.result || {};
@@ -1001,9 +1096,10 @@ function describeJob(job) {
       : `Rien à analyser : les ${result.skipped} pièce(s) sont déjà scannées.`;
   }
   const untouched = result.skipped ? ` · ${result.skipped} déjà à jour` : '';
+  const committed = result.commit?.created ? ' · commit enregistré' : '';
   return job.action === 'convert'
-    ? `${result.converted || job.total} pièce(s) converties en Markdown${untouched}.`
-    : `${result.scanned || job.total} pièce(s) analysées · ${result.mappingAdded || 0} entrée(s) ajoutée(s) au mapping${untouched}.`;
+    ? `${result.converted || job.total} pièce(s) converties en Markdown${untouched}${committed}.`
+    : `${result.scanned || job.total} pièce(s) analysées · ${result.mappingAdded || 0} entrée(s) ajoutée(s) au mapping${untouched}${committed}.`;
 }
 
 async function startOriginalsPipeline(action) {
@@ -1037,7 +1133,7 @@ async function pollOriginalsJob() {
       return;
     }
     updateOriginalsActions();
-    toast(job.state === 'error' ? 'Traitement interrompu' : 'Traitement terminé');
+    toast(job.state === 'error' ? 'Traitement interrompu' : job.result?.commit?.created ? 'Traitement terminé et commité' : 'Traitement terminé');
     await loadSelectedCase({ quiet: true });
   } catch (error) {
     showOriginalsProgress(error.message, 'error');
@@ -1164,12 +1260,28 @@ function buildReverseMapping(mapping) {
   return reverse;
 }
 
-async function openMappingDialog() {
+function setDetailView(view) {
+  detailView = view;
+  byId('diffView').hidden = view !== 'diff';
+  byId('mappingView').hidden = view !== 'mapping';
+  byId('telegramCaseView').hidden = view !== 'telegram';
+  byId('caseTelegramCard').classList.toggle('active', view === 'telegram');
+}
+
+function showMappingEditorHeader() {
+  setDetailView('mapping');
+  selectedRevision = null;
+  byId('revisionKind').textContent = 'Mapping';
+  byId('revisionSha').textContent = '';
+  byId('revisionTitle').textContent = 'Mapping d’anonymisation';
+  byId('revisionMeta').textContent = `Dossier « ${currentCase()?.name || selectedFolder} »`;
+}
+
+async function openMappingEditor() {
   if (!selectedFolder) return;
-  const dialog = byId('mappingDialog');
+  showMappingEditorHeader();
   setMessage(byId('mappingMessage'), 'Chargement…');
   byId('mappingRows').textContent = '';
-  dialog.showModal();
   try {
     const data = await api(`/api/admin/mapping?case=${encodeURIComponent(selectedFolder)}`);
     mappingDocument = { mapping: data.mapping, reverse_mapping: data.reverse_mapping };
@@ -1193,8 +1305,9 @@ async function saveMapping() {
     mappingDocument = { mapping: data.mapping, reverse_mapping: data.reverse_mapping };
     renderMappingRows(data.mapping);
     setMessage(byId('mappingMessage'), '');
-    toast(`Mapping enregistré · ${Object.keys(data.mapping).length} entrée(s)`);
+    toast(`Mapping enregistré${data.commit?.created ? ' et commité' : ''} · ${Object.keys(data.mapping).length} entrée(s)`);
     await loadSelectedCase({ quiet: true });
+    showMappingEditorHeader();
   } catch (error) {
     setMessage(byId('mappingMessage'), error.message, 'error');
   } finally {
@@ -1214,8 +1327,9 @@ async function rebuildMapping() {
     mappingDocument = { mapping: data.mapping, reverse_mapping: data.reverse_mapping };
     byId('mappingDialogTitle').textContent = data.name;
     renderMappingRows(data.mapping);
-    setMessage(byId('mappingMessage'), `${data.added} entrée(s) ajoutée(s), ${data.total} au total.`);
+    setMessage(byId('mappingMessage'), `${data.added} entrée(s) ajoutée(s), ${data.total} au total${data.commit?.created ? ' · commit enregistré' : ''}.`);
     await loadSelectedCase({ quiet: true });
+    showMappingEditorHeader();
   } catch (error) {
     setMessage(byId('mappingMessage'), error.message, 'error');
   } finally {
@@ -1227,6 +1341,16 @@ function renderHistoryItems() {
   const t0 = performance.now();
   const list = byId('historyList');
   list.textContent = '';
+  updateManualCommitForm();
+  const protectedMode = historyView === 'protected';
+  byId('protectedTools').hidden = !protectedMode;
+  byId('originalList').hidden = !protectedMode;
+  list.hidden = protectedMode;
+  if (protectedMode) {
+    renderOriginals();
+    if (detailView === 'diff') showRevisionPlaceholder('Sélectionnez une modification ou ouvrez le mapping');
+    return;
+  }
   if (historyView === 'changes') {
     const changes = currentCase()?.workingChanges || [];
     byId('historyTitle').textContent = 'Modifications';
@@ -1302,6 +1426,7 @@ function renderHistoryItems() {
 
 function showRevisionPlaceholder(title) {
   selectedRevision = null;
+  setDetailView('diff');
   byId('revisionKind').textContent = 'Révision';
   byId('revisionSha').textContent = '';
   byId('revisionTitle').textContent = title;
@@ -1310,7 +1435,6 @@ function showRevisionPlaceholder(title) {
   byId('diffStats').textContent = '';
   byId('diffContent').className = 'diff-content empty-state';
   byId('diffContent').textContent = 'Cliquez sur une modification ou un commit pour produire son diff.';
-  byId('restoreRevision').hidden = true;
 }
 
 function renderPatch(patch) {
@@ -1335,6 +1459,7 @@ function renderPatch(patch) {
 
 async function loadRevision(hash, filePath = '') {
   return traceAsync(`loadRevision(${hash}, ${filePath})`, async () => {
+    setDetailView('diff');
     byId('diffContent').className = 'diff-content empty-state';
     byId('diffContent').textContent = 'Chargement du diff…';
     try {
@@ -1353,8 +1478,6 @@ async function loadRevision(hash, filePath = '') {
       byId('revisionMeta').textContent = revision.kind === 'worktree'
         ? `${revision.filesCount} fichier${revision.filesCount > 1 ? 's' : ''} modifié${revision.filesCount > 1 ? 's' : ''}`
         : `${revision.author} · ${new Date(revision.timestamp).toLocaleString('fr-FR')}`;
-      byId('restoreRevision').hidden = revision.kind === 'worktree';
-
       byId('diffFile').textContent = revision.selectedPath
         || (revision.filesCount == null ? 'Diff du commit' : `${revision.filesCount} fichier${revision.filesCount > 1 ? 's' : ''}`);
       const stats = revision.stats || {};
@@ -1370,7 +1493,7 @@ async function loadRevision(hash, filePath = '') {
 }
 
 async function loadHistoryItems() {
-  if (historyView === 'changes') {
+  if (historyView !== 'commits') {
     renderHistoryItems();
     return;
   }
@@ -1421,6 +1544,7 @@ async function loadSelectedCase({ quiet = false } = {}) {
   renderFolders();
   renderHistoryItems();
   historyLoaded = true;
+  void loadCaseTelegramState();
 }
 
 let repositoryRefreshInFlight = false;
@@ -1454,6 +1578,8 @@ async function selectHistoryFolder(folder) {
   selectedFolder = folder;
   selectedRevision = null;
   selectedOriginals = new Set();
+  caseTelegram = null;
+  caseTelegramFolder = '';
   if (originalsJob?.case !== folder) showOriginalsProgress('');
   showRevisionPlaceholder('Sélectionnez une modification');
   updateCaseToolbar();
@@ -1501,67 +1627,236 @@ async function revealCaseFolder(target, button) {
 
 function updateCaseToolbar() {
   const legalCase = currentCase();
-  byId('repositoryName').textContent = legalCase?.name || 'Aucun dossier';
   byId('repositoryPath').textContent = repositoryData?.root || '—';
-  byId('repositoryBranch').textContent = 'Commits du dossier';
   byId('repositoryHead').textContent = legalCase?.shortHead || 'Aucun';
-  byId('createCommit').disabled = !legalCase;
+  byId('pushState').textContent = legalCase?.shortHead ? `À jour · ${legalCase.shortHead}` : 'Actualiser l’historique local';
+  const branchSelect = byId('branchSelect');
+  branchSelect.textContent = '';
+  const branches = legalCase?.branches?.branches || [];
+  for (const branch of branches) {
+    const option = document.createElement('option');
+    option.value = branch;
+    option.textContent = branch;
+    option.selected = branch === legalCase.branches.active;
+    branchSelect.append(option);
+  }
+  branchSelect.disabled = !legalCase || !branches.length;
+  byId('openCreateBranch').disabled = !legalCase;
   const hasRoot = Boolean(repositoryData?.root);
   byId('revealFolder').disabled = !hasRoot;
   byId('openTerminal').disabled = !hasRoot;
   const scope = legalCase ? `le dossier « ${legalCase.name} »` : 'la racine PieceMaker';
   byId('revealFolder').title = `Afficher ${scope} dans le gestionnaire de fichiers`;
   byId('openTerminal').title = `Ouvrir un terminal dans ${scope}`;
+  renderCaseTelegramCard();
 }
 
-async function setHistoryView(view) {
-  historyView = view;
-  selectedRevision = null;
-  showRevisionPlaceholder(view === 'changes' ? 'Sélectionnez une modification' : 'Sélectionnez un commit');
-  document.querySelectorAll('[data-history-view]').forEach((button) => button.classList.toggle('active', button.dataset.historyView === view));
-  await loadHistoryItems();
+function renderCaseTelegramCard() {
+  const card = byId('caseTelegramCard');
+  card.disabled = !selectedFolder || !caseTelegram;
+  card.classList.toggle('configured', Boolean(caseTelegram?.token?.configured));
+  byId('caseTelegramTitle').textContent = !selectedFolder
+    ? 'Aucun dossier'
+    : !caseTelegram ? 'Chargement…' : caseTelegram.name || currentCase()?.name || 'Bot du dossier';
+  byId('caseTelegramState').textContent = !caseTelegram
+    ? 'Configuration indisponible'
+    : caseTelegram.token?.configured
+      ? `${caseTelegram.token.hint} · modifier le token`
+      : 'Ajouter un token BotFather';
 }
 
-async function createManualCommit() {
-  if (!selectedFolder) return;
-  const label = prompt('Message du commit', `Sauvegarde · ${new Date().toLocaleString('fr-FR')}`);
-  if (label === null) return;
-  const button = byId('createCommit');
-  button.disabled = true;
+async function loadCaseTelegramState() {
+  const caseName = currentCase()?.name || '';
+  if (caseName && caseTelegramFolder === caseName && caseTelegram) {
+    renderCaseTelegramCard();
+    return;
+  }
+  caseTelegram = null;
+  caseTelegramFolder = caseName;
+  renderCaseTelegramCard();
+  if (!selectedFolder || !caseName) return;
   try {
-    const result = await api('/api/admin/commits', { method: 'POST', body: JSON.stringify({ label, case: selectedFolder }) });
-    toast(result.created ? 'Commit enregistré' : 'Aucune nouvelle modification à enregistrer');
-    await loadSelectedCase({ quiet: true });
+    const data = await api('/api/admin/telegram');
+    if (caseTelegramFolder === caseName) {
+      caseTelegram = data.dossiers?.find((dossier) => dossier.directoryName === caseName) || null;
+    }
   } catch (error) {
-    toast(error.message);
+    dwarn('telegram', `État du bot du dossier indisponible : ${error.message}`);
+  }
+  renderCaseTelegramCard();
+}
+
+function openCaseTelegramEditor() {
+  if (!caseTelegram) return;
+  setDetailView('telegram');
+  selectedRevision = null;
+  byId('revisionKind').textContent = 'Telegram';
+  byId('revisionSha').textContent = '';
+  byId('revisionTitle').textContent = `Bot · ${currentCase()?.name || selectedFolder}`;
+  byId('revisionMeta').textContent = caseTelegram.running ? `Bot actif · PID ${caseTelegram.pid}` : 'Configuration locale du bot du dossier';
+  byId('telegramCaseName').value = caseTelegram.name || currentCase()?.name || '';
+  byId('telegramCaseToken').value = '';
+  byId('telegramCaseToken').placeholder = caseTelegram.token?.configured ? 'Laisser vide pour conserver le token' : '123456789:secret';
+  byId('telegramCaseHint').textContent = caseTelegram.token?.configured
+    ? `Token configuré (${caseTelegram.token.hint}). Saisissez-en un nouveau uniquement pour le remplacer.`
+    : 'Ajoutez le token transmis par BotFather pour lier ce dossier.';
+  setMessage(byId('telegramCaseMessage'));
+}
+
+async function saveCaseTelegramBot(event) {
+  event.preventDefault();
+  if (!caseTelegram) return;
+  const button = byId('saveTelegramCase');
+  button.disabled = true;
+  setMessage(byId('telegramCaseMessage'), 'Enregistrement…');
+  try {
+    const result = await api(`/api/admin/telegram/dossiers/${encodeURIComponent(caseTelegram.id)}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        name: byId('telegramCaseName').value,
+        token: byId('telegramCaseToken').value,
+      }),
+    });
+    caseTelegram = result.dossier;
+    renderCaseTelegramCard();
+    openCaseTelegramEditor();
+    setMessage(byId('telegramCaseMessage'), 'Bot du dossier enregistré.', 'success');
+    toast('Configuration Telegram enregistrée');
+  } catch (error) {
+    setMessage(byId('telegramCaseMessage'), error.message, 'error');
   } finally {
     button.disabled = false;
   }
 }
 
-async function restoreSelectedRevision() {
-  if (!selectedRevision || selectedRevision.hash === 'WORKTREE') return;
-  const title = byId('revisionTitle').textContent;
-  const confirmed = confirm(`Restaurer le commit « ${title} » du dossier « ${selectedFolder} » ?\n\nPieceMaker enregistrera d’abord l’état actuel dans un commit de sécurité. Les pièces originales ne seront jamais modifiées.`);
-  if (!confirmed) return;
-  const button = byId('restoreRevision');
+async function setHistoryView(view) {
+  historyView = view;
+  selectedRevision = null;
+  showRevisionPlaceholder(view === 'protected'
+    ? 'Sélectionnez une modification ou ouvrez le mapping'
+    : view === 'changes' ? 'Sélectionnez une modification' : 'Sélectionnez un commit');
+  document.querySelectorAll('[data-history-view]').forEach((button) => button.classList.toggle('active', button.dataset.historyView === view));
+  await loadHistoryItems();
+}
+
+function updateManualCommitForm() {
+  const form = byId('manualCommitForm');
+  const changes = currentCase()?.workingChanges || [];
+  const visible = historyView === 'changes' && Boolean(selectedFolder);
+  form.hidden = !visible;
+  const title = byId('commitTitle').value.trim();
+  const button = byId('createCommit');
+  button.disabled = !visible || !changes.length || !title;
+  button.textContent = changes.length
+    ? `Enregistrer ${changes.length} fichier${changes.length > 1 ? 's' : ''}`
+    : 'Aucune modification à enregistrer';
+}
+
+async function createManualCommit(event) {
+  event.preventDefault();
+  if (!selectedFolder) return;
+  const label = byId('commitTitle').value.trim();
+  const description = byId('commitDescription').value.trim();
+  if (!label) {
+    byId('commitTitle').focus();
+    return;
+  }
+  const button = byId('createCommit');
   button.disabled = true;
-  button.textContent = 'Restauration…';
   try {
-    const result = await api('/api/admin/restore', {
+    const result = await api('/api/admin/commits', {
       method: 'POST',
-      body: JSON.stringify({ hash: selectedRevision.hash, case: selectedFolder, confirm: true }),
+      body: JSON.stringify({ label, description, case: selectedFolder }),
     });
-    toast(result.safetyCommit ? 'Commit restauré — état précédent enregistré' : 'Commit restauré');
-    historyView = 'changes';
-    document.querySelectorAll('[data-history-view]').forEach((item) => item.classList.toggle('active', item.dataset.historyView === 'changes'));
-    selectedRevision = null;
+    toast(result.created ? 'Commit enregistré' : 'Aucune nouvelle modification à enregistrer');
+    if (result.created) {
+      byId('commitTitle').value = '';
+      byId('commitDescription').value = '';
+    }
     await loadSelectedCase({ quiet: true });
   } catch (error) {
     toast(error.message);
   } finally {
+    updateManualCommitForm();
+  }
+}
+
+function openCreationDialog(kind) {
+  const dialog = byId(kind === 'case' ? 'createCaseDialog' : 'createBranchDialog');
+  const input = byId(kind === 'case' ? 'newCaseName' : 'newBranchName');
+  const message = byId(kind === 'case' ? 'createCaseMessage' : 'createBranchMessage');
+  input.value = '';
+  setMessage(message);
+  dialog.showModal();
+  requestAnimationFrame(() => input.focus());
+}
+
+async function createCaseFromForm(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  setMessage(byId('createCaseMessage'), 'Création de la configuration complète…');
+  try {
+    const result = await api('/api/admin/repository/cases', {
+      method: 'POST',
+      body: JSON.stringify({ name: byId('newCaseName').value }),
+    });
+    selectedFolder = result.folder.path;
+    byId('createCaseDialog').close();
+    await loadRepositoryHistory();
+    toast('Dossier créé avec son mapping, sa protection et son historique');
+  } catch (error) {
+    setMessage(byId('createCaseMessage'), error.message, 'error');
+  } finally {
     button.disabled = false;
-    button.textContent = 'Restaurer cet état';
+  }
+}
+
+async function createBranchFromForm(event) {
+  event.preventDefault();
+  if (!selectedFolder) return;
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  setMessage(byId('createBranchMessage'), 'Création de la branche…');
+  try {
+    const result = await api('/api/admin/branches', {
+      method: 'POST',
+      body: JSON.stringify({ case: selectedFolder, name: byId('newBranchName').value }),
+    });
+    byId('createBranchDialog').close();
+    selectedRevision = null;
+    await loadSelectedCase({ quiet: true });
+    toast(`Branche « ${result.active} » créée`);
+  } catch (error) {
+    setMessage(byId('createBranchMessage'), error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function selectHistoryBranch(event) {
+  if (!selectedFolder) return;
+  const select = event.currentTarget;
+  select.disabled = true;
+  try {
+    await api('/api/admin/branches/current', {
+      method: 'PUT',
+      body: JSON.stringify({ case: selectedFolder, name: select.value }),
+    });
+    selectedRevision = null;
+    historyItems = [];
+    showRevisionPlaceholder(historyView === 'commits'
+      ? 'Sélectionnez un commit'
+      : historyView === 'protected' ? 'Sélectionnez une modification ou ouvrez le mapping' : 'Sélectionnez une modification');
+    await loadSelectedCase({ quiet: true });
+    toast(`Branche « ${select.value} » active`);
+  } catch (error) {
+    toast(error.message);
+    updateCaseToolbar();
+  } finally {
+    select.disabled = false;
   }
 }
 
@@ -1620,22 +1915,38 @@ function initPerformanceMonitoring() {
 
 document.querySelectorAll('[data-history-view]').forEach((button) => button.addEventListener('click', () => setHistoryView(button.dataset.historyView)));
 byId('refreshHistory').addEventListener('click', () => loadRepositoryHistory());
+byId('caseSelect').addEventListener('change', (event) => selectHistoryFolder(event.currentTarget.value));
+byId('branchSelect').addEventListener('change', selectHistoryBranch);
+byId('openCreateCase').addEventListener('click', () => openCreationDialog('case'));
+byId('openCreateBranch').addEventListener('click', () => openCreationDialog('branch'));
+byId('createCaseForm').addEventListener('submit', createCaseFromForm);
+byId('createBranchForm').addEventListener('submit', createBranchFromForm);
+byId('cancelCreateCase').addEventListener('click', () => byId('createCaseDialog').close());
+byId('cancelCreateBranch').addEventListener('click', () => byId('createBranchDialog').close());
 byId('revealFolder').addEventListener('click', (event) => revealCaseFolder('files', event.currentTarget));
 byId('openTerminal').addEventListener('click', (event) => revealCaseFolder('terminal', event.currentTarget));
 labelFolderActions();
-byId('createCommit').addEventListener('click', createManualCommit);
-byId('restoreRevision').addEventListener('click', restoreSelectedRevision);
+byId('manualCommitForm').addEventListener('submit', createManualCommit);
+byId('commitTitle').addEventListener('input', updateManualCommitForm);
+for (const button of document.querySelectorAll('.scope-button')) {
+  button.addEventListener('click', (event) => {
+    originalsScope = event.currentTarget.dataset.scope;
+    renderOriginals();
+  });
+}
+
 byId('selectAllOriginals').addEventListener('change', (event) => {
-  selectedOriginals = event.currentTarget.checked ? new Set(caseOriginals().map((original) => original.path)) : new Set();
+  selectedOriginals = event.currentTarget.checked ? new Set(pendingOriginals().map((original) => original.path)) : new Set();
   renderOriginals();
 });
 byId('convertOriginals').addEventListener('click', () => startOriginalsPipeline('convert'));
 byId('anonymizeOriginals').addEventListener('click', () => startOriginalsPipeline('anonymize'));
-byId('openMapping').addEventListener('click', openMappingDialog);
+byId('openMapping').addEventListener('click', openMappingEditor);
 byId('addMappingRow').addEventListener('click', () => addMappingEntry('', '', { focus: true }));
 byId('rebuildMapping').addEventListener('click', rebuildMapping);
 byId('saveMapping').addEventListener('click', saveMapping);
-byId('closeMapping').addEventListener('click', () => byId('mappingDialog').close());
+byId('caseTelegramCard').addEventListener('click', openCaseTelegramEditor);
+byId('telegramCaseView').addEventListener('submit', saveCaseTelegramBot);
 
 function applyEditorCommand(button) {
   byId('fileEditor').focus();

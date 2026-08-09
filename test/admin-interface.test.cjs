@@ -36,6 +36,51 @@ test('le diff est produit uniquement après un clic et rendu sans milliers de n�
   assert.doesNotMatch(app, /REPOSITORY_REFRESH_MS|scheduleRepositoryRefresh/);
 });
 
+test('le commit manuel est un formulaire titré en bas des modifications', () => {
+  const html = read('admin/index.html');
+  const app = read('admin/app.js');
+  const historyColumn = html.match(/<aside class="history-column">[\s\S]*?<\/aside>/)?.[0] || '';
+
+  assert.match(historyColumn, /id="historyList"[\s\S]*id="manualCommitForm"/);
+  assert.match(historyColumn, /id="commitTitle"[^>]*required/);
+  assert.match(historyColumn, /id="commitDescription"/);
+  assert.match(app, /JSON\.stringify\(\{ label, description, case: selectedFolder \}\)/);
+  assert.doesNotMatch(app, /prompt\('Message du commit'/);
+});
+
+test('la vue Dossiers suit le bureau Git avec trois onglets et des détails intégrés', () => {
+  const html = read('admin/index.html');
+  const app = read('admin/app.js');
+  const switcher = html.match(/<div class="history-switch"[\s\S]*?<\/div>/)?.[0] || '';
+
+  assert.ok(switcher.indexOf('Modifications') < switcher.indexOf('Historique'));
+  assert.ok(switcher.indexOf('Historique') < switcher.indexOf('Pièces protégées'));
+  assert.match(switcher, /id="changesView" class="active"/);
+  for (const id of ['caseSelect', 'openCreateCase', 'branchSelect', 'openCreateBranch', 'refreshHistory', 'caseTelegramCard']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(html, /id="mappingView" class="inline-detail"/);
+  assert.match(html, /id="telegramCaseView" class="inline-detail/);
+  assert.doesNotMatch(html, /id="mappingDialog"|Restaurer cet état/);
+  assert.doesNotMatch(app, /showModal\(\).*mapping|restoreSelectedRevision|restoreRevision/);
+  assert.match(app, /a\.protected !== b\.protected/);
+  assert.match(app, /\/api\/admin\/repository\/cases/);
+  assert.match(app, /\/api\/admin\/branches\/current/);
+  assert.match(app, /\/api\/admin\/telegram\/dossiers/);
+});
+
+test('les écritures automatiques déclarent des commits limités à leurs chemins', () => {
+  const routes = read('websocket-server/admin-routes.cjs');
+  const pipeline = read('websocket-server/originals-pipeline.cjs');
+  const hook = read('piecemaker-plugin/scripts/commit-track.mjs');
+
+  assert.match(hook, /paths: \[located\.relative\]/);
+  assert.match(pipeline, /sessionArtifactPaths/);
+  assert.match(pipeline, /paths,/);
+  assert.match(routes, /admin-mapping-edit/);
+  assert.match(routes, /admin-mapping-rebuild/);
+});
+
 test('le MCP local ne charge ni ne relaie aucun MCP distant', () => {
   const sources = [
     'mcp-server/mcp-server-local.js',

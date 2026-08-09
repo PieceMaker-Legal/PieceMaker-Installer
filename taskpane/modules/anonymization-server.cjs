@@ -35,123 +35,21 @@ function readFileStripBOM(filePath, encoding) {
     return content;
 }
 
+// Le moteur de correspondance d'entités vit dans le plugin PieceMaker : les
+// hooks Claude Code en ont besoin et ne peuvent pas require `taskpane/`. Une
+// seule définition des frontières de mots, des variantes Unicode et du tri
+// longest-entity-first, sinon deux moteurs de substitution divergent en
+// silence.
+const {
+    buildEntityRegex,
+    byDescendingEntityLength,
+} = require('../../piecemaker-plugin/scripts/lib/mapping.cjs');
+
 /**
  * Escape regex special characters
  */
 function escapeRegex(string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-// ============================================
-// ENTITY MATCHING
-// ============================================
-
-/**
- * Minimum length below which an entity is never substituted unless it is an
- * all-caps acronym (see buildEntityRegex). Measured on GENSIGHT_URD: entities of
- * 2-3 chars such as "CA", "us", "AU", "RU", "ZA" triggered 10 000+ substitutions,
- * of which >99% landed inside unrelated words (capital, business, Faubourg, rue,
- * organization).
- */
-const MIN_ENTITY_LENGTH = 4;
-
-/** Word characters, Unicode-aware — JS \b is ASCII-only and breaks on "Motté". */
-const WORD_BOUNDARY_BEFORE = '(?<![\\p{L}\\p{N}_])';
-const WORD_BOUNDARY_AFTER = '(?![\\p{L}\\p{N}_])';
-
-/**
- * Punctuation that exists in several Unicode spellings, mapped to a class matching all of
- * them. Same reasoning as the whitespace tolerance below, and not hypothetical: the
- * scanner normalises entity text with NFKC, which rewrites U+2011 NON-BREAKING HYPHEN to
- * U+2010 HYPHEN. GENSIGHT contains "Kreos‑A" with U+2011, so the mapping carried
- * "Kreos‐A" with U+2010 and the substitution never found it — an entity detected and left
- * in clear in the delivered document. Verified by verify_substitution.cjs, which counts
- * entities whose regex matches nothing.
- */
-const CHAR_VARIANTS = [
-    // hyphen-minus, hyphen, non-breaking hyphen, figure/en/em dash, minus sign
-    { chars: '-‐‑‒–—―−', class: '[-\\u2010-\\u2015\\u2212]' },
-    // straight and typographic apostrophes — ubiquitous in French ("d'affaires")
-    { chars: "'‘’ʼ´", class: "['\\u2018\\u2019\\u02BC\\u00B4]" },
-    // straight and typographic double quotes
-    { chars: '"“”«»', class: '["\\u201C\\u201D]' },
-];
-
-const VARIANT_OF = new Map();
-for (const { chars, class: cls } of CHAR_VARIANTS) {
-    for (const c of chars) VARIANT_OF.set(c, cls);
-}
-
-/** Escape a token, replacing each variant-bearing character by its class. */
-function escapeWithVariants(token) {
-    let out = '';
-    for (const ch of token) {
-        out += VARIANT_OF.get(ch) || escapeRegex(ch);
-    }
-    return out;
-}
-
-/**
- * Build the regex used to find an entity in the document text.
- *
- * Three properties the previous `new RegExp(escapeRegex(x), 'gi')` did not have:
- *
- *  1. Word boundaries. Without them a 2-letter entity rewrites a seventh of the
- *     document from inside other words.
- *  2. Whitespace tolerance. Entities extracted from converted Markdown carry hard
- *     line breaks, double spaces and NBSP ("Board\nof  Directors"). Escaping them
- *     literally means the entity matches only where that exact run of whitespace
- *     occurs — i.e. almost nowhere, so the PII was never substituted at all.
- *     Collapsing every whitespace run to \s+ makes one entity match all its
- *     written forms.
- *  3. Case sensitivity for short acronyms. "EDF"/"SNCF"/"BNP" must still match, but
- *     case-insensitively "US" also matches the pronoun "us". Entities shorter than
- *     MIN_ENTITY_LENGTH are therefore matched case-sensitively and only if they are
- *     all-caps; longer entities stay case-insensitive.
- *
- * @returns {RegExp|null} null when the entity is too ambiguous to substitute safely.
- */
-function buildEntityRegex(entity) {
-    if (typeof entity !== 'string') return null;
-
-    const trimmed = entity.trim();
-    if (!trimmed) return null;
-
-    // Must contain at least one letter or digit — pure punctuation is never an entity.
-    if (!/[\p{L}\p{N}]/u.test(trimmed)) return null;
-
-    const isShort = trimmed.length < MIN_ENTITY_LENGTH;
-    const isAcronym = /^[\p{Lu}\p{N}][\p{Lu}\p{N}.&-]*$/u.test(trimmed);
-
-    // Short and not an acronym → too ambiguous, skip entirely.
-    if (isShort && (!isAcronym || trimmed.length < 2)) return null;
-
-    // Any run of whitespace in the entity matches any run of whitespace in the text, and
-    // each hyphen/apostrophe/quote matches all of its Unicode spellings.
-    const pattern = trimmed
-        .split(/\s+/)
-        .map(escapeWithVariants)
-        .join('\\s+');
-
-    const flags = isShort ? 'gu' : 'giu';
-    return new RegExp(WORD_BOUNDARY_BEFORE + pattern + WORD_BOUNDARY_AFTER, flags);
-}
-
-/**
- * Order mapping entries longest-entity-first.
- *
- * Substitution is sequential, so a nested entity must never run before the entity
- * that contains it: replacing LOCATION "French" before ORGANIZATION "French
- * Monetary and Financial Code" turns the latter into "ADRESSE_07 Monetary and
- * Financial Code". Longest-first means the containing entity is consumed first and
- * the inner one can no longer match it.
- */
-function byDescendingEntityLength(getEntity) {
-    return (a, b) => {
-        const la = (getEntity(a) || '').length;
-        const lb = (getEntity(b) || '').length;
-        return lb - la;
-    };
 }
 
 /**

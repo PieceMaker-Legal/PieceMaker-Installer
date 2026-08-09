@@ -28,8 +28,11 @@
         <div class="desktop-card">
           <header class="repository-toolbar">
             <div class="repository-identity">
-              <span class="toolbar-caption">Dossier juridique</span>
-              <strong id="repositoryName">PieceMaker</strong>
+              <span class="toolbar-caption">Dossier actuel</span>
+              <div class="toolbar-select-row">
+                <select id="caseSelect" aria-label="Dossier juridique actuel"></select>
+                <button id="openCreateCase" class="toolbar-plus" type="button" title="Ajouter un dossier">+</button>
+              </div>
               <code id="repositoryPath">—</code>
               <div class="identity-actions">
                 <button id="revealFolder" class="identity-action" type="button">Afficher dans le gestionnaire de fichiers</button>
@@ -37,29 +40,42 @@
               </div>
             </div>
             <div class="branch-identity">
-              <span class="toolbar-caption">Historique indépendant</span>
-              <strong id="repositoryBranch">Commits</strong>
+              <span class="toolbar-caption">Branche actuelle</span>
+              <div class="toolbar-select-row">
+                <select id="branchSelect" aria-label="Branche actuelle" disabled></select>
+                <button id="openCreateBranch" class="toolbar-plus" type="button" title="Créer une branche" disabled>+</button>
+              </div>
               <span id="repositoryHead" class="sha">—</span>
             </div>
-            <div class="toolbar-actions">
-              <button id="refreshHistory" class="button ghost" type="button">Actualiser</button>
-              <button id="createCommit" class="button primary" type="button">Enregistrer un commit</button>
-            </div>
+            <button id="refreshHistory" class="toolbar-card" type="button">
+              <span class="toolbar-caption">Synchronisation</span>
+              <strong>Push origin</strong>
+              <span id="pushState">Actualiser l’historique local</span>
+            </button>
+            <button id="caseTelegramCard" class="toolbar-card telegram-toolbar-card" type="button" disabled>
+              <span class="toolbar-caption">Bot Telegram</span>
+              <strong id="caseTelegramTitle">Non configuré</strong>
+              <span id="caseTelegramState">Ajouter ou modifier le token</span>
+            </button>
           </header>
 
           <div class="desktop-workspace">
-            <aside class="folder-column">
-              <div class="column-title">
-                <span>Dossiers juridiques</span>
-                <span id="folderCount" class="count-badge">0</span>
+            <aside class="history-column">
+              <div class="history-switch" role="tablist" aria-label="Vue du dossier">
+                <button id="changesView" class="active" type="button" data-history-view="changes">Modifications</button>
+                <button id="commitsView" type="button" data-history-view="commits">Historique</button>
+                <button id="protectedView" type="button" data-history-view="protected">Pièces protégées</button>
               </div>
-              <div id="folderList" class="folder-list"></div>
-              <div class="originals-section">
-                <div class="column-title">
-                  <span>Pièces originales (Non traitées)</span>
-                  <span id="originalCount" class="count-badge">0</span>
-                </div>
+              <div class="history-summary">
+                <strong id="historyTitle">Modifications</strong>
+                <span id="historyCount">0 fichier</span>
+              </div>
+              <div id="protectedTools" class="protected-tools" hidden>
                 <div class="originals-toolbar">
+                  <div class="originals-scope" role="group" aria-label="Portée de la liste">
+                    <button id="scopeAll" class="scope-button active" type="button" data-scope="all">Toutes</button>
+                    <button id="scopePending" class="scope-button" type="button" data-scope="pending">Non traitées</button>
+                  </div>
                   <label class="originals-select-all"><input id="selectAllOriginals" type="checkbox"><span>Tout sélectionner</span></label>
                   <div class="originals-actions">
                     <button id="anonymizeOriginals" class="button secondary compact" type="button" disabled>Anonymiser & mapper</button>
@@ -67,9 +83,9 @@
                   </div>
                 </div>
                 <p id="originalsProgress" class="originals-progress" hidden></p>
-                <div id="originalList" class="original-list"></div>
-                <p class="originals-note">Éléments non encore convertis ou analysés.</p>
               </div>
+              <div id="originalList" class="original-list" hidden></div>
+              <div id="historyList" class="history-list" aria-live="polite"></div>
               <div class="mapping-section">
                 <div class="column-title">
                   <span>Mapping d’anonymisation</span>
@@ -83,18 +99,17 @@
                   <span class="mapping-open">Modifier</span>
                 </button>
               </div>
-            </aside>
-
-            <aside class="history-column">
-              <div class="history-switch" role="tablist" aria-label="Vue Git">
-                <button id="changesView" type="button" data-history-view="changes">Modifications</button>
-                <button id="commitsView" class="active" type="button" data-history-view="commits">Historique</button>
-              </div>
-              <div class="history-summary">
-                <strong id="historyTitle">Historique</strong>
-                <span id="historyCount">0 élément</span>
-              </div>
-              <div id="historyList" class="history-list" aria-live="polite"></div>
+              <form id="manualCommitForm" class="manual-commit" hidden>
+                <label class="manual-commit-field">
+                  <span>Titre</span>
+                  <input id="commitTitle" name="title" type="text" maxlength="140" placeholder="Titre du commit (obligatoire)" required>
+                </label>
+                <label class="manual-commit-field">
+                  <span>Commentaire</span>
+                  <textarea id="commitDescription" name="description" maxlength="4000" rows="3" placeholder="Commentaire (facultatif)"></textarea>
+                </label>
+                <button id="createCommit" class="button primary" type="submit" disabled>Enregistrer les modifications</button>
+              </form>
             </aside>
 
             <section class="revision-column">
@@ -107,16 +122,45 @@
                   <h2 id="revisionTitle">Sélectionnez une révision</h2>
                   <p id="revisionMeta" class="muted">Le diff sera calculé uniquement après votre clic.</p>
                 </div>
-                <button id="restoreRevision" class="button danger-outline" type="button" hidden>Restaurer cet état</button>
               </header>
               <div class="revision-content">
-                <div class="diff-pane">
+                <div id="diffView" class="diff-pane">
                   <div class="diff-toolbar">
                     <strong id="diffFile">Aucun fichier sélectionné</strong>
                     <span id="diffStats" class="diff-stats"></span>
                   </div>
                   <div id="diffContent" class="diff-content empty-state">Cliquez sur une modification ou un commit pour produire son diff.</div>
                 </div>
+                <div id="mappingView" class="inline-detail" hidden>
+                  <div class="inline-detail-toolbar">
+                    <div><strong id="mappingDialogTitle">mapping_dossier.json</strong><span>Le mapping est modifié directement dans ce panneau.</span></div>
+                    <span id="mappingDialogCount" class="count-badge">0</span>
+                  </div>
+                  <p class="inline-detail-hint">Chaque donnée d’origine est associée au code qui la remplace. Toute modification enregistrée crée automatiquement un commit limité au fichier de mapping.</p>
+                  <div class="mapping-editor">
+                    <div class="mapping-editor-head"><span>Donnée d’origine</span><span>Code</span><span></span></div>
+                    <div id="mappingRows" class="mapping-rows"></div>
+                  </div>
+                  <div class="inline-detail-actions">
+                    <button id="addMappingRow" class="button ghost compact" type="button">+ Entrée</button>
+                    <button id="rebuildMapping" class="button ghost compact" type="button">Régénérer depuis les scans PII</button>
+                    <span id="mappingMessage" class="message"></span>
+                    <button id="saveMapping" class="button primary compact" type="button">Enregistrer le mapping</button>
+                  </div>
+                </div>
+                <form id="telegramCaseView" class="inline-detail telegram-inline-editor" hidden>
+                  <div class="inline-detail-toolbar">
+                    <div><strong>Bot Telegram du dossier</strong><span id="telegramCaseHint">Ajoutez un token BotFather ou remplacez celui qui est configuré.</span></div>
+                  </div>
+                  <div class="telegram-inline-fields">
+                    <label>Nom du bot<input id="telegramCaseName" maxlength="64" autocomplete="off"></label>
+                    <label>Token BotFather<input id="telegramCaseToken" type="password" autocomplete="new-password" placeholder="123456789:secret"></label>
+                  </div>
+                  <div class="inline-detail-actions">
+                    <span id="telegramCaseMessage" class="message"></span>
+                    <button id="saveTelegramCase" class="button primary" type="submit">Enregistrer le bot</button>
+                  </div>
+                </form>
               </div>
             </section>
           </div>
@@ -377,27 +421,24 @@
     </form>
   </dialog>
 
-  <dialog id="mappingDialog">
-    <div class="dialog-card mapping-dialog">
-      <div class="mapping-dialog-head">
-        <div><p class="eyebrow">MAPPING D’ANONYMISATION</p><h2 id="mappingDialogTitle">mapping_dossier.json</h2></div>
-        <span id="mappingDialogCount" class="count-badge">0</span>
-      </div>
-      <p class="hint">Chaque ligne associe une donnée d’origine au code qui la remplace. L’enregistrement réordonne les entrées de la plus longue à la plus courte, l’ordre exigé par la substitution ; une entrée supprimée ici n’est plus réintroduite par les scans PII suivants.</p>
-      <div class="mapping-editor">
-        <div class="mapping-editor-head"><span>Donnée d’origine</span><span>Code</span><span></span></div>
-        <div id="mappingRows" class="mapping-rows"></div>
-      </div>
-      <div class="mapping-dialog-actions">
-        <button id="addMappingRow" class="button ghost compact" type="button">+ Entrée</button>
-        <button id="rebuildMapping" class="button ghost compact" type="button">Régénérer depuis les scans PII</button>
-      </div>
-      <span id="mappingMessage" class="message"></span>
-      <div class="actions">
-        <button id="closeMapping" class="button secondary" type="button">Fermer</button>
-        <button id="saveMapping" class="button primary" type="button">Enregistrer</button>
-      </div>
-    </div>
+  <dialog id="createCaseDialog">
+    <form id="createCaseForm" class="dialog-card">
+      <div><p class="eyebrow">NOUVEAU DOSSIER</p><h2>Ajouter un dossier juridique</h2></div>
+      <label>Nom du dossier<input id="newCaseName" maxlength="120" placeholder="Dossier Martin" required></label>
+      <p class="hint">PieceMaker crée le dossier, sa protection par défaut, son mapping vide et son historique Git.</p>
+      <span id="createCaseMessage" class="message"></span>
+      <div class="actions"><button id="cancelCreateCase" class="button secondary" type="button">Annuler</button><button class="button primary" type="submit">Créer le dossier</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="createBranchDialog">
+    <form id="createBranchForm" class="dialog-card">
+      <div><p class="eyebrow">NOUVELLE BRANCHE</p><h2>Créer une branche</h2></div>
+      <label>Nom de la branche<input id="newBranchName" maxlength="120" placeholder="analyse-alternative" required></label>
+      <p class="hint">La branche part du dernier commit de la branche actuelle et devient active.</p>
+      <span id="createBranchMessage" class="message"></span>
+      <div class="actions"><button id="cancelCreateBranch" class="button secondary" type="button">Annuler</button><button class="button primary" type="submit">Créer la branche</button></div>
+    </form>
   </dialog>
 
   <div id="toast" role="status" aria-live="polite"></div>

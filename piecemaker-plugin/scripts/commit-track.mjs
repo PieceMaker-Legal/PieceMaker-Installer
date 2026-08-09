@@ -19,6 +19,7 @@ import {
 
 const require = createRequire(import.meta.url);
 const { createCommit, locateCaseFile } = require('./lib/commits.cjs');
+const { resolveCaseMapping, revertMapping } = require('./lib/mapping.cjs');
 
 async function main() {
   const payload = await readHookPayload(2000);
@@ -42,13 +43,21 @@ async function main() {
   }
   if (!located?.safe || located.protected) return null;
 
+  // Le nom d'un fichier porte souvent une entité
+  // (« 06_Email_..._par_CAITLYN_SA.md ») : l'historique du cabinet doit rester
+  // lisible, alors que l'IA n'a vu que des codes.
+  const legalCase = resolveCaseMapping(casesRoot, absolute);
+  const relative = legalCase ? revertMapping(located.relative, legalCase.reverse_mapping) : located.relative;
+
   await createCommit({
     casesRoot,
     caseName: located.name,
     homeDir: HOME_DIR,
-    label: `${payload.tool_name === 'Write' ? 'Création' : 'Modification'} de ${located.relative}`,
+    label: `${payload.tool_name === 'Write' ? 'Création' : 'Modification'} de ${relative}`,
     sessionId: payload.session_id || null,
     event: 'PostToolUse',
+    paths: [located.relative],
+    waitForLockMs: 4000,
   });
   return null;
 }

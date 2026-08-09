@@ -3,6 +3,7 @@ const crypto = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { isProtectedFile, readProtection } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
 
 const ASSISTANT_DIR = 'telegram-piecemaker';
 const MONITOR_DIR = 'telegram-piecemaker-lord';
@@ -15,7 +16,9 @@ const RESERVED_DOSSIER_DIRS = new Set([
   'certificates', 'docs', 'electron', 'installer', 'mcp-server', 'orchestrator',
   'output', 'piecemaker-plugin', 'taskpane', 'test', 'websocket-server',
 ]);
-const ORIGINALS_DIR_NAMES = new Set(['pieces originales', 'piece originales', 'originaux']);
+// Arborescences techniques : un dossier juridique finit par en héberger.
+const SKIPPED_DIR_NAMES = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', '__pycache__', 'venv']);
+const MAX_PROTECTED_NAMES = 100;
 
 function readJson(file, fallback = {}) {
   try {
@@ -82,16 +85,6 @@ function cleanName(value, fallback) {
   if (!name) return fallback;
   if (name.length > 64) throw new Error('Le nom Telegram est limité à 64 caractères.');
   return name;
-}
-
-function normalizedLabel(value) {
-  return String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 function projectId(value) {
@@ -181,13 +174,6 @@ function configuredDossiersRoot(repoRoot, homeDir) {
   return path.resolve(String(candidate));
 }
 
-function isOriginalsDirectory(name) {
-  const normalized = normalizedLabel(name);
-  return ORIGINALS_DIR_NAMES.has(normalized)
-    || normalized === 'pieces originales'
-    || normalized === 'fichiers originaux';
-}
-
 function countMarkdownFiles(root, { maxDepth = 6, maxFiles = 5000 } = {}) {
   let count = 0;
   function visit(directory, depth) {
@@ -198,7 +184,7 @@ function countMarkdownFiles(root, { maxDepth = 6, maxFiles = 5000 } = {}) {
       if (count >= maxFiles) break;
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) {
-        if (!isOriginalsDirectory(entry.name) && !entry.name.startsWith('.')) {
+        if (!entry.name.startsWith('.') && !SKIPPED_DIR_NAMES.has(entry.name.toLowerCase())) {
           visit(path.join(directory, entry.name), depth + 1);
         }
       } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
@@ -262,34 +248,54 @@ function filteredOriginalName(filename, pairs, index) {
   return filtered.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/[\\/]/g, '-').slice(0, 180);
 }
 
+/**
+ * Pièces protégées d'un dossier, récursivement. La protection ne dépend plus
+ * d'un sous-dossier « Pièces originales » mais du fichier lui-même
+ * (`piecemaker-plugin/scripts/lib/protection.cjs`) : un dossier rangé à plat,
+ * qui est le cas courant, était auparavant compté comme n'ayant aucune pièce
+ * isolée.
+ */
+function collectProtectedFiles(root, { maxDepth = 6, maxFiles = 5000 } = {}) {
+  const protection = readProtection(root);
+  const files = [];
+  function visit(directory, depth) {
+    if (depth > maxDepth || files.length >= maxFiles) return;
+    let entries = [];
+    try { entries = fs.readdirSync(directory, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (files.length >= maxFiles) break;
+      if (entry.isSymbolicLink() || entry.name.startsWith('.')) continue;
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (!SKIPPED_DIR_NAMES.has(entry.name.toLowerCase())) visit(absolute, depth + 1);
+      } else if (entry.isFile() && isProtectedFile(absolute, root, protection)) {
+        files.push(entry.name);
+      }
+    }
+  }
+  visit(root, 0);
+  return files.sort((a, b) => a.localeCompare(b, 'fr'));
+}
+
 function inspectDossier(directory) {
   let entries = [];
   try { entries = fs.readdirSync(directory, { withFileTypes: true }); } catch { /* état vide */ }
-  const originalsDirectory = entries.find((entry) => entry.isDirectory() && isOriginalsDirectory(entry.name));
   const mappingFiles = entries
     .filter((entry) => entry.isFile() && /^mapping.*\.json$/i.test(entry.name))
     .map((entry) => path.join(directory, entry.name));
   const pairs = mappingFiles.flatMap(mappingPairs);
-  let originalFiles = 0;
-  let mappedOriginalNames = [];
-  if (originalsDirectory) {
-    try {
-      const originals = fs.readdirSync(path.join(directory, originalsDirectory.name), { withFileTypes: true })
-        .filter((entry) => entry.isFile() && !entry.isSymbolicLink())
-        .sort((a, b) => a.name.localeCompare(b.name, 'fr'));
-      originalFiles = originals.length;
-      if (mappingFiles.length) {
-        mappedOriginalNames = originals.slice(0, 100)
-          .map((entry, index) => filteredOriginalName(entry.name, pairs, index));
-      }
-    } catch { /* Le contenu demeure inaccessible ; seul le compteur reste à zéro. */ }
-  }
+  const protectedFiles = collectProtectedFiles(directory);
+  // Les noms de fichiers eux-mêmes portent des entités : ils ne sont exposés
+  // qu'une fois passés par le mapping, jamais bruts.
+  const mappedOriginalNames = mappingFiles.length
+    ? protectedFiles.slice(0, MAX_PROTECTED_NAMES).map((name, index) => filteredOriginalName(name, pairs, index))
+    : [];
   return {
     mappingConfigured: mappingFiles.length > 0,
-    originalsProtected: Boolean(originalsDirectory),
-    originalFiles,
+    originalsProtected: protectedFiles.length > 0,
+    originalFiles: protectedFiles.length,
     mappedOriginalNames,
-    originalNamesTruncated: mappedOriginalNames.length < originalFiles && mappingFiles.length > 0,
+    originalNamesTruncated: mappedOriginalNames.length < protectedFiles.length && mappingFiles.length > 0,
     markdownFiles: countMarkdownFiles(directory),
   };
 }

@@ -8,8 +8,11 @@ const test = require('node:test');
 
 const {
   caseOverview,
+  checkoutHistoryBranch,
   createCommit,
+  createHistoryBranch,
   historyRepo,
+  historyBranches,
   listCases,
   logPerformance,
   listHistory,
@@ -20,6 +23,8 @@ const {
   safeCaseFiles,
   worktreeDetails,
 } = require('../piecemaker-plugin/scripts/lib/commits.cjs');
+const { isProtectedFile, writeProtection } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
+const { createLegalCase } = require('../websocket-server/admin-routes.cjs');
 
 const commitHook = path.resolve(__dirname, '..', 'piecemaker-plugin', 'scripts', 'commit-track.mjs');
 const originalsHook = path.resolve(__dirname, '..', 'piecemaker-plugin', 'scripts', 'protect-originals.mjs');
@@ -87,22 +92,94 @@ test('chaque dossier juridique possède un historique indépendant sans pièces 
   assert.equal(fs.readFileSync(path.join(data.originals, 'contrat.pdf'), 'utf8'), 'CONTENU ORIGINAL SECRET\n');
 });
 
-test('l’aperçu expose les métadonnées et le niveau de protection de chaque originale', async (t) => {
+test('les branches séparent les commits automatiques du dossier', async (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const initial = await createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'État initial' });
+
+  await createHistoryBranch({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, name: 'analyse-alternative' });
+  assert.deepEqual(await historyBranches(data.casesRoot, data.home, 'Dossier Alpha'), {
+    active: 'analyse-alternative',
+    branches: ['analyse-alternative', 'main'],
+  });
+  fs.writeFileSync(path.join(data.caseA, 'contrat.md'), '# Version branche\n');
+  const automatic = await createCommit({
+    casesRoot: data.casesRoot,
+    caseName: 'Dossier Alpha',
+    homeDir: data.home,
+    label: 'Conversion automatique',
+    event: 'admin-originals-convert',
+    paths: ['contrat.md'],
+  });
+  assert.equal(automatic.parent, initial.commit);
+
+  await checkoutHistoryBranch({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, name: 'main' });
+  const mainHistory = await listHistory(data.casesRoot, data.home, { caseName: 'Dossier Alpha' });
+  assert.deepEqual(mainHistory.map((entry) => entry.hash), [initial.commit]);
+  await checkoutHistoryBranch({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, name: 'analyse-alternative' });
+  assert.deepEqual((await listHistory(data.casesRoot, data.home, { caseName: 'Dossier Alpha' })).map((entry) => entry.hash), [automatic.commit, initial.commit]);
+});
+
+test('la création d’un dossier installe mapping, protection et historique main', async (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const folder = await createLegalCase({ casesRoot: data.casesRoot, homeDir: data.home, name: 'Dossier Gamma' });
+  const gamma = path.join(data.casesRoot, 'Dossier Gamma');
+
+  assert.equal(folder.name, 'Dossier Gamma');
+  assert.equal(fs.existsSync(path.join(gamma, 'mapping_dossier.json')), true);
+  assert.equal(fs.existsSync(path.join(gamma, '.piecemaker', 'protection.json')), true);
+  assert.deepEqual(folder.branches, { active: 'main', branches: ['main'] });
+  const history = await listHistory(data.casesRoot, data.home, { caseName: 'Dossier Gamma' });
+  assert.equal(history.length, 1);
+  assert.equal(history[0].subject, 'Création du dossier juridique');
+});
+
+test('l’aperçu expose les métadonnées et le niveau de protection de chaque pièce', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
   fs.writeFileSync(path.join(data.originals, 'conclusions.docx'), 'ORIGINAL 2');
   fs.writeFileSync(path.join(data.caseA, 'conclusions.md'), '# Conclusions\n');
   fs.writeFileSync(path.join(data.originals, 'annexe.png'), 'ORIGINAL 3');
+  // Une pièce rangée à plat, hors de tout sous-dossier dédié : c'est le cas
+  // courant, et l'ancien recensement par nom de dossier la laissait invisible.
+  fs.writeFileSync(path.join(data.caseA, 'note.docx'), 'ORIGINAL 4');
 
   const overview = await repositoryOverview(data.casesRoot, data.home);
   assert.deepEqual(overview.folders.map((folder) => folder.name), ['Dossier Alpha', 'Dossier Beta']);
   const alpha = overview.folders[0];
-  assert.equal(alpha.originals.length, 3);
-  assert.equal(alpha.originals.find((file) => file.name === 'contrat.pdf').status, 'protected');
+  assert.deepEqual(alpha.originals.map((file) => file.path).sort(), [
+    'note.docx',
+    'pièces originales/annexe.png',
+    'pièces originales/conclusions.docx',
+    'pièces originales/contrat.pdf',
+  ]);
+  assert.equal(alpha.originals.find((file) => file.name === 'contrat.pdf').status, 'ready');
   assert.equal(alpha.originals.find((file) => file.name === 'conclusions.docx').status, 'awaiting-scan');
   assert.equal(alpha.originals.find((file) => file.name === 'annexe.png').status, 'not-converted');
-  assert.equal(alpha.protectedOriginals, 1);
+  // Markdown et JSON ne sont jamais des pièces : ce sont les surfaces que l'IA
+  // lit à travers le mapping.
+  assert.ok(!alpha.originals.some((file) => ['.md', '.json'].includes(file.extension)));
+  // Protégé par défaut : aucune exception n'a été enregistrée.
+  assert.equal(alpha.protectedOriginals, 4);
+  assert.ok(alpha.originals.every((file) => file.protected));
   assert.ok(alpha.originals.every((file) => !Object.hasOwn(file, 'content')));
+});
+
+test('une exception enregistrée rend une pièce accessible sans toucher aux autres', async (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(data.caseA, 'note.docx'), 'ORIGINAL 4');
+  writeProtection(data.caseA, { unprotected: ['note.docx'] });
+
+  const alpha = await caseOverview(data.casesRoot, data.home, 'Dossier Alpha');
+  assert.equal(alpha.originals.find((file) => file.name === 'note.docx').protected, false);
+  assert.equal(alpha.originals.find((file) => file.name === 'contrat.pdf').protected, true);
+  assert.equal(alpha.protectedOriginals, 1);
+
+  // La décision est bien ce que voit le hook, pas seulement l'administration.
+  assert.equal(isProtectedFile(path.join(data.caseA, 'note.docx'), data.caseA), false);
+  assert.equal(isProtectedFile(path.join(data.originals, 'contrat.pdf'), data.caseA), true);
 });
 
 test('l’index léger exclut le dossier de sortie et le détail ne calcule qu’un dossier', async (t) => {
@@ -116,7 +193,7 @@ test('l’index léger exclut le dossier de sortie et le détail ne calcule qu�
   const alpha = await caseOverview(data.casesRoot, data.home, 'Dossier Alpha');
   assert.equal(alpha.name, 'Dossier Alpha');
   assert.equal(alpha.snapshot.length, 40);
-  assert.deepEqual(alpha.originals.map((file) => file.name), ['contrat.pdf']);
+  assert.deepEqual(alpha.originals.map((file) => file.path), ['pièces originales/contrat.pdf']);
 });
 
 test('les modifications sont calculées par rapport au dernier commit complet du dossier', async (t) => {
@@ -142,6 +219,38 @@ test('les modifications sont calculées par rapport au dernier commit complet du
   assert.equal(details.filesCount, null);
   assert.equal(details.selectedPath, '');
   assert.match(details.patch, /Contrat anonymisé v2/);
+});
+
+test('un commit automatique ciblé laisse les fichiers des autres sessions hors du commit', async (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  await createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'État initial' });
+
+  fs.writeFileSync(path.join(data.caseA, 'contrat.md'), '# Contrat modifié par la session A\n');
+  fs.writeFileSync(path.join(data.caseA, 'contrat_sensitive_map.json'), '{"entities":["session B"]}\n');
+
+  const scoped = await createCommit({
+    casesRoot: data.casesRoot,
+    caseName: 'Dossier Alpha',
+    homeDir: data.home,
+    label: 'Modification ciblée',
+    description: 'Le commentaire reste dans le corps du commit.',
+    sessionId: 'session-a',
+    event: 'PostToolUse',
+    paths: ['contrat.md'],
+  });
+  assert.equal(scoped.created, true);
+  assert.deepEqual(scoped.files.map((file) => file.path), ['contrat.md']);
+
+  const legalCase = resolveCase(data.casesRoot, 'Dossier Alpha');
+  const gitDir = historyRepo(data.home, legalCase);
+  assert.equal(git(gitDir, data.caseA, ['show', `${scoped.commit}:contrat_sensitive_map.json`]), '{"entities":[]}');
+  assert.match(git(gitDir, data.caseA, ['show', '-s', '--format=%B', scoped.commit]), /Le commentaire reste dans le corps/);
+
+  const pending = await worktreeDetails(data.casesRoot, data.home, 'Dossier Alpha', 'contrat_sensitive_map.json');
+  assert.equal(pending.filesCount, 1);
+  assert.equal(pending.selectedFile.path, 'contrat_sensitive_map.json');
+  assert.match(pending.patch, /session B/);
 });
 
 test('un diff volumineux est interrompu à la limite au lieu d’être entièrement mis en mémoire', async (t) => {
@@ -210,6 +319,11 @@ test('le PostToolUse alimente uniquement l’historique du dossier juridique con
   const history = await listHistory(data.casesRoot, data.home, { caseName: 'Dossier Alpha' });
   assert.equal(history.length, 1);
   assert.match(history[0].subject, /Modification de contrat\.md/);
+  const alphaCase = resolveCase(data.casesRoot, 'Dossier Alpha');
+  assert.deepEqual(
+    git(historyRepo(data.home, alphaCase), data.caseA, ['ls-tree', '-r', '--name-only', history[0].hash]).split('\n'),
+    ['contrat.md'],
+  );
   assert.deepEqual(await listHistory(data.casesRoot, data.home, { caseName: 'Dossier Beta' }), []);
 });
 

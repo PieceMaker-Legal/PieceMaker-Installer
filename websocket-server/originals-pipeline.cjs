@@ -16,118 +16,35 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 
 const {
-  isOriginalDirectoryName,
+  createCommit,
   originalFilesOverview,
   resolveCase,
   safeCaseFiles,
 } = require('../piecemaker-plugin/scripts/lib/commits.cjs');
+const { documentKey } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
+// Le mapping vit dans le plugin : c'est le seul des trois consommateurs (hooks,
+// pipeline, routeur du task pane) qui soit distribué seul.
+const {
+  CANONICAL_MAPPING_FILE,
+  caseMappingFile,
+  normalizeMappingDocument,
+  readCaseMapping,
+  readJsonFile,
+  sortedMapping,
+} = require('../piecemaker-plugin/scripts/lib/mapping.cjs');
 
 const SCRIPTS_DIR = path.join(__dirname, 'scripts');
 const CONVERTER_SCRIPT = () => process.env.SMART_CONVERTER_PATH || path.join(SCRIPTS_DIR, 'smart_converter.py');
 const PIPELINE_SCRIPT = () => path.join(SCRIPTS_DIR, 'convert_and_scan_pipeline.py');
 const PYTHON = () => process.env.PYTHON_PATH || 'python3';
-const CANONICAL_MAPPING_FILE = 'mapping_dossier.json';
 const MAX_LOG_LINES = 200;
 const MAX_ERROR_LINES = 12;
 const MAX_FILES_PER_JOB = 200;
 
-/** Les pièces originales listées dans l'administration : tout sauf le Markdown. */
+/** Les pièces d'un dossier listées dans l'administration : tout sauf le Markdown. */
 async function listOriginals(caseRoot) {
   const originals = await originalFilesOverview(caseRoot);
   return originals.filter((file) => file.extension !== '.md');
-}
-
-/**
- * Fichier de mapping du dossier. `mapping_dossier.json` gagne dès qu'il existe :
- * sans cette priorité, un `mapping_default.json` laissé par une ancienne
- * exécution du pipeline passait devant (tri alphabétique) et éclipsait le
- * mapping réellement tenu pour le dossier. À défaut, un `mapping*.json`
- * existant est repris tel quel — c'est celui produit par le CLI.
- */
-function caseMappingFile(caseRoot) {
-  let entries = [];
-  try {
-    entries = fs.readdirSync(caseRoot, { withFileTypes: true });
-  } catch {
-    return path.join(caseRoot, CANONICAL_MAPPING_FILE);
-  }
-  const existing = entries
-    .filter((entry) => entry.isFile() && /^mapping.*\.json$/i.test(entry.name))
-    .map((entry) => entry.name)
-    .sort((a, b) => a.localeCompare(b, 'fr'));
-  if (existing.includes(CANONICAL_MAPPING_FILE)) return path.join(caseRoot, CANONICAL_MAPPING_FILE);
-  return path.join(caseRoot, existing[0] || CANONICAL_MAPPING_FILE);
-}
-
-function readJsonFile(file, fallback = null) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, ''));
-  } catch {
-    return fallback;
-  }
-}
-
-function normalizeMappingDocument(raw) {
-  const document = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
-  const mapping = {};
-  const reverse = {};
-  const source = document.mapping && typeof document.mapping === 'object' ? document.mapping : {};
-  for (const [entity, code] of Object.entries(source)) {
-    const from = String(entity || '').trim();
-    const to = String(code || '').trim();
-    if (from && to) mapping[from] = to;
-  }
-  const ignored = [...new Set((Array.isArray(document.ignored) ? document.ignored : [])
-    .map((entity) => String(entity || '').trim())
-    .filter(Boolean))];
-  const reverseSource = document.reverse_mapping && typeof document.reverse_mapping === 'object' ? document.reverse_mapping : {};
-  for (const [code, value] of Object.entries(reverseSource)) {
-    const key = String(code || '').trim();
-    if (!key) continue;
-    const values = (Array.isArray(value) ? value : [value])
-      .map((item) => String(item || '').trim())
-      .filter(Boolean);
-    if (values.length) reverse[key] = [...new Set(values)];
-  }
-  // Un mapping écrit à la main peut n'avoir que le sens direct : on reconstruit
-  // le sens inverse plutôt que de laisser un fichier inutilisable.
-  for (const [entity, code] of Object.entries(mapping)) {
-    if (!reverse[code]) reverse[code] = [entity];
-    else if (!reverse[code].includes(entity)) reverse[code].push(entity);
-  }
-  // `extracted_data` est écrit par `convert_and_scan_pipeline.py` : c'est lui
-  // qui porte les variants d'une entité et l'analyse des adresses, dont la
-  // dé-anonymisation partielle a besoin (anonymization-server.cjs:592).
-  // L'administration ne l'édite pas, mais elle ne doit surtout pas le détruire —
-  // seules les entrées dont le code a disparu du mapping sont retirées.
-  const extracted = {};
-  const extractedSource = document.extracted_data && typeof document.extracted_data === 'object'
-    && !Array.isArray(document.extracted_data) ? document.extracted_data : {};
-  for (const [category, codes] of Object.entries(extractedSource)) {
-    if (!codes || typeof codes !== 'object' || Array.isArray(codes)) continue;
-    extracted[category] = Object.fromEntries(
-      Object.entries(codes).filter(([code]) => reverse[code])
-    );
-  }
-  return {
-    mapping,
-    reverse_mapping: reverse,
-    extracted_data: extracted,
-    ignored: ignored.filter((entity) => !mapping[entity]),
-  };
-}
-
-/** L'ordre d'écriture suit `byDescendingEntityLength` (anonymization-server.cjs). */
-function sortedMapping(mapping) {
-  return Object.fromEntries(
-    Object.entries(mapping).sort((a, b) => b[0].length - a[0].length || a[0].localeCompare(b[0], 'fr'))
-  );
-}
-
-function readCaseMapping(caseRoot) {
-  const file = caseMappingFile(caseRoot);
-  const raw = fs.existsSync(file) ? readJsonFile(file, null) : null;
-  return { file, exists: raw !== null, ...normalizeMappingDocument(raw) };
 }
 
 function writeCaseMapping(caseRoot, document) {
@@ -513,12 +430,63 @@ async function runJob(job, legalCase, absoluteFiles, options) {
 }
 
 /**
- * Démarre un travail sur les pièces originales d'un dossier.
- * `action` vaut `convert` (Markdown seul) ou `anonymize` (Markdown + scan PII
- * + régénération du mapping). `files` contient des chemins relatifs au sous
- * dossier des originales, tels que renvoyés par `listOriginals`.
+ * Chemins produits par le lot courant. Le filtre est volontairement rattaché
+ * aux pièces sélectionnées : un autre fichier Markdown/JSON modifié pendant un
+ * OCR long ne doit jamais entrer dans le commit de cette session.
  */
-async function startOriginalsJob({ casesRoot, caseName, action, files = [], options = {} } = {}) {
+async function sessionArtifactPaths(legalCase, absoluteFiles, action) {
+  const documentKeys = new Set(absoluteFiles.map((file) => documentKey(file)));
+  const mappingPath = path.relative(legalCase.root, caseMappingFile(legalCase.root)).split(path.sep).join('/');
+  const safeFiles = await safeCaseFiles(legalCase.root);
+  return safeFiles.filter((relative) => {
+    if (action === 'anonymize' && relative === mappingPath) return true;
+    const segments = relative.split('/');
+    const basename = segments.at(-1) || '';
+    const extension = path.extname(basename).toLowerCase();
+    const insideDocumentOutput = segments.slice(0, -1).some((segment) => documentKeys.has(documentKey(segment)));
+    if (insideDocumentOutput) return true;
+    if (extension === '.md') return documentKeys.has(documentKey(basename));
+    if (action === 'anonymize' && /_sensitive_map\.json$/i.test(basename)) {
+      return documentKeys.has(documentKey(basename).replace(/-sensitive-map$/, ''));
+    }
+    return false;
+  });
+}
+
+async function commitJobArtifacts(job, legalCase, absoluteFiles, homeDir) {
+  if (!homeDir) return null;
+  const paths = await sessionArtifactPaths(legalCase, absoluteFiles, job.action);
+  if (!paths.length) throw new Error('Traitement terminé, mais aucun fichier produit ne peut être commité.');
+  job.phase = 'commit';
+  appendLog(job, `Commit automatique de ${paths.length} fichier(s)`);
+  const count = absoluteFiles.length;
+  const commit = await createCommit({
+    casesRoot: legalCase.casesRoot,
+    caseName: legalCase.name,
+    homeDir,
+    label: job.action === 'convert'
+      ? `Conversion de ${count} pièce${count > 1 ? 's' : ''}`
+      : `Conversion et analyse PII de ${count} pièce${count > 1 ? 's' : ''}`,
+    sessionId: job.id,
+    event: job.action === 'convert' ? 'admin-conversion' : 'admin-scan',
+    paths,
+    waitForLockMs: 10_000,
+  });
+  if (commit.skipped === 'busy') throw new Error('Traitement terminé, mais l’historique est occupé : commit automatique non créé.');
+  return {
+    created: commit.created,
+    hash: commit.commit || null,
+    files: commit.files || [],
+  };
+}
+
+/**
+ * Démarre un travail sur les pièces d'un dossier.
+ * `action` vaut `convert` (Markdown seul) ou `anonymize` (Markdown + scan PII
+ * + régénération du mapping). `files` contient des chemins relatifs au dossier
+ * juridique, tels que renvoyés par `listOriginals`.
+ */
+async function startOriginalsJob({ casesRoot, caseName, action, files = [], options = {}, homeDir = null } = {}) {
   if (!['convert', 'anonymize'].includes(action)) throw new Error('Action inconnue sur les pièces originales.');
   const legalCase = resolveCase(casesRoot, caseName);
   const busy = runningJobForCase(legalCase.name);
@@ -527,7 +495,7 @@ async function startOriginalsJob({ casesRoot, caseName, action, files = [], opti
   const originals = await listOriginals(legalCase.root);
   const wanted = new Set(files.map((file) => String(file || '').replaceAll('\\', '/')));
   const selected = wanted.size ? originals.filter((file) => wanted.has(file.path)) : originals;
-  if (!selected.length) throw new Error('Aucune pièce originale à traiter.');
+  if (!selected.length) throw new Error('Aucune pièce à traiter.');
 
   // Sans sélection, le travail porte sur tout le dossier et ne refait que ce
   // qui manque : le modèle GLiNER ne se charge pas si tout est déjà scanné.
@@ -554,11 +522,13 @@ async function startOriginalsJob({ casesRoot, caseName, action, files = [], opti
     return publicJob(job);
   }
 
-  const originalsRoot = path.join(legalCase.root, findOriginalsDirectory(legalCase.root));
+  // Les chemins sont relatifs au dossier juridique lui-même : les pièces ne
+  // vivent plus dans un sous-dossier dédié, elles sont là où le cabinet les a
+  // rangées, racine et sous-dossiers confondus.
   const absoluteFiles = pending.map((file) => {
-    const absolute = path.resolve(originalsRoot, ...file.path.split('/'));
-    if (absolute !== originalsRoot && !absolute.startsWith(`${originalsRoot}${path.sep}`)) {
-      throw new Error('Pièce originale hors du dossier.');
+    const absolute = path.resolve(legalCase.root, ...file.path.split('/'));
+    if (!absolute.startsWith(`${legalCase.root}${path.sep}`)) {
+      throw new Error('Pièce hors du dossier juridique.');
     }
     if (!fs.existsSync(absolute)) throw new Error(`Pièce introuvable : ${file.name}`);
     return absolute;
@@ -586,11 +556,12 @@ async function startOriginalsJob({ casesRoot, caseName, action, files = [], opti
   jobs.set(job.id, job);
 
   runJob(job, legalCase, absoluteFiles, { ...options, skipExisting: !forced })
-    .then((result) => {
+    .then(async (result) => {
+      const commit = await commitJobArtifacts(job, legalCase, absoluteFiles, homeDir);
       job.state = 'done';
       job.percent = 100;
       job.processed = job.total;
-      job.result = { ...result, skipped };
+      job.result = { ...result, skipped, commit };
     })
     .catch((error) => {
       job.state = 'error';
@@ -612,21 +583,17 @@ function cancelOriginalsJob(jobId) {
   return publicJob(job);
 }
 
-function findOriginalsDirectory(caseRoot) {
-  const entry = fs.readdirSync(caseRoot, { withFileTypes: true })
-    .find((candidate) => candidate.isDirectory() && !candidate.isSymbolicLink() && isOriginalDirectoryName(candidate.name));
-  if (!entry) throw new Error('Ce dossier n’a pas de sous-dossier « pièces originales ».');
-  return entry.name;
-}
-
 module.exports = {
   cancelOriginalsJob,
+  // Ré-exportés pour les routes de l'administration : l'implémentation vit
+  // désormais dans `piecemaker-plugin/scripts/lib/mapping.cjs`.
   caseMappingFile,
   getJob,
   listOriginals,
   readCaseMapping,
   rebuildCaseMapping,
   saveCaseMapping,
+  sessionArtifactPaths,
   startOriginalsJob,
   writeCaseMapping,
 };

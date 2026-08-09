@@ -1,9 +1,21 @@
 #!/usr/bin/env node
 /**
- * PreToolUse hook — hard boundary around each case's “pièces originales”.
+ * PreToolUse hook — frontière dure autour des pièces protégées d'un dossier.
  *
- * The UI may enumerate names and protection metadata, but Claude must never
- * read original contents. Converted Markdown and mapping JSON remain usable.
+ * La protection est une propriété du fichier, décidée dans l'administration et
+ * stockée dans `<dossier>/.piecemaker/protection.json` (voir `lib/protection.cjs`).
+ * Elle ne dépend plus d'un sous-dossier « Pièces originales » : un cabinet range
+ * ses pièces à plat, à côté du Markdown qu'il en tire, et cette organisation-là
+ * ne protégeait rien.
+ *
+ * Un refus renvoie systématiquement vers le Markdown converti, qui est la
+ * surface que l'IA a le droit de lire — anonymisée à la volée par
+ * `anonymize-read.mjs`.
+ *
+ * Bash est traité comme les outils de lecture. C'est indispensable depuis que
+ * le skill `docx` est disponible : il travaille par `pandoc`, `unzip` et
+ * `python ooxml/scripts/unpack.py`, qui contournaient entièrement un garde-fou
+ * limité à Read/Grep/Glob.
  */
 
 import fs from 'node:fs';
@@ -12,7 +24,10 @@ import { createRequire } from 'node:module';
 import { loadPieceMakerConfig, readHookPayload, runHook, noop } from './lib/hook-io.mjs';
 
 const require = createRequire(import.meta.url);
-const { isOriginalDirectoryName, isProtectedOriginalPath } = require('./lib/commits.cjs');
+const { isProtectedFile, locateCase, markdownCounterpart, readProtection } = require('./lib/protection.cjs');
+
+/** Au-delà, on ne cherche pas de chemin : une commande pareille n'en cite pas un. */
+const MAX_COMMAND_LENGTH = 20_000;
 
 function deny(reason) {
   return {
@@ -25,26 +40,75 @@ function deny(reason) {
   };
 }
 
-function normalize(value) {
-  return String(value || '')
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[\s_-]+/g, ' ');
+/**
+ * Message de refus. Il doit rester actionnable : sans indication du Markdown à
+ * lire, l'agent réessaie le même chemin sous une autre forme.
+ */
+function protectionReason(absolute, caseRoot) {
+  const counterpart = markdownCounterpart(absolute, caseRoot);
+  const head = `[PieceMaker] « ${path.basename(absolute)} » est une pièce protégée : son contenu original n’est pas accessible à l’IA.`;
+  return counterpart.exists
+    ? `${head} Lisez le Markdown anonymisé à la place : ${counterpart.path}`
+    : `${head} Aucun Markdown n’a encore été produit pour cette pièce — lancez « Convertir en Markdown » dans l’administration PieceMaker, ou retirez sa protection si elle n’en a pas besoin.`;
 }
 
-function isBroadCaseSearch(filePath, casesRoot) {
-  if (!filePath || !casesRoot) return false;
-  const candidate = path.resolve(filePath);
-  const root = path.resolve(casesRoot);
-  if (candidate === root) return true;
-  if (!candidate.startsWith(`${root}${path.sep}`)) return false;
-  const relative = path.relative(root, candidate);
-  if (!relative || relative.split(path.sep).length !== 1) return false;
+function statSafe(target) {
   try {
-    return fs.statSync(candidate).isDirectory() && fs.readdirSync(candidate, { withFileTypes: true })
-      .some((entry) => entry.isDirectory() && isOriginalDirectoryName(entry.name));
+    return fs.statSync(target);
   } catch {
+    return null;
+  }
+}
+
+function absolutePath(value, cwd) {
+  if (!value) return null;
+  const raw = String(value);
+  if (!raw) return null;
+  return path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(cwd, raw);
+}
+
+/**
+ * Chemins cités par une commande shell. On ne cherche pas à parser le shell :
+ * chaque mot (guillemets respectés) est un candidat, et seuls ceux qui tombent
+ * sur un fichier protégé d'un dossier juridique comptent. Un faux positif est
+ * impossible — il faudrait que le mot désigne réellement une pièce protégée.
+ */
+function commandPaths(command, cwd) {
+  const text = String(command || '');
+  if (!text || text.length > MAX_COMMAND_LENGTH) return [];
+  const candidates = new Set();
+  const tokens = text.match(/"[^"]*"|'[^']*'|[^\s;|&<>()]+/g) || [];
+  for (const token of tokens) {
+    const bare = token.replace(/^["']|["']$/g, '');
+    if (!bare || bare.startsWith('-')) continue;
+    candidates.add(bare);
+    // `--input=/chemin/piece.pdf`, `of=piece.docx` : la valeur est le chemin.
+    const equals = bare.indexOf('=');
+    if (equals > 0 && equals < bare.length - 1) candidates.add(bare.slice(equals + 1));
+  }
+  // Seuls les mots qui désignent un fichier réellement présent comptent :
+  // sans ce filtre, `pandoc` lui-même se résout en `<dossier>/pandoc`, un
+  // chemin sans extension donc « protégé », et toute commande était refusée.
+  return [...candidates]
+    .map((candidate) => absolutePath(candidate, cwd))
+    .filter((candidate) => candidate && statSafe(candidate)?.isFile());
+}
+
+/**
+ * Un `Grep`/`Glob` lancé à la racine d'un dossier juridique parcourt les pièces
+ * protégées et en ramène des extraits. On refuse à la première pièce protégée
+ * rencontrée plutôt que de filtrer les résultats un à un.
+ */
+function isBroadCaseSearch(target, located) {
+  if (!target || !located) return false;
+  if (path.resolve(target) !== located.caseRoot) return false;
+  const protection = readProtection(located.caseRoot);
+  try {
+    return fs.readdirSync(located.caseRoot, { withFileTypes: true })
+      .some((entry) => entry.isFile()
+        && isProtectedFile(path.join(located.caseRoot, entry.name), located.caseRoot, protection));
+  } catch {
+    // Dossier illisible : on refuse, faute de pouvoir prouver qu'il est sûr.
     return true;
   }
 }
@@ -52,23 +116,38 @@ function isBroadCaseSearch(filePath, casesRoot) {
 async function main() {
   const payload = await readHookPayload(2000);
   if (!payload) return null;
-  const config = loadPieceMakerConfig();
-  const casesRoot = config.workspacePath;
+  const casesRoot = loadPieceMakerConfig().workspacePath;
   if (!casesRoot) return null;
-  const reason = '[PieceMaker] Accès refusé : les pièces originales sont isolées et interdites à l’IA. Utilisez uniquement le Markdown converti hors de ce dossier.';
 
-  if (payload.tool_name === 'Bash') {
-    const command = normalize(payload.tool_input?.command);
-    if (command.includes('pieces originales')) return deny(reason);
+  const toolName = payload.tool_name;
+  const cwd = payload.cwd || process.cwd();
+
+  if (toolName === 'Bash') {
+    for (const candidate of commandPaths(payload.tool_input?.command, cwd)) {
+      const located = locateCase(casesRoot, candidate);
+      if (located && isProtectedFile(candidate, located.caseRoot)) {
+        return deny(protectionReason(candidate, located.caseRoot));
+      }
+    }
     return null;
   }
 
-  if (!['Read', 'Grep', 'Glob'].includes(payload.tool_name)) return null;
-  const filePath = payload.tool_input?.file_path || payload.tool_input?.path;
-  const pattern = payload.tool_input?.pattern || payload.tool_input?.glob || '';
-  if (isProtectedOriginalPath(filePath, casesRoot) || normalize(pattern).includes('pieces originales')) return deny(reason);
-  if ((payload.tool_name === 'Grep' || payload.tool_name === 'Glob') && isBroadCaseSearch(filePath, casesRoot)) {
-    return deny(`${reason} Une recherche récursive à la racine risquerait de parcourir ce dossier ; ciblez un fichier Markdown précis.`);
+  if (!['Read', 'Grep', 'Glob'].includes(toolName)) return null;
+
+  const target = absolutePath(payload.tool_input?.file_path || payload.tool_input?.path, cwd);
+  if (!target) return null;
+  const located = locateCase(casesRoot, target);
+  if (!located) return null;
+
+  // Un répertoire n'est pas une pièce : `Grep`/`Glob` en visent un couramment,
+  // et c'est `isBroadCaseSearch` qui décide s'il est sûr de le parcourir.
+  const stat = statSafe(target);
+  if (!stat?.isDirectory() && isProtectedFile(target, located.caseRoot)) {
+    return deny(protectionReason(target, located.caseRoot));
+  }
+
+  if ((toolName === 'Grep' || toolName === 'Glob') && isBroadCaseSearch(target, located)) {
+    return deny(`[PieceMaker] Une recherche récursive à la racine de « ${located.caseName} » parcourrait des pièces protégées. Ciblez un fichier Markdown précis, ou un sous-dossier qui n’en contient pas.`);
   }
   return null;
 }
