@@ -25,9 +25,26 @@ export const REPO_ROOT = path.resolve(
 /** Per-user PieceMaker directory, replacing Electron's userData path. */
 export const HOME_DIR = process.env.PIECEMAKER_HOME || path.join(os.homedir(), '.piecemaker');
 
+/**
+ * Put the directory of the running Node first. npm's launcher uses
+ * `#!/usr/bin/env node`; without this, an older system Node can execute npm
+ * even though PieceMaker itself was started with a recent NVM installation.
+ */
+function runtimeEnv(env = process.env) {
+  const pathKey = Object.keys(env).find((key) => key.toLowerCase() === 'path') || 'PATH';
+  const runtimeBin = path.dirname(process.execPath);
+  const currentPath = env[pathKey] || '';
+  return {
+    ...env,
+    [pathKey]: [runtimeBin, currentPath].filter(Boolean).join(path.delimiter),
+  };
+}
+
 /** npm and npx need the .cmd shim on Windows when spawned without a shell. */
 export function npmBin(name = 'npm') {
-  return IS_WINDOWS ? `${name}.cmd` : name;
+  const executable = IS_WINDOWS ? `${name}.cmd` : name;
+  const adjacent = path.join(path.dirname(process.execPath), executable);
+  return fs.existsSync(adjacent) ? adjacent : executable;
 }
 
 /**
@@ -39,6 +56,7 @@ export function runCapture(command, args = [], options = {}) {
     encoding: 'utf8',
     windowsHide: true,
     ...options,
+    env: runtimeEnv(options.env),
   });
   return {
     code: result.status ?? 1,
@@ -58,6 +76,7 @@ export function run(command, args = [], { onLine, ...options } = {}) {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
       ...options,
+      env: runtimeEnv(options.env),
     });
 
     const forward = (stream) => {
