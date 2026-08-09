@@ -36,8 +36,12 @@ test('un commit liste ses fichiers puis ne calcule que le diff sélectionné', (
   assert.match(app, /loadRevision\(item\.hash\)/);
   assert.doesNotMatch(app, /loadRevision\(historyItems\[0\]\.hash\)/);
   assert.doesNotMatch(app, /loadRevision\('WORKTREE', selectedChange/);
-  assert.match(app, /container\.textContent = patch/);
   assert.doesNotMatch(css, /\.diff-line/);
+  assert.match(app, /line\.startsWith\('\+'\)/);
+  assert.match(app, /line\.startsWith\('-'\)/);
+  assert.match(app, /renderDiffSegments\(container, patch\)/);
+  assert.match(css, /\.diff-segment\.addition[^}]*\{[^}]*#dafbe1[^}]*#116329/);
+  assert.match(css, /\.diff-segment\.deletion[^}]*\{[^}]*#ffebe9[^}]*#82071e/);
   assert.doesNotMatch(app, /REPOSITORY_REFRESH_MS|scheduleRepositoryRefresh/);
 });
 

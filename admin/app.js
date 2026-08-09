@@ -1510,6 +1510,39 @@ function renderRevisionFiles(files, hash, selectedPath, limit = REVISION_FILE_BA
   list.append(fragment);
 }
 
+function diffLineKind(line) {
+  if (line.startsWith('@@')) return 'hunk';
+  if (line.startsWith('+') && !line.startsWith('+++')) return 'addition';
+  if (line.startsWith('-') && !line.startsWith('---')) return 'deletion';
+  if (line.startsWith('diff --git') || line.startsWith('index ') || line.startsWith('---') || line.startsWith('+++')) return 'header';
+  return 'context';
+}
+
+function renderDiffSegments(container, patch) {
+  const fragment = document.createDocumentFragment();
+  const lines = patch.split('\n');
+  let kind = null;
+  let segment = [];
+
+  const flush = () => {
+    if (!segment.length) return;
+    const span = document.createElement('span');
+    span.className = `diff-segment ${kind}`;
+    span.textContent = segment.join('\n');
+    fragment.append(span);
+    segment = [];
+  };
+
+  for (const line of lines) {
+    const nextKind = diffLineKind(line);
+    if (kind !== null && nextKind !== kind) flush();
+    kind = nextKind;
+    segment.push(line || ' ');
+  }
+  flush();
+  container.replaceChildren(fragment);
+}
+
 function renderPatch(patch) {
   const t0 = performance.now();
   const container = byId('diffContent');
@@ -1521,10 +1554,9 @@ function renderPatch(patch) {
     return;
   }
   const lineCount = patch.split('\n').length;
-  // Un unique nœud texte évite les dizaines de milliers de <div> qui
-  // bloquaient ensuite style/layout/paint pendant plusieurs centaines de ms.
-  container.classList.add('diff-pre');
-  container.textContent = patch;
+  // Le premier caractère pilote la classe CSS. Les lignes contiguës de même
+  // nature sont regroupées pour conserver un DOM léger sur les gros diffs.
+  renderDiffSegments(container, patch);
   const elapsed = performance.now() - t0;
   dlog('renderPatch', `Rendered ${lineCount} patch lines in ${elapsed.toFixed(2)}ms`);
   if (elapsed > 100) dwarn('renderPatch', `Slow diff patch rendering: ${elapsed.toFixed(2)}ms for ${lineCount} lines`);
