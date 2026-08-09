@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -64,6 +64,43 @@ function update(client, home) {
     },
   });
 }
+
+/** Open the real menu over piped stdin while making readline treat it as a TTY. */
+function openInstaller(client, home) {
+  const cli = path.join(client, 'installer', 'bin', 'piecemaker.mjs');
+  const script = `Object.defineProperty(process.stdin, 'isTTY', { value: true }); await import(${JSON.stringify(pathToFileURL(cli).href)});`;
+  return spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+    cwd: client,
+    input: '7\n',
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      NO_COLOR: '1',
+      PIECEMAKER_HOME: home,
+      npm_config_prefix: path.join(home, 'npm'),
+    },
+  });
+}
+
+test('l’ouverture signale immédiatement une MAJ et simplifie le menu principal', () => {
+  const { dir, work, client } = sandbox();
+  const home = path.join(dir, 'home');
+  fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ port: 43990 }));
+
+  fs.writeFileSync(path.join(work, 'NOUVELLE_VERSION.md'), 'nouveau\n');
+  git(work, ['add', '-A']);
+  git(work, ['commit', '-qm', 'nouvelle version']);
+  git(work, ['push', '-q', 'origin', 'main']);
+
+  const opened = openInstaller(client, home);
+  assert.equal(opened.status, 0, opened.stderr);
+  assert.match(opened.stdout, /MAJ disponible/);
+  assert.match(opened.stdout, /Mettre à jour PieceMaker — MAJ disponible/);
+  assert.doesNotMatch(opened.stdout, /Diagnostic complet/);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
 
 test('la mise à jour supprime les fichiers obsolètes et télécharge les nouveaux', () => {
   const { dir, work, client } = sandbox();

@@ -25,7 +25,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { banner, title, log, write, blank, summary, badge, c } from '../lib/ui.mjs';
+import { banner, title, log, write, blank, summary, spinner, badge, c } from '../lib/ui.mjs';
 import { select, confirm, multiSelect, pause, nonInteractive } from '../lib/prompt.mjs';
 import { findPython } from '../lib/platform.mjs';
 import { loadConfig, readEnv, markStep, loadState, CONFIG_FILE } from '../lib/state.mjs';
@@ -275,7 +275,7 @@ function printServerStatus(status) {
   blank();
 }
 
-async function runOperationalCommand(command) {
+async function runOperationalCommand(command, knownUpdate = null) {
   if (command === 'open') {
     const status = await openAdmin();
     log.ok(`Interface ouverte : ${status.url}`);
@@ -306,7 +306,7 @@ async function runOperationalCommand(command) {
   if (command === 'update') {
     // Look before stopping anything: an up-to-date install must not lose its
     // server for the duration of a no-op npm install.
-    const pending = checkForUpdate();
+    const pending = knownUpdate ?? checkForUpdate();
     if (!pending.available) {
       log.ok(`PieceMaker est déjà à jour (${pending.ref}, ${pending.current.slice(0, 7)}).`);
       return 0;
@@ -343,7 +343,32 @@ async function runOperationalCommand(command) {
   return null;
 }
 
-async function mainMenu(steps, ctx) {
+/**
+ * Check once before showing an interactive installer menu. A network or Git
+ * failure must never prevent the local installer from opening.
+ */
+function checkForUpdateOnOpen() {
+  const spin = spinner('Vérification des mises à jour...');
+  try {
+    const pending = checkForUpdate();
+    spin.stop();
+    if (pending.remoteAvailable) {
+      log.warn(`MAJ disponible (${pending.changed.length} fichier(s) modifié(s)) — choisissez « Mettre à jour PieceMaker ».`);
+    } else {
+      log.ok('PieceMaker est à jour.');
+    }
+    blank();
+    return pending;
+  } catch (error) {
+    spin.stop();
+    log.warn('Vérification des mises à jour impossible ; l’installation locale reste disponible.');
+    if (process.env.PIECEMAKER_DEBUG) log.detail(error.message);
+    blank();
+    return null;
+  }
+}
+
+async function mainMenu(steps, ctx, knownUpdate = null) {
   for (;;) {
     const status = await getServerStatus();
     printServerStatus(status);
@@ -352,8 +377,10 @@ async function mainMenu(steps, ctx) {
       { value: status.running ? 'stop' : 'start', label: status.running ? 'Arrêter le serveur local' : 'Démarrer le serveur local' },
       { value: 'status', label: 'Actualiser l’état' },
       { value: 'install', label: 'Installer ou réparer des composants' },
-      { value: 'check', label: 'Diagnostic complet' },
-      { value: 'update', label: 'Mettre à jour PieceMaker' },
+      {
+        value: 'update',
+        label: knownUpdate?.remoteAvailable ? 'Mettre à jour PieceMaker — MAJ disponible' : 'Mettre à jour PieceMaker',
+      },
       { value: 'logs', label: 'Afficher les journaux' },
       { value: 'quit', label: 'Quitter' },
     ]);
@@ -363,15 +390,11 @@ async function mainMenu(steps, ctx) {
       await installerMenu(steps, ctx, { allowBack: true });
       continue;
     }
-    if (choice === 'check') {
-      await runCheck(steps, ctx);
-      await pause();
-      continue;
-    }
     if (choice === 'update' && !(await confirm('Télécharger et appliquer la dernière version ?', true))) continue;
 
     try {
-      await runOperationalCommand(choice);
+      await runOperationalCommand(choice, choice === 'update' ? knownUpdate : null);
+      if (choice === 'update') knownUpdate = null;
     } catch (error) {
       log.error(error.message);
     }
@@ -398,6 +421,14 @@ async function main() {
   }
 
   banner();
+
+  const opensInteractiveInstaller =
+    (!flags.command || flags.command === 'install') &&
+    !flags.all &&
+    !flags.check &&
+    !flags.step &&
+    !nonInteractive;
+  const knownUpdate = opensInteractiveInstaller ? checkForUpdateOnOpen() : null;
 
   if (flags.command && !['install', 'doctor', 'check'].includes(flags.command)) {
     return runOperationalCommand(flags.command);
@@ -444,7 +475,7 @@ async function main() {
   }
 
   if (flags.command === 'install') await installerMenu(steps, ctx);
-  else await mainMenu(steps, ctx);
+  else await mainMenu(steps, ctx, knownUpdate);
   return 0;
 }
 
