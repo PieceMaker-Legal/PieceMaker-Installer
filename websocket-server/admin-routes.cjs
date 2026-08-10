@@ -616,36 +616,37 @@ function finishAdminTiming(res, metric, startedAt, details = {}) {
  * le sous-dossier « Pièces tamponnées ». Seules les métadonnées utiles au bordereau sont
  * renvoyées — jamais `texte_integral`, qui contient les pièces en clair.
  */
-function listDossiers(repoRoot, homeDir) {
+// Les pièces à tamponner ne viennent plus d'un `compilation_dossier_*.json`
+// (produit par l'ancien chargement de dossier depuis Word) : la logique s'appuie
+// désormais sur les dossiers juridiques enregistrés, quelle que soit leur place
+// dans l'arborescence. Chaque dossier expose ses pièces originales — tout fichier
+// qui n'est ni `.md` ni `.json` —, identifiées par leur chemin relatif au dossier.
+async function listDossiers(repoRoot, homeDir) {
   const config = readRegistryConfig(path.join(homeDir, 'config.json'));
-  const legalCases = listConfiguredCases(config);
-  return legalCases.flatMap((entry) => {
-    // Preserve the configured spelling of the legacy workspace path (`/var`
-    // vs `/private/var` on macOS); explicit folders are stored canonicalized.
-    const legalCase = entry.registered
-      ? entry.root
-      : path.join(config.workspacePath, entry.name);
-    return fs.readdirSync(legalCase)
-      .filter((file) => /^compilation_dossier_.+\.json$/.test(file))
-      .map((file) => {
-      const documentId = file.slice('compilation_dossier_'.length, -'.json'.length);
-      const raw = readJson(path.join(legalCase, file), null);
-      const documents = Array.isArray(raw) ? raw : raw?.documents || [];
-      return {
-        documentId,
-        informations: Array.isArray(raw) ? {} : raw?.informations_dossier || {},
-        folder: legalCase,
-        stampedDir: stampedPiecesDirectory(legalCase),
-        documents: documents.map((doc) => ({
-          id: doc?.id,
-          filename: doc?.filename || '',
-          type_document: doc?.type_document || '',
-          date_document: doc?.date_document || '',
-        })),
-      };
-      });
-    })
-    .filter((dossier) => dossier.documents.length > 0);
+  const dossiers = [];
+  for (const entry of listConfiguredCases(config)) {
+    let originals;
+    try {
+      originals = await listOriginals(entry.root);
+    } catch {
+      // Dossier déplacé/illisible pendant l'inventaire : on l'omet simplement.
+      continue;
+    }
+    if (!originals.length) continue;
+    dossiers.push({
+      documentId: entry.id,
+      informations: { intitule: entry.name },
+      folder: entry.root,
+      stampedDir: stampedPiecesDirectory(entry.root),
+      documents: originals.map((file) => ({
+        id: file.path,
+        filename: file.path,
+        type_document: (file.extension || '').replace(/^\./, '').toUpperCase(),
+        date_document: '',
+      })),
+    });
+  }
+  return dossiers;
 }
 
 const REVEAL_TARGETS = new Set(['files', 'terminal']);
@@ -841,10 +842,10 @@ function createAdminRouter({
     }
   });
 
-  router.get('/dossiers', (req, res) => {
+  router.get('/dossiers', async (req, res) => {
     try {
       res.json({
-        dossiers: listDossiers(repoRoot, homeDir),
+        dossiers: await listDossiers(repoRoot, homeDir),
         tamponConfigured: fs.existsSync(path.join(legalWorkspaceDirectory(repoRoot, homeDir), '.piecemaker', 'tampon.png')),
       });
     } catch (error) {

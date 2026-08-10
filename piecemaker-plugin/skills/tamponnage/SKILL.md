@@ -33,11 +33,21 @@ dossier ni par utilisateur.
    « Enregistrer le tampon ») ou depuis
    le menu « 🕹️ Configurer le tampon » du volet Word.
 2. **La liste des pièces vient de la compilation du dossier juridique** :
-   `<dossier juridique>/compilation_dossier_<documentId>.json`, champ `documents[]`
-   (`id`, `filename`, `type_document`, `date_document`, `texte_integral`). Elle
-   est écrite lors du chargement/anonymisation du dossier.
+   deux origines coexistent :
+   - **Administration** (`GET /api/admin/dossiers` → `listDossiers`) : la liste
+     est bâtie sur les **dossiers juridiques enregistrés** (registre `caseFolders`,
+     quelle que soit leur place dans l'arborescence), et chaque pièce est un
+     **fichier original** du dossier (tout fichier qui n'est ni `.md` ni `.json`,
+     via `listOriginals`), **identifié par son chemin relatif au dossier** — plus
+     aucun `compilation_dossier_*.json` n'est requis.
+   - **Volet Word / MCP** (parcours historique) : la liste vient encore de
+     `<dossier juridique>/compilation_dossier_<documentId>.json`, champ
+     `documents[]` (`id`, `filename`, `type_document`, `date_document`,
+     `texte_integral`), écrite au chargement du dossier.
 3. **Appel** : `POST /api/stamping` avec
-   `{ "pieces": ["0001", "0003", "0002"], "documentId": "<id>", "folder": "<dossier de travail>" }`.
+   `{ "pieces": [...], "documentId": "<id>", "folder": "<dossier de travail>" }`.
+   `pieces` porte soit des **chemins relatifs au dossier** (administration), soit
+   des **`id` de compilation** (`"0001"`, volet Word).
    **L'ordre du tableau fait la numérotation** : premier élément → Pièce n°1.
    `folder` est facultatif si le dossier de travail a déjà été mémorisé pour ce
    `documentId` (extraction faite depuis le volet Word) ; sinon la requête est
@@ -45,11 +55,12 @@ dossier ni par utilisateur.
    à son **dossier juridique** — le sous-dossier immédiat de la racine
    PieceMaker qui le contient (`resolveLegalCaseFolder`) — et tout chemin hors
    de cette racine est refusé.
-4. **Pour chaque pièce**, le serveur retrouve l'entrée par son `id`, ouvre le
-   **fichier original** désigné par `document.filename` (chemin complet — pas
-   le `.md` produit par la conversion Markdown), le charge dans `pdf-lib`,
-   appose le tampon sur la **première page**, en haut à droite (carré de
-   100 pt, marge de 20 pt), avec le numéro de pièce imprimé au centre.
+4. **Pour chaque pièce**, le serveur ouvre le **fichier original** — l'entrée de
+   compilation résolue par son `filename` si elle existe, sinon le chemin relatif
+   résolu dans le dossier (`resolveCaseRelativeFile`, chemin absolu ou remontant
+   refusé) —, **jamais le `.md`** produit par la conversion Markdown, le charge
+   dans `pdf-lib`, appose le tampon sur la **première page**, en haut à droite
+   (carré de 100 pt, marge de 20 pt), avec le numéro de pièce imprimé au centre.
 5. **Sortie** : `<dossier juridique>/Pièces tamponnées/Pièce n°N.pdf`.
    Le dossier juridique est celui du **document Word ouvert**
    (`getCurrentDocFolder()` côté volet), jamais la racine PieceMaker : les

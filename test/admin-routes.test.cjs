@@ -173,29 +173,35 @@ test('l’administration refuse les origines web non locales', () => {
   assert.equal(isLocalOrigin('https://example.com'), false);
 });
 
-test('les dossiers tamponnables sont listés par dossier juridique, sans le texte des pièces', (t) => {
+test('les dossiers tamponnables listent les pièces originales du dossier enregistré, sans le Markdown', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
   const workspace = path.join(data.root, 'dossiers-juridiques');
-  const legalCase = path.join(workspace, 'Dupont c-Martin');
-  fs.mkdirSync(legalCase, { recursive: true });
+  fs.mkdirSync(path.join(workspace, 'Dupont c-Martin'), { recursive: true });
+  fs.mkdirSync(path.join(workspace, 'Dossier vide'), { recursive: true });
+  const legalCase = fs.realpathSync(path.join(workspace, 'Dupont c-Martin'));
+  const emptyCase = fs.realpathSync(path.join(workspace, 'Dossier vide'));
   fs.mkdirSync(data.home, { recursive: true });
   fs.writeFileSync(path.join(data.home, 'config.json'), JSON.stringify({ workspacePath: workspace }));
-  fs.writeFileSync(path.join(legalCase, 'compilation_dossier_ABC.json'), JSON.stringify({
-    informations_dossier: { intitule: 'Dupont c/ Martin' },
-    documents: [{ id: '0001', filename: 'contrat.pdf', type_document: 'Contrat', texte_integral: 'SECRET' }],
-  }));
-  fs.writeFileSync(path.join(legalCase, 'compilation_dossier_VIDE.json'), JSON.stringify({ documents: [] }));
 
-  const dossiers = listDossiers(data.repo, data.home);
+  // Pièces originales à tamponner + dérivés qui ne doivent pas apparaître.
+  fs.writeFileSync(path.join(legalCase, 'contrat.pdf'), '%PDF');
+  fs.writeFileSync(path.join(legalCase, 'contrat.md'), '# converti');
+  fs.writeFileSync(path.join(legalCase, 'compilation_dossier_ABC.json'), '{}');
+  fs.mkdirSync(path.join(legalCase, 'annexes'), { recursive: true });
+  fs.writeFileSync(path.join(legalCase, 'annexes', 'facture.pdf'), '%PDF');
+
+  const dossiers = await listDossiers(data.repo, data.home);
   assert.equal(dossiers.length, 1);
-  assert.equal(dossiers[0].documentId, 'ABC');
-  assert.equal(dossiers[0].informations.intitule, 'Dupont c/ Martin');
+  assert.equal(dossiers[0].informations.intitule, 'Dupont c-Martin');
   assert.equal(dossiers[0].folder, legalCase);
   assert.equal(dossiers[0].stampedDir, path.join(legalCase, 'Pièces tamponnées'));
+  // Identifiée par son chemin relatif au dossier ; ni le `.md` ni le `.json`.
   assert.deepEqual(dossiers[0].documents, [
-    { id: '0001', filename: 'contrat.pdf', type_document: 'Contrat', date_document: '' },
+    { id: 'annexes/facture.pdf', filename: 'annexes/facture.pdf', type_document: 'PDF', date_document: '' },
+    { id: 'contrat.pdf', filename: 'contrat.pdf', type_document: 'PDF', date_document: '' },
   ]);
+  assert.ok(!dossiers.some((dossier) => dossier.folder === emptyCase), 'un dossier sans pièce est omis');
 });
 
 test('les dossiers s’ouvrent avec les commandes du système, sans passer par un shell', () => {

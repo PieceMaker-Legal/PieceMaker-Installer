@@ -15,7 +15,7 @@ const {
   stampDataUrl,
   stampedPiecesDirectory,
 } = require('./lib/stamping.cjs');
-const { resolveConfiguredLegalCaseFolder } = require('./workspace-paths.cjs');
+const { isInside, resolveConfiguredLegalCaseFolder } = require('./workspace-paths.cjs');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const PIECEMAKER_HOME = process.env.PIECEMAKER_HOME || path.join(os.homedir(), '.piecemaker');
@@ -2964,6 +2964,21 @@ function resolvePieceFile(declaredPath, workingFolder, documentId) {
   ].find((candidate) => fs.existsSync(candidate)) || null;
 }
 
+// Nouvelle logique de tamponnage : une pièce est désignée par son chemin
+// relatif au dossier juridique (tel que listé par `listOriginals`). On refuse
+// tout chemin absolu ou remontant hors du dossier, puis on exige un fichier.
+function resolveCaseRelativeFile(caseFolder, relativePath) {
+  const relative = String(relativePath || '').trim();
+  if (!relative || path.isAbsolute(relative)) return null;
+  const candidate = path.resolve(caseFolder, relative);
+  if (candidate !== caseFolder && !isInside(caseFolder, candidate)) return null;
+  try {
+    return fs.statSync(candidate).isFile() ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
 app.post('/api/stamping', async (req, res) => {
   try {
     const { pieces, documentId, folder } = req.body;
@@ -3011,30 +3026,26 @@ app.post('/api/stamping', async (req, res) => {
     const tamponBuffer = fs.readFileSync(tamponPath);
     const tamponFormat = detectStampImage(tamponBuffer).format;
 
+    // Une compilation `compilation_dossier_<documentId>.json` n'existe plus que
+    // pour les dossiers chargés par l'ancien flux Word ; l'administration
+    // désigne désormais les pièces par leur chemin relatif au dossier juridique.
+    // On charge la compilation si elle est là (parcours Word/MCP), sinon on
+    // résout chaque pièce directement comme un fichier du dossier.
     const compilationPath = path.join(workingFolder, `compilation_dossier_${documentId}.json`);
-
-    // Vérifier que le fichier de compilation existe
-    if (!fs.existsSync(compilationPath)) {
-      return res.status(404).json({
-        error: 'Fichier compilation_dossier non trouvé. Veuillez d\'abord charger des fichiers.'
-      });
-    }
-
-    // Charger la compilation
-    const compilationData = JSON.parse(readFileStripBOM(compilationPath, 'utf8'));
-
-    // Deux formes de compilation coexistent sur disque : un objet
-    // `{ informations_dossier, documents }` et, pour les plus anciennes, le
-    // tableau nu. `listDossiers` accepte déjà les deux — l'administration
-    // proposerait sinon des pièces que le tamponnage dit introuvables.
-    const documentsArray = Array.isArray(compilationData)
-      ? compilationData
-      : compilationData.documents || [];
-
-    if (!Array.isArray(documentsArray)) {
-      return res.status(500).json({
-        error: 'Structure de compilation invalide : documents doit être un tableau'
-      });
+    let documentsArray = [];
+    if (fs.existsSync(compilationPath)) {
+      const compilationData = JSON.parse(readFileStripBOM(compilationPath, 'utf8'));
+      // Deux formes coexistent sur disque : un objet
+      // `{ informations_dossier, documents }` et, pour les plus anciennes, le
+      // tableau nu.
+      documentsArray = Array.isArray(compilationData)
+        ? compilationData
+        : compilationData.documents || [];
+      if (!Array.isArray(documentsArray)) {
+        return res.status(500).json({
+          error: 'Structure de compilation invalide : documents doit être un tableau'
+        });
+      }
     }
 
     const tamponnedDir = stampedPiecesDirectory(workingFolder);
@@ -3051,29 +3062,24 @@ app.post('/api/stamping', async (req, res) => {
       const pieceId = pieces[i];
       const pieceNumber = i + 1;
 
-      // Trouver le document correspondant dans la compilation
+      // Deux origines pour l'`id` d'une pièce : une entrée de compilation (flux
+      // Word/MCP) résolue par son `filename`, ou un chemin relatif au dossier
+      // juridique (administration) résolu directement.
       const document = documentsArray.find(doc => doc.id === pieceId);
-
-      if (!document) {
-        results.push({
-          pieceNumber,
-          id: pieceId,
-          success: false,
-          error: `Document avec ID ${pieceId} introuvable dans la compilation`
-        });
-        continue;
-      }
+      const declaredName = document ? document.filename : pieceId;
 
       try {
-        const filePath = resolvePieceFile(document.filename, workingFolder, documentId);
+        const filePath = document
+          ? resolvePieceFile(document.filename, workingFolder, documentId)
+          : resolveCaseRelativeFile(workingFolder, pieceId);
 
         if (!filePath) {
           results.push({
             pieceNumber,
             id: pieceId,
-            filename: document.filename,
+            filename: declaredName,
             success: false,
-            error: `Fichier introuvable : ${document.filename || 'nom de fichier absent'}`
+            error: `Fichier introuvable : ${declaredName || 'nom de fichier absent'}`
           });
           continue;
         }
@@ -3150,7 +3156,7 @@ app.post('/api/stamping', async (req, res) => {
         results.push({
           pieceNumber,
           id: pieceId,
-          filename: document.filename,
+          filename: declaredName,
           outputFileName: outputFileName,
           outputPath: outputPath,
           converted: conversion.converted,
@@ -3162,7 +3168,7 @@ app.post('/api/stamping', async (req, res) => {
         results.push({
           pieceNumber,
           id: pieceId,
-          filename: document.filename,
+          filename: declaredName,
           success: false,
           error: error.message
         });

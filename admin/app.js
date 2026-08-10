@@ -255,7 +255,7 @@ function renderPieces() {
     : 'dossier de travail à renseigner';
 
   if (!dossier) {
-    list.innerHTML = '<p class="muted">Aucun dossier chargé. Chargez des pièces depuis le volet Word.</p>';
+    list.innerHTML = '<p class="muted">Aucun dossier enregistré ne contient de pièce. Enregistrez un dossier juridique depuis l’onglet « Dossiers ».</p>';
     byId('stampPiecesBtn').disabled = true;
     return;
   }
