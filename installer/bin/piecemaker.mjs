@@ -368,6 +368,35 @@ function checkForUpdateOnOpen() {
   }
 }
 
+/**
+ * Bare `piecemaker` should land on a live server. Start it if it is down, but
+ * never block the menu on failure: a missing certificate or a boot error is
+ * reported and the interactive installer below stays reachable to fix it.
+ * The browser is left closed on purpose — the menu's "Ouvrir l'interface"
+ * entry is how the admin pane gets opened.
+ */
+async function ensureServerRunning() {
+  let status;
+  try {
+    status = await getServerStatus();
+  } catch {
+    return;
+  }
+  if (status.running) return;
+
+  const spin = spinner('Démarrage du serveur local...');
+  try {
+    const started = await startServer();
+    spin.stop();
+    log.ok(`Serveur démarré : ${started.url}`);
+  } catch (error) {
+    spin.stop();
+    log.warn(`Serveur non démarré : ${error.message}`);
+    log.detail('Réparez-le via « Installer ou réparer des composants » ci-dessous.');
+  }
+  blank();
+}
+
 async function mainMenu(steps, ctx, knownUpdate = null) {
   for (;;) {
     const status = await getServerStatus();
@@ -475,7 +504,10 @@ async function main() {
   }
 
   if (flags.command === 'install') await installerMenu(steps, ctx);
-  else await mainMenu(steps, ctx, knownUpdate);
+  else {
+    await ensureServerRunning();
+    await mainMenu(steps, ctx, knownUpdate);
+  }
   return 0;
 }
 
