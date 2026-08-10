@@ -83,6 +83,7 @@ function caseMappingPayload(document) {
     reverse_mapping: normalized.reverse_mapping,
     ...(Object.keys(normalized.extracted_data).length ? { extracted_data: normalized.extracted_data } : {}),
     ...(normalized.ignored.length ? { ignored: normalized.ignored } : {}),
+    informations_dossier: normalized.informations_dossier,
   };
 }
 
@@ -111,7 +112,11 @@ function saveCaseMapping(caseRoot, document) {
   const current = readCaseMapping(caseRoot);
   // L'éditeur n'envoie que `mapping` et `reverse_mapping` : `extracted_data`
   // est repris du fichier, sinon un simple enregistrement perdrait les variants.
-  const next = normalizeMappingDocument({ extracted_data: current.extracted_data, ...document });
+  const next = normalizeMappingDocument({
+    extracted_data: current.extracted_data,
+    informations_dossier: current.informations_dossier,
+    ...document,
+  });
   const removed = Object.keys(current.mapping).filter((entity) => !next.mapping[entity]);
   const ignored = [...new Set([...current.ignored, ...removed])].filter((entity) => !next.mapping[entity]);
   return writeCaseMapping(caseRoot, { ...next, ignored });
@@ -152,10 +157,10 @@ function entityCategory(entityType) {
 
 /** Catégorie d'un code déjà attribué — sert à repartir des bons compteurs. */
 function codeCategory(code) {
-  if (code.startsWith('PERSONNE_PHYSIQUE_')) return 'personnes_physiques';
-  if (code.startsWith('SOCIETE_') || code.startsWith('PERSONNE_MORALE_')) return 'societes';
-  if (code.startsWith('ADRESSE_')) return 'adresses';
   if (code.startsWith('SIREN_')) return 'siren';
+  if (code.startsWith('ADRESSE_') || code.startsWith('LIEU_NAISSANCE_')) return 'adresses';
+  if (code.includes('PERSONNE_PHYSIQUE_') || code.startsWith('DIRIGEANT_')) return 'personnes_physiques';
+  if (code.startsWith('SOCIETE_') || code.includes('PERSONNE_MORALE_')) return 'societes';
   return 'autres';
 }
 
@@ -299,6 +304,7 @@ async function rebuildCaseMapping(caseRoot) {
     reverse_mapping: reverse,
     extracted_data: extracted,
     ignored: [...ignored],
+    informations_dossier: current.informations_dossier,
   });
   const migratedScans = await migrateLegacySensitiveMaps(caseRoot);
   return { ...saved, added, total: Object.keys(saved.mapping).length, migratedScans };

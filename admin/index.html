@@ -143,6 +143,12 @@
                     <div><strong id="mappingDialogTitle">mapping_default.json</strong><span>Le mapping est modifié directement dans ce panneau.</span></div>
                     <span id="mappingDialogCount" class="count-badge">0</span>
                   </div>
+                  <button id="openProcedureParties" class="procedure-summary" type="button" aria-haspopup="dialog">
+                    <span class="procedure-summary-side client"><small>Partie cliente</small><strong id="procedureClientSummary">À renseigner</strong></span>
+                    <span class="procedure-summary-separator" aria-hidden="true">c/</span>
+                    <span class="procedure-summary-side adverse"><small>Partie adverse</small><strong id="procedureAdverseSummary">À renseigner</strong></span>
+                    <span class="procedure-summary-action">Détails</span>
+                  </button>
                   <p class="inline-detail-hint">Chaque ligne regroupe un nom anonymisé, le variant principal rétabli lors du revert et toutes les autres écritures détectées. Toute modification enregistrée crée automatiquement un commit limité au fichier de mapping.</p>
                   <div class="mapping-editor">
                     <div class="mapping-editor-head"><span>Nom anonymisé</span><span>Variant principal (revert)</span><span>Autres variants</span><span></span></div>
@@ -467,6 +473,30 @@
       <p class="hint">La branche part du dernier commit de la branche actuelle et devient active.</p>
       <span id="createBranchMessage" class="message"></span>
       <div class="actions"><button id="cancelCreateBranch" class="button secondary" type="button">Annuler</button><button class="button primary" type="submit">Créer la branche</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="procedurePartiesDialog" class="procedure-parties-dialog">
+    <form id="procedurePartiesForm" class="dialog-card procedure-parties-card">
+      <header class="procedure-dialog-header">
+        <div><p class="eyebrow">PROCÉDURE</p><h2>Identifier les parties</h2><p>Choisissez un variant principal du mapping ou saisissez directement une nouvelle identité.</p></div>
+        <button id="closeProcedureParties" class="dialog-close" type="button" aria-label="Fermer">×</button>
+      </header>
+      <div class="procedure-party-columns">
+        <section class="procedure-party-column client">
+          <div class="procedure-party-column-title"><div><small>À gauche</small><h3>Partie cliente</h3></div><button id="addClientParty" class="button ghost compact" type="button">+ Partie</button></div>
+          <div id="clientParties" class="procedure-party-list"></div>
+        </section>
+        <section class="procedure-party-column adverse">
+          <div class="procedure-party-column-title"><div><small>À droite</small><h3>Partie adverse</h3></div><button id="addAdverseParty" class="button ghost compact" type="button">+ Partie</button></div>
+          <div id="adverseParties" class="procedure-party-list"></div>
+        </section>
+      </div>
+      <span id="procedurePartiesMessage" class="message"></span>
+      <div class="actions">
+        <button id="cancelProcedureParties" class="button secondary" type="button">Annuler</button>
+        <button id="saveProcedureParties" class="button primary" type="submit">Enregistrer les parties</button>
+      </div>
     </form>
   </dialog>
 

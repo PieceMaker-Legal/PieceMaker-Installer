@@ -94,6 +94,11 @@ test('la vue Dossiers suit le bureau Git avec trois onglets et des détails int�
     assert.match(html, new RegExp(`id="${id}"`));
   }
   assert.match(html, /id="mappingView" class="inline-detail"/);
+  for (const id of ['openProcedureParties', 'procedureClientSummary', 'procedureAdverseSummary', 'procedurePartiesDialog', 'clientParties', 'adverseParties']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(app, /applyProcedureParties/);
+  assert.match(app, /CLIENT|procedureSummary/);
   assert.match(html, /id="telegramCaseView" class="inline-detail/);
   assert.doesNotMatch(html, /id="mappingDialog"|Restaurer cet état/);
   assert.doesNotMatch(app, /showModal\(\).*mapping|restoreSelectedRevision|restoreRevision/);

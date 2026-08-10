@@ -4,7 +4,15 @@ import {
   splitMarkdownDocument,
   visualEditorToMarkdown,
 } from './markdown.mjs';
-import { buildMappingDocument, groupMappingByCode } from './mapping-model.mjs';
+import {
+  PROCEDURE_POSITIONS,
+  applyProcedureParties,
+  buildMappingDocument,
+  groupMappingByCode,
+  normalizeProcedureInfo,
+  principalPartyOptions,
+  procedureSummary,
+} from './mapping-model.mjs';
 import { drawStamp } from './stamp-builder.mjs';
 
 // ---------------------------------------------------------------------------
@@ -120,6 +128,8 @@ let originalsScope = 'all';
 let originalsJob = null;
 let originalsJobTimer = null;
 let mappingDocument = null;
+let procedureMappingSource = null;
+let procedurePartyCounter = 0;
 let detailView = 'diff';
 let caseTelegram = null;
 let caseTelegramFolder = '';
@@ -1186,6 +1196,242 @@ function renderMappingSummary() {
   button.disabled = !legalCase;
 }
 
+function renderProcedureSummary() {
+  const summary = procedureSummary(mappingDocument?.informations_dossier);
+  const renderSide = (id, names) => {
+    const element = byId(id);
+    element.textContent = names.length ? names.join(' · ') : 'À renseigner';
+    element.classList.toggle('empty', !names.length);
+  };
+  renderSide('procedureClientSummary', summary.client);
+  renderSide('procedureAdverseSummary', summary.adverse);
+}
+
+function procedurePartyList(side) {
+  return byId(side === 'client' ? 'clientParties' : 'adverseParties');
+}
+
+function refreshEmptyProcedureList(side) {
+  const list = procedurePartyList(side);
+  const rows = list.querySelectorAll('.procedure-party-item');
+  list.querySelector('.procedure-party-empty')?.remove();
+  if (!rows.length) {
+    const empty = document.createElement('p');
+    empty.className = 'procedure-party-empty';
+    empty.textContent = side === 'client' ? 'Aucune partie cliente.' : 'Aucune partie adverse.';
+    list.append(empty);
+  }
+}
+
+function fillPartyDatalist(datalist, type) {
+  datalist.textContent = '';
+  const source = procedureMappingSource || mappingDocument || {};
+  for (const optionData of principalPartyOptions(source.mapping, source.reverse_mapping, type)) {
+    const option = document.createElement('option');
+    option.value = optionData.principal;
+    option.label = optionData.code;
+    datalist.append(option);
+  }
+}
+
+function addProcedureParty(side, data = {}) {
+  const party = normalizeProcedureInfo(side === 'client'
+    ? { parties_clientes: [data] }
+    : { parties_adverses: [data] });
+  const normalizedParty = side === 'client' ? party.parties_clientes[0] : party.parties_adverses[0];
+  const list = procedurePartyList(side);
+  list.querySelector('.procedure-party-empty')?.remove();
+  const row = document.createElement('article');
+  row.className = 'procedure-party-item';
+  row.dataset.side = side;
+  const personListId = `procedure-person-${++procedurePartyCounter}`;
+  const companyListId = `procedure-company-${procedurePartyCounter}`;
+  const legalFormListId = `procedure-legal-form-${procedurePartyCounter}`;
+  row.innerHTML = `
+    <div class="procedure-party-item-head">
+      <label>Nature<select class="procedure-party-type"><option value="personne_physique">Personne physique</option><option value="societe">Personne morale</option></select></label>
+      <label>Position<select class="procedure-party-position"></select></label>
+      <button class="remove-procedure-party" type="button" title="Supprimer cette partie" aria-label="Supprimer cette partie">×</button>
+    </div>
+    <label class="procedure-position-custom" hidden>Position personnalisée<input class="procedure-position-label" placeholder="Ex. créancier poursuivant"></label>
+    <div class="procedure-party-fields procedure-person-fields">
+      <label>Civilité<select class="procedure-civility"><option value="">—</option><option>M.</option><option>Mme</option><option>Mlle</option><option>Me</option><option>Dr</option></select></label>
+      <label class="wide">Nom complet — variant principal<input class="procedure-person-name" list="${personListId}" placeholder="Claire Reynaud" autocomplete="off"><datalist id="${personListId}"></datalist></label>
+      <label>Date de naissance<input class="procedure-birth-date" placeholder="12 septembre 1984"></label>
+      <label>Lieu de naissance<input class="procedure-birth-place" placeholder="Lyon"></label>
+      <label class="wide">Domicile<input class="procedure-address" placeholder="12 rue…, 75000 Paris"></label>
+    </div>
+    <div class="procedure-party-fields procedure-company-fields" hidden>
+      <label class="wide">Dénomination — variant principal<input class="procedure-company-name" list="${companyListId}" placeholder="Société Alpha" autocomplete="off"><datalist id="${companyListId}"></datalist></label>
+      <label>Forme sociale<input class="procedure-company-form" list="${legalFormListId}" placeholder="SAS"></label>
+      <label>SIREN<input class="procedure-company-siren" inputmode="numeric" placeholder="123 456 789"></label>
+      <label class="wide">Siège social<input class="procedure-company-address" placeholder="12 rue…, 75000 Paris"></label>
+      <label class="wide">Représentant légal<input class="procedure-company-representative" placeholder="Mme Claire Reynaud"></label>
+    </div>
+    <datalist id="${legalFormListId}"><option value="SAS"><option value="SASU"><option value="SARL"><option value="EURL"><option value="SA"><option value="SCI"><option value="SELARL"><option value="Association"></datalist>`;
+
+  const position = row.querySelector('.procedure-party-position');
+  for (const { value, label } of PROCEDURE_POSITIONS) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    position.append(option);
+  }
+  row.querySelector('.procedure-party-type').value = normalizedParty.type;
+  position.value = normalizedParty.position;
+  row.querySelector('.procedure-position-label').value = normalizedParty.position_libelle;
+  row.querySelector('.procedure-civility').value = normalizedParty.civilite;
+  row.querySelector('.procedure-person-name').value = normalizedParty.nom;
+  row.querySelector('.procedure-birth-date').value = normalizedParty.date_naissance;
+  row.querySelector('.procedure-birth-place').value = normalizedParty.lieu_naissance;
+  row.querySelector('.procedure-address').value = normalizedParty.adresse;
+  row.querySelector('.procedure-company-name').value = normalizedParty.societe_nom;
+  row.querySelector('.procedure-company-form').value = normalizedParty.forme_sociale;
+  row.querySelector('.procedure-company-siren').value = normalizedParty.siren;
+  row.querySelector('.procedure-company-address').value = normalizedParty.siege_social;
+  row.querySelector('.procedure-company-representative').value = normalizedParty.representant;
+  fillPartyDatalist(row.querySelector(`#${personListId}`), 'personne_physique');
+  fillPartyDatalist(row.querySelector(`#${companyListId}`), 'societe');
+
+  const refreshFields = () => {
+    const company = row.querySelector('.procedure-party-type').value === 'societe';
+    row.querySelector('.procedure-person-fields').hidden = company;
+    row.querySelector('.procedure-company-fields').hidden = !company;
+    row.querySelector('.procedure-position-custom').hidden = position.value !== 'autre';
+  };
+  row.querySelector('.procedure-party-type').addEventListener('change', refreshFields);
+  position.addEventListener('change', refreshFields);
+  row.querySelector('.remove-procedure-party').addEventListener('click', () => {
+    row.remove();
+    refreshEmptyProcedureList(side);
+  });
+  for (const input of row.querySelectorAll('input')) {
+    input.addEventListener('input', () => {
+      input.classList.remove('invalid');
+      setMessage(byId('procedurePartiesMessage'));
+    });
+  }
+  refreshFields();
+  list.append(row);
+}
+
+function renderProcedureParties(info) {
+  const normalizedInfo = normalizeProcedureInfo(info);
+  const clientList = procedurePartyList('client');
+  const adverseList = procedurePartyList('adversaire');
+  clientList.textContent = '';
+  adverseList.textContent = '';
+  normalizedInfo.parties_clientes.forEach((party) => addProcedureParty('client', party));
+  normalizedInfo.parties_adverses.forEach((party) => addProcedureParty('adversaire', party));
+  refreshEmptyProcedureList('client');
+  refreshEmptyProcedureList('adversaire');
+}
+
+function collectProcedureParties() {
+  const collectSide = (side) => [...procedurePartyList(side).querySelectorAll('.procedure-party-item')].map((row) => {
+    const value = (selector) => row.querySelector(selector)?.value.trim() || '';
+    const type = value('.procedure-party-type');
+    const position = value('.procedure-party-position');
+    const identityInput = row.querySelector(type === 'societe' ? '.procedure-company-name' : '.procedure-person-name');
+    if (!identityInput.value.trim()) {
+      identityInput.classList.add('invalid');
+      identityInput.focus();
+      throw new Error('Chaque partie ajoutée doit avoir un nom ou une dénomination.');
+    }
+    const positionLabel = value('.procedure-position-label');
+    if (position === 'autre' && !positionLabel) {
+      const input = row.querySelector('.procedure-position-label');
+      input.classList.add('invalid');
+      input.focus();
+      throw new Error('Précisez la position procédurale personnalisée.');
+    }
+    const siren = value('.procedure-company-siren');
+    if (type === 'societe' && siren && siren.replace(/\D/g, '').length !== 9) {
+      const input = row.querySelector('.procedure-company-siren');
+      input.classList.add('invalid');
+      input.focus();
+      throw new Error('Le SIREN doit contenir exactement 9 chiffres.');
+    }
+    return type === 'societe' ? {
+      type,
+      position,
+      position_libelle: positionLabel,
+      societe_nom: value('.procedure-company-name'),
+      forme_sociale: value('.procedure-company-form'),
+      siren,
+      siege_social: value('.procedure-company-address'),
+      representant: value('.procedure-company-representative'),
+    } : {
+      type,
+      position,
+      position_libelle: positionLabel,
+      civilite: value('.procedure-civility'),
+      nom: value('.procedure-person-name'),
+      date_naissance: value('.procedure-birth-date'),
+      lieu_naissance: value('.procedure-birth-place'),
+      adresse: value('.procedure-address'),
+    };
+  });
+  return {
+    parties_clientes: collectSide('client'),
+    parties_adverses: collectSide('adversaire'),
+  };
+}
+
+function openProcedurePartiesDialog() {
+  try {
+    procedureMappingSource = collectMappingDocument();
+  } catch (error) {
+    setMessage(byId('mappingMessage'), error.message, 'error');
+    return;
+  }
+  setMessage(byId('procedurePartiesMessage'));
+  const info = mappingDocument?.informations_dossier;
+  renderProcedureParties(info);
+  if (!normalizeProcedureInfo(info).parties_clientes.length) addProcedureParty('client');
+  if (!normalizeProcedureInfo(info).parties_adverses.length) addProcedureParty('adversaire');
+  byId('procedurePartiesDialog').showModal();
+}
+
+function closeProcedurePartiesDialog() {
+  procedureMappingSource = null;
+  byId('procedurePartiesDialog').close();
+}
+
+async function saveProcedureParties(event) {
+  event.preventDefault();
+  const button = byId('saveProcedureParties');
+  button.disabled = true;
+  try {
+    const nextInfo = collectProcedureParties();
+    const currentDocument = collectMappingDocument();
+    const document = applyProcedureParties(
+      currentDocument,
+      mappingDocument?.informations_dossier,
+      nextInfo,
+    );
+    const data = await api('/api/admin/mapping', {
+      method: 'PUT',
+      body: JSON.stringify({ case: selectedFolder, ...document }),
+    });
+    mappingDocument = {
+      mapping: data.mapping,
+      reverse_mapping: data.reverse_mapping,
+      informations_dossier: data.informations_dossier,
+    };
+    renderMappingRows(data.mapping, data.reverse_mapping);
+    renderProcedureSummary();
+    closeProcedurePartiesDialog();
+    toast(`Parties enregistrées${data.commit?.created ? ' et commitées' : ''}`);
+    await loadSelectedCase({ quiet: true });
+    showMappingEditorHeader();
+  } catch (error) {
+    setMessage(byId('procedurePartiesMessage'), error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function mappingEntries() {
   return byId('mappingRows').querySelectorAll('.mapping-entry');
 }
@@ -1333,9 +1579,14 @@ async function openMappingEditor() {
   byId('mappingRows').textContent = '';
   try {
     const data = await api(`/api/admin/mapping?case=${encodeURIComponent(selectedFolder)}`);
-    mappingDocument = { mapping: data.mapping, reverse_mapping: data.reverse_mapping };
+    mappingDocument = {
+      mapping: data.mapping,
+      reverse_mapping: data.reverse_mapping,
+      informations_dossier: data.informations_dossier,
+    };
     byId('mappingDialogTitle').textContent = data.name;
     renderMappingRows(data.mapping, data.reverse_mapping);
+    renderProcedureSummary();
     setMessage(byId('mappingMessage'), data.exists ? '' : 'Ce dossier n’a pas encore de fichier de mapping.');
   } catch (error) {
     setMessage(byId('mappingMessage'), error.message, 'error');
@@ -1346,13 +1597,21 @@ async function saveMapping() {
   const button = byId('saveMapping');
   button.disabled = true;
   try {
-    const document = collectMappingDocument();
+    const document = {
+      ...collectMappingDocument(),
+      informations_dossier: mappingDocument?.informations_dossier,
+    };
     const data = await api('/api/admin/mapping', {
       method: 'PUT',
       body: JSON.stringify({ case: selectedFolder, ...document }),
     });
-    mappingDocument = { mapping: data.mapping, reverse_mapping: data.reverse_mapping };
+    mappingDocument = {
+      mapping: data.mapping,
+      reverse_mapping: data.reverse_mapping,
+      informations_dossier: data.informations_dossier,
+    };
     renderMappingRows(data.mapping, data.reverse_mapping);
+    renderProcedureSummary();
     setMessage(byId('mappingMessage'), '');
     toast(`Mapping enregistré${data.commit?.created ? ' et commité' : ''} · ${Object.keys(data.reverse_mapping).length} nom(s) anonymisé(s)`);
     await loadSelectedCase({ quiet: true });
@@ -1373,9 +1632,14 @@ async function rebuildMapping() {
       method: 'POST',
       body: JSON.stringify({ case: selectedFolder }),
     });
-    mappingDocument = { mapping: data.mapping, reverse_mapping: data.reverse_mapping };
+    mappingDocument = {
+      mapping: data.mapping,
+      reverse_mapping: data.reverse_mapping,
+      informations_dossier: data.informations_dossier,
+    };
     byId('mappingDialogTitle').textContent = data.name;
     renderMappingRows(data.mapping, data.reverse_mapping);
+    renderProcedureSummary();
     setMessage(byId('mappingMessage'), `${data.added} entrée(s) ajoutée(s), ${data.total} au total${data.commit?.created ? ' · commit enregistré' : ''}.`);
     await loadSelectedCase({ quiet: true });
     showMappingEditorHeader();
@@ -2089,6 +2353,12 @@ byId('openMapping').addEventListener('click', openMappingEditor);
 byId('addMappingRow').addEventListener('click', () => addMappingEntry({}, { focus: true }));
 byId('rebuildMapping').addEventListener('click', rebuildMapping);
 byId('saveMapping').addEventListener('click', saveMapping);
+byId('openProcedureParties').addEventListener('click', openProcedurePartiesDialog);
+byId('addClientParty').addEventListener('click', () => addProcedureParty('client'));
+byId('addAdverseParty').addEventListener('click', () => addProcedureParty('adversaire'));
+byId('closeProcedureParties').addEventListener('click', closeProcedurePartiesDialog);
+byId('cancelProcedureParties').addEventListener('click', closeProcedurePartiesDialog);
+byId('procedurePartiesForm').addEventListener('submit', saveProcedureParties);
 byId('caseTelegramCard').addEventListener('click', openCaseTelegramEditor);
 byId('telegramCaseView').addEventListener('submit', saveCaseTelegramBot);
 

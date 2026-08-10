@@ -1072,6 +1072,7 @@ function createAdminRouter({
         exists: mapping.exists,
         mapping: mapping.mapping,
         reverse_mapping: mapping.reverse_mapping,
+        informations_dossier: mapping.informations_dossier,
       });
     } catch (error) {
       res.status(400).json({ error: error.message });
@@ -1087,6 +1088,9 @@ function createAdminRouter({
       const saved = saveCaseMapping(legalCase.root, {
         mapping: req.body.mapping,
         reverse_mapping: req.body.reverse_mapping,
+        ...(req.body.informations_dossier !== undefined
+          ? { informations_dossier: req.body.informations_dossier }
+          : {}),
       });
       const commit = await createCommit({
         casesRoot: legalCase.casesRoot,
@@ -1105,6 +1109,7 @@ function createAdminRouter({
         exists: true,
         mapping: saved.mapping,
         reverse_mapping: saved.reverse_mapping,
+        informations_dossier: saved.informations_dossier,
         commit: { created: commit.created, hash: commit.commit || null },
       });
     } catch (error) {
@@ -1134,6 +1139,7 @@ function createAdminRouter({
         total: rebuilt.total,
         mapping: rebuilt.mapping,
         reverse_mapping: rebuilt.reverse_mapping,
+        informations_dossier: rebuilt.informations_dossier,
         commit: { created: commit.created, hash: commit.commit || null },
       });
     } catch (error) {

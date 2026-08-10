@@ -414,6 +414,16 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .inline-detail-toolbar strong { overflow: hidden; color: #24292f; font-size: .82rem; text-overflow: ellipsis; white-space: nowrap; }
 .inline-detail-toolbar span { color: #6e7781; font-size: .68rem; }
 .inline-detail-hint { margin: 0 0 14px; color: #57606a; font-size: .74rem; line-height: 1.55; }
+.procedure-summary { display: grid; width: 100%; flex: 0 0 auto; align-items: stretch; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto; gap: 0; overflow: hidden; margin: 0 0 14px; border: 1px solid #d0d7de; border-radius: 10px; background: #fff; color: #24292f; cursor: pointer; padding: 0; text-align: left; }
+.procedure-summary:hover { border-color: #8c959f; box-shadow: 0 2px 8px rgba(31, 35, 40, .08); }
+.procedure-summary-side { display: flex; min-width: 0; flex-direction: column; gap: 4px; padding: 11px 13px; }
+.procedure-summary-side.client { border-left: 4px solid #1f883d; background: #f6fff8; }
+.procedure-summary-side.adverse { border-left: 4px solid #cf222e; background: #fff8f7; }
+.procedure-summary-side small { color: #57606a; font-size: .61rem; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
+.procedure-summary-side strong { overflow: hidden; font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
+.procedure-summary-side strong.empty { color: #8c959f; font-weight: 600; }
+.procedure-summary-separator { display: flex; align-items: center; border-right: 1px solid #d8dee4; border-left: 1px solid #d8dee4; padding: 0 10px; color: #6e7781; font-family: Georgia, serif; font-size: .72rem; font-style: italic; }
+.procedure-summary-action { display: flex; align-items: center; padding: 0 13px; color: #0969da; font-size: .68rem; font-weight: 750; }
 #history .mapping-editor { min-height: 260px; max-height: none; flex: 1; }
 .inline-detail-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 9px; padding-top: 14px; }
 .inline-detail-actions .message { min-width: 0; flex: 1; }
@@ -421,6 +431,35 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .telegram-inline-fields { display: grid; max-width: 720px; grid-template-columns: minmax(180px, .7fr) minmax(280px, 1.3fr); gap: 16px; padding: 8px 0; }
 .telegram-inline-fields label { color: #57606a; font-size: .72rem; }
 .telegram-inline-fields input { margin-top: 6px; background: #fff; }
+
+.procedure-parties-dialog { width: min(1080px, calc(100% - 28px)); max-height: min(90vh, 900px); overflow: hidden; }
+.procedure-parties-card { max-height: min(90vh, 900px); grid-template-rows: auto minmax(0, 1fr) auto auto; overflow: hidden; }
+.procedure-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.procedure-dialog-header h2 { margin-bottom: 4px; }
+.procedure-dialog-header p:last-child { margin: 0; color: #57606a; font-size: .76rem; }
+.dialog-close { border: 0; border-radius: 7px; background: transparent; color: #57606a; cursor: pointer; font-size: 1.5rem; line-height: 1; padding: 3px 7px; }
+.dialog-close:hover { background: #f0f2f4; color: #24292f; }
+.procedure-party-columns { display: grid; min-height: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; overflow: hidden; }
+.procedure-party-column { display: flex; min-width: 0; min-height: 220px; flex-direction: column; overflow: hidden; border: 1px solid #d8dee4; border-radius: 12px; background: #f6f8fa; }
+.procedure-party-column.client { border-top: 4px solid #1f883d; }
+.procedure-party-column.adverse { border-top: 4px solid #cf222e; }
+.procedure-party-column-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #d8dee4; padding: 10px 12px; }
+.procedure-party-column-title small { color: #6e7781; font-size: .59rem; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
+.procedure-party-column-title h3 { margin: 1px 0 0; font-size: .82rem; }
+.procedure-party-list { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 9px; overflow: auto; padding: 10px; }
+.procedure-party-empty { margin: auto; padding: 28px 16px; color: #8c959f; font-size: .74rem; text-align: center; }
+.procedure-party-item { display: grid; gap: 9px; border: 1px solid #d8dee4; border-radius: 9px; background: #fff; padding: 11px; }
+.procedure-party-item-head { display: grid; align-items: end; grid-template-columns: minmax(0, .85fr) minmax(0, 1fr) 28px; gap: 7px; }
+.procedure-party-item label, .procedure-party-fields label { display: flex; min-width: 0; flex-direction: column; gap: 4px; color: #57606a; font-size: .65rem; font-weight: 650; }
+.procedure-party-item input, .procedure-party-item select { width: 100%; min-width: 0; min-height: 34px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; padding: 6px 8px; color: #24292f; font-size: .74rem; }
+.procedure-party-item input:focus, .procedure-party-item select:focus { border-color: #0969da; outline: 2px solid rgba(9, 105, 218, .12); }
+.procedure-party-item input.invalid { border-color: #cf222e; background: #fff8f7; }
+.remove-procedure-party { width: 28px; height: 34px; border: 0; border-radius: 6px; background: transparent; color: #6e7781; cursor: pointer; font-size: 1.05rem; }
+.remove-procedure-party:hover { background: #ffebe9; color: #82071e; }
+.procedure-party-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.procedure-party-fields .wide { grid-column: 1 / -1; }
+.procedure-party-fields[hidden], .procedure-position-custom[hidden] { display: none; }
+.procedure-position-custom { margin-top: -1px; }
 
 @media (max-width: 980px) {
   #history .repository-toolbar { grid-template-columns: 1fr 1fr; }
@@ -437,4 +476,10 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
   .telegram-inline-fields { grid-template-columns: 1fr; }
   .revision-content.has-file-list { grid-template-columns: 1fr; grid-template-rows: minmax(160px, 35%) minmax(0, 1fr); }
   .changed-files-pane { border-right: 0; border-bottom: 1px solid #d8dee4; }
+  .procedure-summary { grid-template-columns: 1fr; }
+  .procedure-summary-separator, .procedure-summary-action { display: none; }
+  .procedure-party-columns { grid-template-columns: 1fr; overflow: auto; }
+  .procedure-party-column { min-height: 300px; overflow: visible; }
+  .procedure-party-list { overflow: visible; }
+  .procedure-parties-card { overflow: auto; }
 }

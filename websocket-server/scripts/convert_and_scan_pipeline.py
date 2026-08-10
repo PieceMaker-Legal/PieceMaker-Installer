@@ -1156,13 +1156,13 @@ def merge_with_existing_mapping(new_mapping: Dict, existing_mapping: Optional[Di
     }
 
     for code in merged_reverse.keys():
-        if code.startswith("PERSONNE_PHYSIQUE_"):
+        if "PERSONNE_PHYSIQUE_" in code or code.startswith("DIRIGEANT_"):
             num = int(code.split("_")[-1])
             code_counters["personnes_physiques"] = max(code_counters["personnes_physiques"], num + 1)
         elif code.startswith("SOCIETE_"):
             num = int(code.split("_")[-1])
             code_counters["societes"] = max(code_counters["societes"], num + 1)
-        elif code.startswith("PERSONNE_MORALE_"):
+        elif "PERSONNE_MORALE_" in code:
             num = int(code.split("_")[-1])
             code_counters["societes"] = max(code_counters["societes"], num + 1)
         elif code.startswith("ADRESSE_"):
@@ -1274,6 +1274,7 @@ def merge_with_existing_mapping(new_mapping: Dict, existing_mapping: Optional[Di
         "mapping": merged_mapping,
         "reverse_mapping": merged_reverse,
         "extracted_data": merged_extracted,
+        "informations_dossier": existing_mapping.get("informations_dossier", {}),
         **({"ignored": merged_ignored} if merged_ignored else {}),
     }
 

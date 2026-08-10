@@ -207,6 +207,41 @@ test('un mapping écrit à la main sans sens inverse reste exploitable', async (
   assert.equal(path.basename(saved.file), 'mapping_default.json');
 });
 
+test('les informations des parties et le SIREN survivent aux éditions du mapping', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const informations_dossier = {
+    parties_clientes: [{ type: 'personne_physique', position: 'demandeur', civilite: 'Mme', nom: 'Claire Reynaud' }],
+    parties_adverses: [{ type: 'societe', position: 'defendeur', societe_nom: 'Alpha', forme_sociale: 'SAS', siren: '123 456 789' }],
+  };
+  writeCaseMapping(data.caseRoot, {
+    mapping: { 'Claire Reynaud': 'CLIENT_DEMANDEUR_PERSONNE_PHYSIQUE_01' },
+    informations_dossier,
+  });
+
+  saveCaseMapping(data.caseRoot, {
+    mapping: { 'Claire Reynaud': 'CLIENT_DEMANDEUR_PERSONNE_PHYSIQUE_01', Alpha: 'ADVERSAIRE_DEFENDEUR_PERSONNE_MORALE_01' },
+  });
+  const saved = readCaseMapping(data.caseRoot);
+  assert.equal(saved.informations_dossier.parties_clientes[0].nom, 'Claire Reynaud');
+  assert.equal(saved.informations_dossier.parties_adverses[0].siren, '123 456 789');
+});
+
+test('un nouveau variant rejoint le code procédural existant de la personne', async (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  writeCaseMapping(data.caseRoot, {
+    mapping: { 'Claire Reynaud': 'CLIENT_DEMANDEUR_PERSONNE_PHYSIQUE_01' },
+    reverse_mapping: { CLIENT_DEMANDEUR_PERSONNE_PHYSIQUE_01: ['Claire Reynaud'] },
+  });
+  writeScan(data.caseRoot, 'requete', {
+    PERSON: [{ text: 'Mme Reynaud', score: 0.9 }],
+  });
+
+  const rebuilt = await rebuildCaseMapping(data.caseRoot);
+  assert.equal(rebuilt.mapping['Mme Reynaud'], 'CLIENT_DEMANDEUR_PERSONNE_PHYSIQUE_01');
+});
+
 test('les artefacts d’un lot excluent les fichiers modifiés par une autre session', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));

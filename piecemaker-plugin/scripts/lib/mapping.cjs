@@ -171,6 +171,60 @@ function caseMappingFile(caseRoot) {
   return path.join(caseRoot, CANONICAL_MAPPING_FILE);
 }
 
+function cleanMappingString(value) {
+  return String(value || '').trim();
+}
+
+function normalizePartyAssignments(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((raw) => {
+    const assignment = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    const variants = [...new Set((Array.isArray(assignment.variants) ? assignment.variants : [])
+      .map(cleanMappingString).filter(Boolean))];
+    return {
+      field: cleanMappingString(assignment.field),
+      code: cleanMappingString(assignment.code),
+      original_code: cleanMappingString(assignment.original_code),
+      category: cleanMappingString(assignment.category),
+      principal: cleanMappingString(assignment.principal),
+      variants,
+    };
+  }).filter((assignment) => assignment.code && assignment.variants.length);
+}
+
+function normalizeProcedureParty(raw, side) {
+  const party = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const type = party.type === 'societe' ? 'societe' : 'personne_physique';
+  const allowedPositions = new Set(['demandeur', 'defendeur', 'appelant', 'intime', 'requerant', 'mis_en_cause', 'intervenant', 'autre']);
+  const position = allowedPositions.has(party.position) ? party.position : side === 'client' ? 'demandeur' : 'defendeur';
+  return {
+    type,
+    position,
+    position_libelle: position === 'autre' ? cleanMappingString(party.position_libelle) : '',
+    civilite: type === 'personne_physique' ? cleanMappingString(party.civilite) : '',
+    nom: type === 'personne_physique' ? cleanMappingString(party.nom) : '',
+    date_naissance: type === 'personne_physique' ? cleanMappingString(party.date_naissance) : '',
+    lieu_naissance: type === 'personne_physique' ? cleanMappingString(party.lieu_naissance) : '',
+    adresse: type === 'personne_physique' ? cleanMappingString(party.adresse) : '',
+    societe_nom: type === 'societe' ? cleanMappingString(party.societe_nom) : '',
+    forme_sociale: type === 'societe' ? cleanMappingString(party.forme_sociale) : '',
+    siren: type === 'societe' ? cleanMappingString(party.siren) : '',
+    siege_social: type === 'societe' ? cleanMappingString(party.siege_social) : '',
+    representant: type === 'societe' ? cleanMappingString(party.representant) : '',
+    mapping_assignments: normalizePartyAssignments(party.mapping_assignments),
+  };
+}
+
+function normalizeProcedureInfo(raw) {
+  const info = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  return {
+    parties_clientes: (Array.isArray(info.parties_clientes) ? info.parties_clientes : [])
+      .map((party) => normalizeProcedureParty(party, 'client')),
+    parties_adverses: (Array.isArray(info.parties_adverses) ? info.parties_adverses : [])
+      .map((party) => normalizeProcedureParty(party, 'adversaire')),
+  };
+}
+
 function normalizeMappingDocument(raw) {
   const document = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const mapping = {};
@@ -218,6 +272,7 @@ function normalizeMappingDocument(raw) {
     reverse_mapping: reverse,
     extracted_data: extracted,
     ignored: ignored.filter((entity) => !mapping[entity]),
+    informations_dossier: normalizeProcedureInfo(document.informations_dossier),
   };
 }
 
@@ -243,6 +298,7 @@ function readCaseMapping(caseRoot) {
   const preferredVariants = {};
   const extracted_data = {};
   const ignored = [];
+  let informations_dossier = normalizeProcedureInfo();
   const readableFiles = [];
   for (const sourceFile of sourceFiles) {
     const raw = readJsonFile(sourceFile, null);
@@ -256,6 +312,11 @@ function readCaseMapping(caseRoot) {
     }
     for (const [category, codes] of Object.entries(document.extracted_data)) {
       extracted_data[category] = { ...(extracted_data[category] || {}), ...codes };
+    }
+    if (path.basename(sourceFile) === CANONICAL_MAPPING_FILE
+        || document.informations_dossier.parties_clientes.length
+        || document.informations_dossier.parties_adverses.length) {
+      informations_dossier = document.informations_dossier;
     }
   }
 
@@ -271,7 +332,7 @@ function readCaseMapping(caseRoot) {
     file,
     sourceFiles: readableFiles,
     exists: readableFiles.length > 0,
-    ...normalizeMappingDocument({ mapping, reverse_mapping, extracted_data, ignored }),
+    ...normalizeMappingDocument({ mapping, reverse_mapping, extracted_data, ignored, informations_dossier }),
   };
 }
 
@@ -356,6 +417,7 @@ module.exports = {
   caseMappingFile,
   escapeWithVariants,
   normalizeMappingDocument,
+  normalizeProcedureInfo,
   readCaseMapping,
   readJsonFile,
   resolveConfiguredCaseMapping,
