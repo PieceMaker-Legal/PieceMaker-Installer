@@ -181,6 +181,26 @@ codes the same way so `PERSONNE_PHYSIQUE_1` cannot eat `PERSONNE_PHYSIQUE_12`.
 Both directions are idempotent, which is what lets the hooks run without
 tracking what has already been substituted.
 
+**Institutional entities are never anonymised** —
+`piecemaker-plugin/scripts/lib/institutional-terms.cjs` owns a **global** ban
+list (all cases at once) of public institutions GLiNER routinely mis-flags as
+organisations: juridictions, registres, publications and administrations
+officielles ("Tribunal de Commerce", "Cour de cassation", "Registre du Commerce
+et des Sociétés", "RCS", "BODACC"…). Detection is **not** disabled — the terms
+are dropped at the one choke point `normalizeMappingDocument` calls
+`isInstitutionalEntity` on, so a banned entity never persists in
+`mapping_default.json` and is never substituted, on read (hooks) as on write
+(pipeline). Matching is case- and accent-insensitive and whole-word-bounded, so
+one term covers its geographic variants ("Tribunal de Commerce" bans "Tribunal
+de Commerce de Nanterre"). The list lives at
+`~/.piecemaker/institutional-terms.json` (env `PIECEMAKER_INSTITUTIONAL_TERMS`
+overrides, used by the tests to stay hermetic), is read/written via
+`GET/PUT /api/admin/institutional-terms`, and is edited from the **Paramètres**
+tab. It sits in the plugin lib for the same reason as `mapping.cjs`: the hooks
+require it and ship alone. This is distinct from a case's per-`ignored` list,
+which records case-local false positives; the ban list is global and applied at
+normalise time, so it needs no re-add guard.
+
 ## Piece protection and the anonymisation hooks
 
 `docs/anonymisation-hooks.md` is the full account of this boundary — the

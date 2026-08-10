@@ -236,6 +236,25 @@
             <button class="button primary" type="submit">Enregistrer les paramètres</button>
           </div>
         </form>
+
+        <article class="card form-card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">ANONYMISATION</p>
+              <h2>Entités institutionnelles à ne jamais anonymiser</h2>
+            </div>
+          </div>
+          <p class="muted">Juridictions, registres, publications et administrations officielles — « Tribunal de Commerce », « Cour de Cassation », « RCS », « BODACC »… Ces termes restent détectés mais ne sont plus codés dans aucun dossier. La correspondance est insensible à la casse et aux accents, et englobe les variantes géographiques (« Tribunal de Commerce de Nanterre »).</p>
+          <div class="term-add">
+            <input id="institutionalTermInput" type="text" placeholder="Ajouter un terme (ex. Conseil de prud’hommes)" autocomplete="off">
+            <button id="addInstitutionalTerm" class="button ghost compact" type="button">+ Ajouter</button>
+          </div>
+          <div id="institutionalTermsList" class="term-list" aria-live="polite"></div>
+          <div class="actions">
+            <span id="institutionalTermsMessage" class="message"></span>
+            <button id="saveInstitutionalTerms" class="button primary compact" type="button">Enregistrer la liste</button>
+          </div>
+        </article>
       </section>
 
       <section id="pieces" class="panel">

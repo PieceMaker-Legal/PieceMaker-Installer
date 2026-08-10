@@ -415,6 +415,7 @@ async function loadSettings() {
         const state = data.secrets[element.dataset.secretState];
         element.textContent = state?.configured ? `Déjà configurée (${state.hint})` : 'Non configurée';
       });
+      loadInstitutionalTerms();
       setMessage(message);
     } catch (error) {
       setMessage(message, error.message, 'error');
@@ -455,6 +456,98 @@ async function saveSettings(event) {
     await loadSettings();
     setMessage(message, 'Enregistré. L’identité sera appliquée dès le prochain commit ; redémarrez le serveur pour les autres changements.', 'success');
     toast('Paramètres enregistrés');
+  } catch (error) {
+    setMessage(message, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+// ── Entités institutionnelles à ne jamais anonymiser ─────────────────────────
+let institutionalTerms = [];
+
+/** Forme comparable côté client (casse et accents ignorés) — miroir du serveur. */
+function normalizeTermKey(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function renderInstitutionalTerms() {
+  const list = byId('institutionalTermsList');
+  list.textContent = '';
+  if (!institutionalTerms.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-state';
+    empty.textContent = 'Aucun terme. Ajoutez les juridictions et institutions à préserver.';
+    list.append(empty);
+    return;
+  }
+  for (const term of institutionalTerms) {
+    const chip = document.createElement('span');
+    chip.className = 'term-chip';
+    const label = document.createElement('span');
+    label.textContent = term;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = '×';
+    remove.title = `Retirer « ${term} »`;
+    remove.setAttribute('aria-label', `Retirer ${term}`);
+    remove.addEventListener('click', () => {
+      institutionalTerms = institutionalTerms.filter((entry) => entry !== term);
+      renderInstitutionalTerms();
+    });
+    chip.append(label, remove);
+    list.append(chip);
+  }
+}
+
+function addInstitutionalTermFromInput() {
+  const input = byId('institutionalTermInput');
+  const value = input.value.replace(/\s+/g, ' ').trim();
+  if (!value) return;
+  const key = normalizeTermKey(value);
+  if (institutionalTerms.some((term) => normalizeTermKey(term) === key)) {
+    setMessage(byId('institutionalTermsMessage'), 'Ce terme est déjà dans la liste.');
+  } else {
+    institutionalTerms.push(value);
+    institutionalTerms.sort((a, b) => normalizeTermKey(a).localeCompare(normalizeTermKey(b), 'fr'));
+    renderInstitutionalTerms();
+    setMessage(byId('institutionalTermsMessage'), 'Terme ajouté — pensez à enregistrer.');
+  }
+  input.value = '';
+  input.focus();
+}
+
+async function loadInstitutionalTerms() {
+  const message = byId('institutionalTermsMessage');
+  try {
+    const data = await api('/api/admin/institutional-terms');
+    institutionalTerms = Array.isArray(data.terms) ? data.terms : [];
+    renderInstitutionalTerms();
+    setMessage(message);
+  } catch (error) {
+    setMessage(message, error.message, 'error');
+  }
+}
+
+async function saveInstitutionalTerms() {
+  const message = byId('institutionalTermsMessage');
+  const button = byId('saveInstitutionalTerms');
+  button.disabled = true;
+  setMessage(message, 'Enregistrement…');
+  try {
+    const data = await api('/api/admin/institutional-terms', {
+      method: 'PUT',
+      body: JSON.stringify({ terms: institutionalTerms }),
+    });
+    institutionalTerms = Array.isArray(data.terms) ? data.terms : institutionalTerms;
+    renderInstitutionalTerms();
+    setMessage(message, `${institutionalTerms.length} terme(s) enregistré(s). Appliqué immédiatement, sans redémarrage.`, 'success');
+    toast('Liste enregistrée');
   } catch (error) {
     setMessage(message, error.message, 'error');
   } finally {
@@ -2425,6 +2518,14 @@ document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click',
   history.replaceState(null, '', `#${tab.dataset.tab}`);
 }));
 byId('settingsForm').addEventListener('submit', saveSettings);
+byId('addInstitutionalTerm').addEventListener('click', addInstitutionalTermFromInput);
+byId('institutionalTermInput').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    addInstitutionalTermFromInput();
+  }
+});
+byId('saveInstitutionalTerms').addEventListener('click', saveInstitutionalTerms);
 byId('tamponImageInput').addEventListener('change', handleTamponImageUpload);
 byId('buildTamponBtn').addEventListener('click', buildTampon);
 document.querySelectorAll('[data-tampon-control]').forEach((control) => {

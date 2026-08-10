@@ -116,6 +116,15 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); outline:
 .asset-badge.warn { background: #fff0cc; color: var(--warn); }
 .agent-fields { display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 10px; background: #f8faf9; padding: 12px; }
 .hint { margin: 0; color: var(--muted); font-size: .74rem; }
+
+.term-add { display: flex; gap: 8px; align-items: stretch; margin: 4px 0 12px; }
+.term-add input { flex: 1; }
+.term-add .button { flex: none; }
+.term-list { display: flex; flex-wrap: wrap; gap: 8px; min-height: 20px; }
+.term-list .empty-state { flex: 1; }
+.term-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; background: #f3f7f6; padding: 5px 6px 5px 12px; color: var(--ink); font-size: .82rem; font-weight: 600; }
+.term-chip button { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 999px; background: #e2e9e7; color: var(--muted); font-size: 1rem; line-height: 1; cursor: pointer; }
+.term-chip button:hover { background: #f8dfdc; color: var(--danger); }
 .editor-pane { display: flex; min-width: 0; flex-direction: column; padding: 22px; }
 .editor-header { display: flex; min-height: 55px; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .editor-header code { display: block; margin-top: 6px; background: transparent; padding: 0; color: var(--muted); font-size: .75rem; }

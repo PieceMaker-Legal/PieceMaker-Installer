@@ -22,6 +22,7 @@ const path = require('node:path');
 
 const { locateCase } = require('./protection.cjs');
 const { locateConfiguredCase } = require('./case-folders.cjs');
+const { isInstitutionalEntity } = require('./institutional-terms.cjs');
 
 const CANONICAL_MAPPING_FILE = 'mapping_default.json';
 
@@ -230,10 +231,15 @@ function normalizeMappingDocument(raw) {
   const mapping = {};
   const reverse = {};
   const source = document.mapping && typeof document.mapping === 'object' ? document.mapping : {};
+  // Les entités institutionnelles (juridictions, registres, publications
+  // officielles…) sont écartées ici même : c'est le point de passage unique de la
+  // lecture comme de l'écriture, si bien qu'une entité bannie ne persiste jamais
+  // dans `mapping_default.json` et n'est jamais substituée par les hooks. GLiNER
+  // continue de les détecter — on ne débranche que le codage.
   for (const [entity, code] of Object.entries(source)) {
     const from = String(entity || '').trim();
     const to = String(code || '').trim();
-    if (from && to) mapping[from] = to;
+    if (from && to && !isInstitutionalEntity(from)) mapping[from] = to;
   }
   const ignored = [...new Set((Array.isArray(document.ignored) ? document.ignored : [])
     .map((entity) => String(entity || '').trim())
@@ -244,7 +250,7 @@ function normalizeMappingDocument(raw) {
     if (!key) continue;
     const values = (Array.isArray(value) ? value : [value])
       .map((item) => String(item || '').trim())
-      .filter(Boolean);
+      .filter((item) => item && !isInstitutionalEntity(item));
     if (values.length) reverse[key] = [...new Set(values)];
   }
   // Un mapping écrit à la main peut n'avoir que le sens direct : on reconstruit
