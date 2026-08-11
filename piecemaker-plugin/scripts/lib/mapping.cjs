@@ -361,6 +361,19 @@ function readCaseMapping(caseRoot) {
   };
 }
 
+/**
+ * Un mapping d'anonymisation exploitable existe-t-il pour ce dossier ? C'est la
+ * condition de la garantie « anonymisé à la lecture » : sans lui, `anonymize-read`
+ * n'a rien à coder et une surface lisible partirait en clair. `protect-originals`
+ * s'en sert pour refuser la lecture d'un dossier PieceMaker pas encore anonymisé.
+ * On s'appuie sur `readCaseMapping` (et non sur la seule présence du fichier) pour
+ * qu'un `mapping_default.json` illisible compte comme absent — c'est exactement ce
+ * que voit `anonymize-read`, qui ne pourrait de toute façon rien en tirer.
+ */
+function caseHasMapping(caseRoot) {
+  return readCaseMapping(caseRoot).exists;
+}
+
 // ──────────────────────────────── Substitution ──────────────────────────────
 
 /**
@@ -439,6 +452,7 @@ module.exports = {
   applyMapping,
   buildEntityRegex,
   byDescendingEntityLength,
+  caseHasMapping,
   caseMappingFile,
   escapeWithVariants,
   normalizeMappingDocument,

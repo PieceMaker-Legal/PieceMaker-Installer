@@ -224,6 +224,44 @@ test('sans mapping, ou hors dossier juridique, rien n’est réécrit', (t) => {
   }, data), null);
 });
 
+test('un dossier PieceMaker sans mapping voit sa lecture bloquée, avec la cause', (t) => {
+  const data = fixture({ withMapping: false });
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(data.caseRoot, 'CLAUDE.md'), 'Consigne du dossier.\n');
+
+  // Read d'une pièce Markdown : refusé tant qu'aucun mapping n'existe.
+  const denied = runHook(PROTECT, {
+    tool_name: 'Read',
+    cwd: data.caseRoot,
+    tool_input: { file_path: path.join(data.caseRoot, 'contrat.md') },
+  }, data);
+  assert.equal(denied.hookSpecificOutput.permissionDecision, 'deny');
+  assert.match(denied.hookSpecificOutput.permissionDecisionReason, /mapping_default\.json absent/);
+
+  // Un `cat` de la même pièce est bloqué de la même façon.
+  const deniedBash = runHook(PROTECT, {
+    tool_name: 'Bash',
+    cwd: data.caseRoot,
+    tool_input: { command: `cat ${JSON.stringify(path.join(data.caseRoot, 'contrat.md'))}` },
+  }, data);
+  assert.equal(deniedBash.hookSpecificOutput.permissionDecision, 'deny');
+
+  // La consigne structurelle du dossier reste lisible pour l'assistant.
+  assert.equal(runHook(PROTECT, {
+    tool_name: 'Read',
+    cwd: data.caseRoot,
+    tool_input: { file_path: path.join(data.caseRoot, 'CLAUDE.md') },
+  }, data), null);
+
+  // Dès qu'un mapping existe, la même lecture repasse (la garantie est rétablie).
+  fs.writeFileSync(path.join(data.caseRoot, 'mapping_dossier.json'), JSON.stringify(MAPPING));
+  assert.equal(runHook(PROTECT, {
+    tool_name: 'Read',
+    cwd: data.caseRoot,
+    tool_input: { file_path: path.join(data.caseRoot, 'contrat.md') },
+  }, data), null);
+});
+
 test('un Write repose les vrais noms sur le disque', (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));

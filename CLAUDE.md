@@ -258,9 +258,24 @@ Four hooks, wired in `piecemaker-plugin/hooks/hooks.json`:
   and `post-anonymize.mjs` were removed). Scanning stays in the admin pipeline,
   the only place the NER models are loaded — loading them per read would make a
   session unusable.
-- Every hook fails open: no config, no mapping, or an unrelated path all end in
-  exit 0 with empty stdout, and `anonymize-read.mjs` stays silent when the
-  substitution changes nothing so `Read` keeps its native line numbering.
+- **A registered case with no mapping is read-blocked, not read in clear.**
+  Without `mapping_default.json`, `anonymize-read.mjs` has nothing to code, so a
+  `.md`/piece-`.json` would leave in clear — a silent leak that *looks* like it
+  works. `protect-originals.mjs` therefore denies any readable case surface (and
+  a recursive `Grep` at the case root; a `Glob`, names only, stays allowed) while
+  the case has no mapping (`caseHasMapping` in `mapping.cjs`, the single mapping
+  resolver), telling the model the cause and the fix (run the anonymisation). The
+  case's config (`.piecemaker/…`, dotfiles) and its `CLAUDE.md`/`AGENTS.md`
+  charter stay readable so the per-case assistant still loads. Contrast the two
+  stale-cache failure halves: the deny path above does not depend on the mapping
+  *location*, so it keeps working even against a cache that predates the
+  `Fichiers convertis PieceMaker/` move — whereas `anonymize-read` silently
+  passes clear text there. A `Read` of a case `.md` returning real names is the
+  tell (see the auto-memory on stale plugin caches).
+- Every hook otherwise fails open: no config, an unrelated path, or (outside a
+  registered case) no mapping all end in exit 0 with empty stdout, and
+  `anonymize-read.mjs` stays silent when the substitution changes nothing so
+  `Read` keeps its native line numbering.
 
 ## Originals pipeline (admin)
 

@@ -501,6 +501,16 @@ test('le garde-fou refuse une originale et autorise le Markdown converti', async
   assert.equal(denied.status, 0, denied.stderr);
   assert.equal(JSON.parse(denied.stdout).hookSpecificOutput.permissionDecision, 'deny');
 
+  // Le Markdown converti n'est lisible qu'une fois le dossier anonymisé : sans
+  // mapping, `anonymize-read` ne pourrait rien coder et le hook refuse la lecture.
+  // On pose donc le mapping du dossier, état dans lequel la pièce Markdown est bien
+  // la surface anonymisée que l'IA a le droit de lire.
+  fs.mkdirSync(path.join(data.caseA, WORKSPACE_SUBDIR), { recursive: true });
+  fs.writeFileSync(
+    path.join(data.caseA, WORKSPACE_SUBDIR, 'mapping_default.json'),
+    JSON.stringify({ mapping: { 'Bernard Gilly': 'PERSONNE_PHYSIQUE_01' }, reverse_mapping: { PERSONNE_PHYSIQUE_01: ['Bernard Gilly'] } }),
+  );
+
   const allowed = spawnSync(process.execPath, [originalsHook], {
     encoding: 'utf8',
     input: JSON.stringify({
