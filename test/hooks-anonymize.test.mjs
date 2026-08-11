@@ -151,9 +151,13 @@ test('le mapping est appliqué au résultat lu, sans toucher au fichier', (t) =>
     tool_input: { file_path: markdown },
     tool_response: { file: { content: onDisk } },
   }, data);
-  assert.equal(
+  // `updatedToolOutput` doit épouser la forme du résultat d'outil : le harnais le
+  // valide contre le schéma de sortie de l'outil et rejette une chaîne quand un
+  // Read produit un objet `{ file: { content } }`. On code donc les chaînes
+  // internes en laissant la structure intacte.
+  assert.deepEqual(
     output.hookSpecificOutput.updatedToolOutput,
-    'Contrat signé par PERSONNE_PHYSIQUE_01 pour SOCIETE_SA_02.\n'
+    { file: { content: 'Contrat signé par PERSONNE_PHYSIQUE_01 pour SOCIETE_SA_02.\n' } }
   );
   assert.equal(fs.readFileSync(markdown, 'utf8'), onDisk, 'le disque reste en clair pour le cabinet');
 });
@@ -168,7 +172,9 @@ test('la sortie de Bash est codée elle aussi, et le format natif est préservé
     tool_input: { command: 'cat contrat.md' },
     tool_response: { stdout: 'Bernard Gilly a signé.', stderr: '' },
   }, data);
-  assert.equal(output.hookSpecificOutput.updatedToolOutput, 'PERSONNE_PHYSIQUE_01 a signé.');
+  // La forme du résultat Bash (`{ stdout, stderr }`) est préservée : le harnais
+  // rejetterait une chaîne, et le vrai nom passerait alors en clair.
+  assert.deepEqual(output.hookSpecificOutput.updatedToolOutput, { stdout: 'PERSONNE_PHYSIQUE_01 a signé.', stderr: '' });
 
   // Rien à substituer : le hook se tait pour que Read garde sa numérotation.
   assert.equal(runHook(ANONYMIZE, {
@@ -177,6 +183,26 @@ test('la sortie de Bash est codée elle aussi, et le format natif est préservé
     tool_input: { command: 'ls' },
     tool_response: { stdout: 'contrat.md\n', stderr: '' },
   }, data), null);
+});
+
+test('la sortie de Bash est codée même quand le cwd est hors du dossier (chemin cité dans la commande)', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+
+  // cwd = ailleurs (comme la session principale, dont le cwd est le dépôt et non
+  // le dossier juridique) ; la commande cite le fichier du dossier par chemin
+  // absolu. Le hook doit retrouver le dossier depuis la commande, sinon un
+  // `cat`/`grep` d'une pièce Markdown ressortait en clair.
+  const output = runHook(ANONYMIZE, {
+    tool_name: 'Bash',
+    cwd: os.tmpdir(),
+    tool_input: { command: `cat ${JSON.stringify(path.join(data.caseRoot, 'contrat.md'))}` },
+    tool_response: { stdout: 'Bernard Gilly a signé pour URGOT SA.', stderr: '' },
+  }, data);
+  assert.deepEqual(
+    output.hookSpecificOutput.updatedToolOutput,
+    { stdout: 'PERSONNE_PHYSIQUE_01 a signé pour SOCIETE_SA_02.', stderr: '' }
+  );
 });
 
 test('sans mapping, ou hors dossier juridique, rien n’est réécrit', (t) => {

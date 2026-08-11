@@ -47,7 +47,7 @@ test('les hooks PieceMaker couvrent un dossier enregistré hors de la racine his
     tool_input: { file_path: path.join(legalCase, 'contrat.md') },
     tool_response: { content: 'Contrat signé par Bernard Gilly.' },
   }, home);
-  assert.equal(anonymized.hookSpecificOutput.updatedToolOutput, 'Contrat signé par PERSONNE_PHYSIQUE_01.');
+  assert.deepEqual(anonymized.hookSpecificOutput.updatedToolOutput, { content: 'Contrat signé par PERSONNE_PHYSIQUE_01.' });
 
   const restored = runHook('deanonymize-write.mjs', {
     tool_name: 'Write',
