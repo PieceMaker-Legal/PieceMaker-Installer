@@ -37,8 +37,10 @@ juridique concerné. Rien à lancer à la main.
   lui-même ne contient donc aucun `.git`.
 - **Quoi** : le contenu des `.md` et des `.json`. Pour les `.docx`, seul un
   manifeste compact d’empreintes OOXML est conservé afin que l’administration
-  détecte les modifications ; ni le binaire Word ni son texte n’entrent dans
-  Git. Les PDF et autres originaux restent exclus.
+  détecte les modifications ; le binaire Word n’entre jamais dans Git. Un DOCX
+  explicitement déprotégé ajoute au manifeste son texte normalisé et compressé,
+  afin d’afficher un diff par paragraphes. Le texte d’une pièce protégée, les
+  PDF et les autres originaux restent exclus.
 - **Quand** : après chaque écriture, et seulement si les fichiers produits par
   l'opération ont réellement changé (pas de commit vide). Le commit automatique
   est ciblé : il ne capture jamais les autres modifications présentes dans le

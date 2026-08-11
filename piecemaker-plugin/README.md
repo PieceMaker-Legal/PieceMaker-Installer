@@ -34,11 +34,13 @@ leur emplacement dans ce dossier — `plugin.json` ne redéclare aucun chemin.
 Chaque sous-dossier immédiat de `config.workspacePath` est traité comme un dossier
 juridique indépendant. Son historique Git est conservé hors des données client,
 dans `~/.piecemaker/case-history/`. Il versionne les Markdown et mappings JSON ;
-pour les `.docx`, il ne conserve qu’une empreinte compacte des parties OOXML
-afin de signaler une modification dans l’administration. Le binaire Word et le
-texte des pièces ne sont ni archivés ni indexés, et les restaurations ne les
-écrasent pas. L’historique, les restaurations et l’état de protection GLiNER
-sont accessibles dans l’interface locale `/admin/`.
+pour les `.docx`, il conserve une empreinte compacte des parties OOXML afin de
+signaler une modification dans l’administration. Le binaire Word n’est jamais
+archivé. Pour un DOCX explicitement déprotégé, une représentation textuelle
+normalisée et compressée permet d’afficher un vrai diff ; le texte d’une pièce
+protégée n’est jamais extrait. Les restaurations n’écrasent aucun DOCX.
+L’historique, les restaurations et l’état de protection GLiNER sont accessibles
+dans l’interface locale `/admin/`.
 
 ## Installation depuis le marketplace
 

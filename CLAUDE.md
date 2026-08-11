@@ -279,12 +279,14 @@ Four hooks, wired in `piecemaker-plugin/hooks/hooks.json`:
   `safeCaseFiles`. The list is capped at `MAX_ORIGINALS` with a `truncated`
   flag.
 - DOCX changes in admin history use a compact virtual OOXML fingerprint
-  (`commits.cjs`), never the Word binary or text. The clean path performs only
-  asynchronous stats; changed files read just the ZIP central directory and
-  yield regularly to the event loop. The manifest is materialized only when a
-  commit is created, so admin refresh adds no Git process and cannot block the
-  server loop. Repacking identical OOXML creates no false change, and restore
-  preserves every original.
+  (`commits.cjs`), never the Word binary. Explicitly unprotected DOCX also keep
+  a compressed normalized-text snapshot so the admin can render paragraph
+  diffs; protected pieces never expose text. The clean path performs only
+  asynchronous stats. Changed files read just the ZIP central directory, while
+  XML text is inflated asynchronously only on click or commit. The manifest is
+  materialized only when a commit is created, so list refresh adds no Git
+  process and cannot block the server loop. Repacking identical OOXML creates
+  no false change, and restore preserves every original.
 - `GET /api/admin/repository/case` returns that list; `GET/PUT
   /api/admin/protection` reads and writes `protection.json` (the PUT takes the
   full `unprotected` list, since only exceptions are stored). The admin column

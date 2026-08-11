@@ -3,8 +3,11 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const zlib = require('node:zlib');
 const { spawn } = require('node:child_process');
 const { performance } = require('node:perf_hooks');
+const { promisify } = require('node:util');
+const { Worker } = require('node:worker_threads');
 
 const {
   documentKey,
@@ -39,6 +42,7 @@ const DOCX_MANIFEST_VERSION = 1;
 const DOCX_FINGERPRINT_ALGORITHM = 'ooxml-central-directory-crc32-v1';
 const MAX_DOCX_CENTRAL_BYTES = 16 * 1024 * 1024;
 const MAX_DOCX_PARTS = 20_000;
+const MAX_DOCX_TEXT_XML_BYTES = 32 * 1024 * 1024;
 const TECHNICAL_CASE_NAMES = new Set(['piecemaker_output']);
 /**
  * Arborescences techniques jamais parcourues. Un dossier juridique finit par
@@ -57,6 +61,8 @@ const PERF_LOG_ALL = process.env.PIECEMAKER_PERF_LOG === '1';
 const COMMIT_USER_NAME_KEY = 'PIECEMAKER_USER_NAME';
 const TECHNICAL_COMMIT_EMAIL = 'commits@piecemaker.local';
 const GLOBAL_ENV_FILE = path.resolve(__dirname, '..', '..', '..', '.env');
+const inflateRaw = promisify(zlib.inflateRaw);
+const deflateRaw = promisify(zlib.deflateRaw);
 
 function validateCommitUserName(value) {
   const cleaned = String(value || '').trim();
@@ -227,15 +233,16 @@ function findZipEnd(buffer) {
   return -1;
 }
 
-/** Empreinte canonique des entrées OOXML, indépendante du conteneur ZIP. */
-async function fingerprintCentralDirectory(buffer, entries) {
+async function parseCentralDirectory(buffer, entries) {
   if (entries > MAX_DOCX_PARTS) return null;
   const parts = [];
   let offset = 0;
   for (let index = 0; index < entries; index += 1) {
     if (offset + 46 > buffer.length || buffer.readUInt32LE(offset) !== 0x02014b50) return null;
     const flags = buffer.readUInt16LE(offset + 8);
+    const compression = buffer.readUInt16LE(offset + 10);
     const crc32 = buffer.readUInt32LE(offset + 16).toString(16).padStart(8, '0');
+    const compressedSize = buffer.readUInt32LE(offset + 20);
     const size = buffer.readUInt32LE(offset + 24);
     const nameLength = buffer.readUInt16LE(offset + 28);
     const next = offset + 46 + nameLength + buffer.readUInt16LE(offset + 30) + buffer.readUInt16LE(offset + 32);
@@ -243,11 +250,27 @@ async function fingerprintCentralDirectory(buffer, entries) {
     const name = buffer.subarray(offset + 46, offset + 46 + nameLength)
       .toString((flags & 0x0800) !== 0 ? 'utf8' : 'latin1')
       .replaceAll('\\', '/');
-    if (name && !name.endsWith('/')) parts.push({ name, crc32, size });
+    if (name && !name.endsWith('/')) {
+      parts.push({
+        name,
+        crc32,
+        size,
+        compressedSize,
+        compression,
+        localOffset: buffer.readUInt32LE(offset + 42),
+      });
+    }
     offset = next;
     if (index > 0 && index % 1000 === 0) await new Promise((resolve) => setImmediate(resolve));
   }
   parts.sort((left, right) => left.name.localeCompare(right.name));
+  return parts;
+}
+
+/** Empreinte canonique des entrées OOXML, indépendante du conteneur ZIP. */
+async function fingerprintCentralDirectory(buffer, entries) {
+  const parts = await parseCentralDirectory(buffer, entries);
+  if (!parts) return null;
   const hash = crypto.createHash('sha256');
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index];
@@ -259,6 +282,7 @@ async function fingerprintCentralDirectory(buffer, entries) {
 
 const docxFingerprintCache = new Map();
 const docxTreeCache = new Map();
+const docxTextCache = new Map();
 
 function boundedCacheSet(cache, key, value, max) {
   if (cache.has(key)) cache.delete(key);
@@ -282,6 +306,105 @@ async function readRange(handle, length, position) {
   const buffer = Buffer.allocUnsafe(length);
   const { bytesRead } = await handle.read(buffer, 0, length, position);
   return bytesRead === length ? buffer : buffer.subarray(0, bytesRead);
+}
+
+function normalizeWordSections(sections) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path.join(__dirname, 'docx-text-worker.cjs'), { workerData: sections });
+    worker.once('message', resolve);
+    worker.once('error', reject);
+    worker.once('exit', (code) => {
+      if (code !== 0) reject(new Error(`Extraction DOCX interrompue (${code}).`));
+    });
+  });
+}
+
+async function readZipPart(handle, part) {
+  if (![0, 8].includes(part.compression)
+    || part.compressedSize > MAX_DOCX_TEXT_XML_BYTES
+    || part.size > MAX_DOCX_TEXT_XML_BYTES) return null;
+  const header = await readRange(handle, 30, part.localOffset);
+  if (header.length !== 30 || header.readUInt32LE(0) !== 0x04034b50) return null;
+  const dataOffset = part.localOffset + 30 + header.readUInt16LE(26) + header.readUInt16LE(28);
+  const compressed = await readRange(handle, part.compressedSize, dataOffset);
+  if (compressed.length !== part.compressedSize) return null;
+  if (part.compression === 0) return compressed;
+  try {
+    return await inflateRaw(compressed, { maxOutputLength: MAX_DOCX_TEXT_XML_BYTES });
+  } catch {
+    return null;
+  }
+}
+
+function docxPartTitle(name) {
+  if (name === 'word/document.xml') return 'Corps du document';
+  if (/^word\/header\d*\.xml$/i.test(name)) return 'En-tête';
+  if (/^word\/footer\d*\.xml$/i.test(name)) return 'Pied de page';
+  if (name === 'word/footnotes.xml') return 'Notes de bas de page';
+  if (name === 'word/endnotes.xml') return 'Notes de fin';
+  if (name === 'word/comments.xml') return 'Commentaires';
+  return name;
+}
+
+async function extractDocxText(file, stat) {
+  const key = `${file}\0${stat.size}\0${stat.mtimeMs}\0${stat.ctimeMs}`;
+  if (docxTextCache.has(key)) return docxTextCache.get(key);
+  let handle;
+  let text = '';
+  try {
+    handle = await fsp.open(file, 'r');
+    const tailLength = Math.min(stat.size, 65_557);
+    const tail = await readRange(handle, tailLength, stat.size - tailLength);
+    const end = findZipEnd(tail);
+    if (end < 0) return '';
+    const entries = tail.readUInt16LE(end + 10);
+    const centralSize = tail.readUInt32LE(end + 12);
+    const centralOffset = tail.readUInt32LE(end + 16);
+    if (entries === 0xffff || centralSize > MAX_DOCX_CENTRAL_BYTES || centralOffset + centralSize > stat.size) return '';
+    const parts = await parseCentralDirectory(await readRange(handle, centralSize, centralOffset), entries);
+    if (!parts) return '';
+    const readable = parts.filter((part) => part.name === 'word/document.xml'
+      || /^word\/(?:header\d*|footer\d*|footnotes|endnotes|comments)\.xml$/i.test(part.name));
+    const sections = [];
+    let totalBytes = 0;
+    for (const part of readable) {
+      totalBytes += part.size;
+      if (totalBytes > MAX_DOCX_TEXT_XML_BYTES) break;
+      const xml = await readZipPart(handle, part);
+      if (!xml) continue;
+      sections.push({ title: docxPartTitle(part.name), xml: xml.toString('utf8') });
+    }
+    text = await normalizeWordSections(sections);
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+  boundedCacheSet(docxTextCache, key, text, 2_000);
+  return text;
+}
+
+async function encodeTextSnapshot(text) {
+  const compressed = await deflateRaw(Buffer.from(String(text || ''), 'utf8'), { level: 6 });
+  return compressed.toString('base64');
+}
+
+async function decodeTextSnapshot(entry) {
+  if (!entry?.textDeflate) return null;
+  try {
+    return (await inflateRaw(Buffer.from(entry.textDeflate, 'base64'), { maxOutputLength: MAX_DOCX_TEXT_XML_BYTES })).toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+async function addDocxTextSnapshot(caseRoot, relative, entry) {
+  const absolute = path.join(caseRoot, ...relative.split('/'));
+  const stat = docxStat(await fsp.stat(absolute));
+  const text = await extractDocxText(absolute, stat);
+  return {
+    ...entry,
+    textDeflate: await encodeTextSnapshot(text),
+    textHash: crypto.createHash('sha256').update(text).digest('hex'),
+  };
 }
 
 async function fingerprintDocx(file, stat) {
@@ -317,8 +440,9 @@ async function fingerprintDocx(file, stat) {
   return fingerprint;
 }
 
-async function currentDocxManifest(caseRoot, baseline = emptyDocxManifest()) {
+async function currentDocxManifest(caseRoot, baseline = emptyDocxManifest(), { includeText = false } = {}) {
   const root = await fsp.realpath(caseRoot);
+  const protection = includeText ? readProtection(root) : null;
   const files = {};
   let count = 0;
   async function visit(directory, prefix = '') {
@@ -334,12 +458,22 @@ async function currentDocxManifest(caseRoot, baseline = emptyDocxManifest()) {
       if (count >= MAX_SAFE_FILES) throw new Error('Ce dossier contient trop de documents Word pour calculer leur historique.');
       const stat = docxStat(await fsp.stat(absolute));
       const previous = baseline.files[relative];
+      let current;
       if (sameDocxStat(previous, stat)) {
-        files[relative] = previous;
+        current = previous;
       } else {
         const fingerprint = await fingerprintDocx(absolute, stat);
-        files[relative] = previous?.fingerprint === fingerprint.fingerprint ? previous : { ...stat, ...fingerprint };
+        current = previous?.fingerprint === fingerprint.fingerprint ? previous : { ...stat, ...fingerprint };
       }
+      if (includeText) {
+        if (isProtectedFile(absolute, root, protection)) {
+          const { textDeflate: _textDeflate, textHash: _textHash, ...withoutText } = current;
+          current = withoutText;
+        } else if (!current.textDeflate) {
+          current = await addDocxTextSnapshot(root, relative, current);
+        }
+      }
+      files[relative] = current;
       count += 1;
       if (count % 100 === 0) await new Promise((resolve) => setImmediate(resolve));
     }
@@ -353,7 +487,7 @@ async function currentDocxManifest(caseRoot, baseline = emptyDocxManifest()) {
 }
 
 function serializeDocxManifest(manifest) {
-  return `${JSON.stringify(manifest, null, 2)}\n`;
+  return `${JSON.stringify(manifest)}\n`;
 }
 
 function parseDocxManifest(value) {
@@ -728,22 +862,100 @@ function docxChanges(beforeManifest, afterManifest) {
     });
 }
 
-function docxStructureDiff(beforeManifest, afterManifest, filePath) {
+async function liveDocxText(legalCase, filePath, entry) {
+  if (!entry) return '';
+  const absolute = path.join(legalCase.root, ...filePath.split('/'));
+  try {
+    const stat = docxStat(await fsp.stat(absolute));
+    const fingerprint = await fingerprintDocx(absolute, stat);
+    if (fingerprint.fingerprint !== entry.fingerprint) return null;
+    return extractDocxText(absolute, stat);
+  } catch {
+    return null;
+  }
+}
+
+async function entryDocxText(legalCase, filePath, entry) {
+  if (!entry) return '';
+  return await decodeTextSnapshot(entry) ?? liveDocxText(legalCase, filePath, entry);
+}
+
+function limitPatch(value) {
+  const buffer = Buffer.from(String(value || ''), 'utf8');
+  if (buffer.length <= MAX_PATCH_BYTES) return { stdout: buffer.toString('utf8'), truncated: false };
+  return { stdout: `${buffer.subarray(0, MAX_PATCH_BYTES).toString('utf8')}…`, truncated: true };
+}
+
+async function docxTextDiff(legalCase, beforeManifest, afterManifest, filePath) {
   const before = beforeManifest.files[filePath];
   const after = afterManifest.files[filePath];
-  const lines = [
-    `diff --ooxml a/${filePath} b/${filePath}`,
-    `--- ${before ? `a/${filePath}` : '/dev/null'}`,
-    `+++ ${after ? `b/${filePath}` : '/dev/null'}`,
-    '@@ Structure OOXML @@',
-  ];
-  if (before) lines.push(`- Empreinte OOXML ${before.fingerprint.slice(0, 16)}… · ${before.partCount || 0} partie(s)`);
-  if (after) lines.push(`+ Empreinte OOXML ${after.fingerprint.slice(0, 16)}… · ${after.partCount || 0} partie(s)`);
-  return {
-    stdout: `${lines.join('\n')}\n`,
-    truncated: false,
-    stats: { files: 1, added: after ? 1 : 0, deleted: before ? 1 : 0 },
-  };
+  const absolute = path.join(legalCase.root, ...filePath.split('/'));
+  if (isProtectedFile(absolute, legalCase.root)) {
+    return {
+      stdout: `diff --text a/${filePath} b/${filePath}\n@@ Document protégé @@\n  Le texte n’est pas extrait des pièces protégées.\n`,
+      truncated: false,
+      stats: { files: 1, added: 0, deleted: 0 },
+    };
+  }
+
+  const [beforeText, afterText] = await Promise.all([
+    entryDocxText(legalCase, filePath, before),
+    entryDocxText(legalCase, filePath, after),
+  ]);
+  if (beforeText === null || afterText === null) {
+    const available = afterText ?? beforeText ?? '';
+    const prefix = afterText !== null ? '+' : '-';
+    const lines = available.split('\n').map((line) => `${prefix}${line}`);
+    const patch = limitPatch([
+      `diff --text a/${filePath} b/${filePath}`,
+      `--- ${before ? `a/${filePath}` : '/dev/null'}`,
+      `+++ ${after ? `b/${filePath}` : '/dev/null'}`,
+      '@@ Texte partiellement disponible @@',
+      '  Le prochain commit servira de référence textuelle complète.',
+      ...lines,
+      '',
+    ].join('\n'));
+    return {
+      ...patch,
+      stats: {
+        files: 1,
+        added: prefix === '+' ? lines.length : 0,
+        deleted: prefix === '-' ? lines.length : 0,
+      },
+    };
+  }
+
+  const temporary = await fsp.mkdtemp(path.join(os.tmpdir(), 'piecemaker-docx-diff-'));
+  const beforeFile = path.join(temporary, 'avant.txt');
+  const afterFile = path.join(temporary, 'apres.txt');
+  try {
+    await Promise.all([
+      fsp.writeFile(beforeFile, `${beforeText}\n`, { encoding: 'utf8', mode: 0o600 }),
+      fsp.writeFile(afterFile, `${afterText}\n`, { encoding: 'utf8', mode: 0o600 }),
+    ]);
+    const result = await runGit(legalCase.root, [
+      'diff', '--no-index', '--text', '--unified=3', '--', beforeFile, afterFile,
+    ], { allowFailure: true, maxOutputBytes: MAX_PATCH_BYTES, truncateOutput: true });
+    const hunk = String(result.stdout || '').match(/^@@[\s\S]*$/m)?.[0] || '';
+    const patch = [
+      `diff --text a/${filePath} b/${filePath}`,
+      `--- ${before ? `a/${filePath}` : '/dev/null'}`,
+      `+++ ${after ? `b/${filePath}` : '/dev/null'}`,
+      hunk,
+    ].filter(Boolean).join('\n');
+    const body = hunk.split('\n');
+    return {
+      stdout: patch,
+      truncated: result.truncated,
+      stats: {
+        files: 1,
+        added: body.filter((line) => line.startsWith('+') && !line.startsWith('+++')).length,
+        deleted: body.filter((line) => line.startsWith('-') && !line.startsWith('---')).length,
+      },
+    };
+  } finally {
+    await fsp.rm(temporary, { recursive: true, force: true });
+  }
 }
 
 async function buildCurrentTree(legalCase, gitDir, homeDir, baselineDocx = emptyDocxManifest(), { includeDocx = true } = {}) {
@@ -752,7 +964,7 @@ async function buildCurrentTree(legalCase, gitDir, homeDir, baselineDocx = empty
   const env = { GIT_INDEX_FILE: temporaryIndex };
   const [files, docxManifest] = await Promise.all([
     safeCaseFiles(legalCase.root),
-    currentDocxManifest(legalCase.root, baselineDocx),
+    currentDocxManifest(legalCase.root, baselineDocx, { includeText: includeDocx }),
   ]);
   try {
     await runGit(legalCase.root, ['read-tree', '--empty'], { gitDir, workTree: legalCase.root, env });
@@ -1037,7 +1249,8 @@ async function revisionDetails(casesRoot, homeDir, caseName, hash, filePath = ''
   // est borné ci-dessous : ne calculer les statistiques que pour un fichier
   // explicitement sélectionné évite ce parcours redondant.
   const wordDiff = isDocxPath(selectedPath)
-    ? docxStructureDiff(
+    ? await docxTextDiff(
+      legalCase,
       await treeDocxManifest(legalCase, gitDir, parentTree),
       await treeDocxManifest(legalCase, gitDir, commitTree),
       selectedPath,
@@ -1093,7 +1306,7 @@ async function worktreeDetails(casesRoot, homeDir, caseName, filePath = '', snap
   }
   const selectedFile = selectedPath ? state.changes.find((file) => file.path === selectedPath) : null;
   const wordDiff = isDocxPath(selectedPath)
-    ? docxStructureDiff(state.baselineDocx, state.current.docxManifest, selectedPath)
+    ? await docxTextDiff(state.legalCase, state.baselineDocx, state.current.docxManifest, selectedPath)
     : null;
   const statsRaw = wordDiff || !selectedPath ? '' : (await runGit(state.legalCase.root, [
     'diff', '--shortstat', state.base, state.current.tree, '--', selectedPath,
