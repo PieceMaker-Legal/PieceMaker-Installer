@@ -289,9 +289,15 @@ Four hooks, wired in `piecemaker-plugin/hooks/hooks.json`:
   starts a background job scoped to one case and returns its id. `files` are
   paths **relative to the legal-case root**, not to any subfolder;
   `GET/DELETE /api/admin/originals/job?id=` polls or cancels it. Both scripts
-  run with the legal-case directory as their output dir, so the `.md` and
-  `mapping_default.json` lands next to the Markdown files already versioned;
-  the raw `*_sensitive_map.json` payloads stay in a private temporary directory.
+  run with the case's `Fichiers convertis PieceMaker/` subfolder as their output
+  dir (passed `-o`), so the converted `.md` and `mapping_default.json` land there
+  and the case root keeps only the originals and the user's working documents.
+  The technical scan state stays at the root (`.piecemaker/`), and its manifest
+  key is relative to the case root, decoupled from `-o` via `--case-root`
+  (`convert_and_scan_pipeline.py`); the raw `*_sensitive_map.json` payloads stay
+  in a private temporary directory. A `.md` a previous version left at the root is
+  migrated into the subfolder when its piece is next processed (the removal is
+  recorded in that job's commit). Only
   Only
   `PROGRESS:` lines and a short stderr tail are kept in a job's log — raw
   script stdout can carry document text.
@@ -334,7 +340,10 @@ Four hooks, wired in `piecemaker-plugin/hooks/hooks.json`:
   `.piecemaker/anonymization-state.json`; each hashed relative path carries only
   source size/mtime fingerprints for conversion and scan, so a modified piece is
   reconverted and scanned again automatically.
-- The case mapping is the single `<case>/mapping_default.json`, read/written via
+- The case mapping is the single
+  `<case>/Fichiers convertis PieceMaker/mapping_default.json` (resolved by
+  `caseMappingFile`; reads also fall back to a copy left at the case root during
+  migration), read/written via
   `GET/PUT /api/admin/mapping` and rebuilt from the scans by
   `POST /api/admin/mapping/rebuild`. The pipeline is pointed at that same file
   with `--mapping-file`. Legacy `mapping_dossier.json` / `mapping_<id>.json`

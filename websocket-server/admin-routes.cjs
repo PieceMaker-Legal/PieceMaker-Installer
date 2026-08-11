@@ -98,7 +98,9 @@ async function createLegalCase({ casesRoot, homeDir, name }) {
       homeDir,
       label: 'Création du dossier juridique',
       event: 'admin-case-create',
-      paths: [path.basename(mapping.file)],
+      // Le mapping vit dans le sous-dossier des fichiers produits : le commit doit
+      // viser son chemin relatif au dossier, pas seulement son nom de base.
+      paths: [path.relative(directory, mapping.file).split(path.sep).join('/')],
       waitForLockMs: 10_000,
     });
     const folder = await caseOverview(root, homeDir, safeName);
@@ -240,7 +242,7 @@ async function registerLegalCase({
     homeDir,
     label: 'Enregistrement du dossier juridique',
     event: 'admin-case-register',
-    paths: [path.basename(mapping.file)],
+    paths: [path.relative(root, mapping.file).split(path.sep).join('/')],
     waitForLockMs: 10_000,
     envFile: path.join(repoRoot, '.env'),
   });
@@ -254,7 +256,7 @@ async function registerLegalCase({
     installed: {
       plugin: true,
       rule: path.relative(root, rule).split(path.sep).join('/'),
-      mapping: path.basename(mapping.file),
+      mapping: path.relative(root, mapping.file).split(path.sep).join('/'),
       protection: path.relative(root, protection.file).split(path.sep).join('/'),
       commit: commit.commit || null,
     },

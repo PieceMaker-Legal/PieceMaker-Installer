@@ -1461,6 +1461,15 @@ def main():
         help="Technical scan-state manifest (default: <output>/.piecemaker/anonymization-state.json)",
     )
     parser.add_argument(
+        "--case-root",
+        default=None,
+        help=(
+            "Legal-case root used to key the scan-state manifest. Defaults to "
+            "--output for standalone CLI use; the admin pipeline passes the case "
+            "directory so state keys match even when --output is a subfolder."
+        ),
+    )
+    parser.add_argument(
         "--skip-existing",
         action="store_true",
         help="Reuse existing Markdown and scans whose source fingerprint is unchanged",
@@ -1487,6 +1496,10 @@ def main():
         else Path(args.mapping_dir or args.output) / "mapping_default.json"
     )
     state_target = Path(args.state_file) if args.state_file else Path(args.output) / ".piecemaker" / "anonymization-state.json"
+    # Base pour les clés du manifeste : le dossier juridique, découplé de --output
+    # (désormais un sous-dossier). Les sources vivent sous le dossier, pas sous la
+    # sortie ; sans ce découplage leur clé ne correspondrait plus à celle du Node.
+    state_case_root = args.case_root or args.output
     anonymization_state = load_anonymization_state(state_target)
 
     print(f"🚀 Starting Convert & Scan Pipeline")
@@ -1506,7 +1519,7 @@ def main():
         return Path(args.output) / f"{Path(input_file).stem}.md"
 
     scan_needed = any(
-        not (args.skip_existing and source_is_anonymized(anonymization_state, f, args.output))
+        not (args.skip_existing and source_is_anonymized(anonymization_state, f, state_case_root))
         for f in input_files
     )
 
@@ -1533,10 +1546,10 @@ def main():
         print_progress("CONVERT", i, len(input_files))
         existing_md = markdown_path(input_file)
 
-        state_entry = source_state_entry(anonymization_state, input_file, args.output)
+        state_entry = source_state_entry(anonymization_state, input_file, state_case_root)
         reusable_markdown = existing_md.exists() and (
             state_entry is None
-            or source_is_converted(anonymization_state, input_file, args.output)
+            or source_is_converted(anonymization_state, input_file, state_case_root)
         )
         if args.skip_existing and reusable_markdown:
             print(f"📄 [{i}/{len(input_files)}] Already converted, reusing: {existing_md.name}")
@@ -1571,7 +1584,7 @@ def main():
     print(
         f"✅ Phase 1 complete: {convert_success_count}/{len(input_files)} files converted"
     )
-    update_processing_state(state_target, args.output, converted_sources, "converted")
+    update_processing_state(state_target, state_case_root, converted_sources, "converted")
     print()
 
     # Phase 2: Scan all Markdown files for PII
@@ -1585,7 +1598,7 @@ def main():
         for md_file in md_files
         if not (
             args.skip_existing
-            and source_is_anonymized(anonymization_state, md_sources[md_file], args.output)
+            and source_is_anonymized(anonymization_state, md_sources[md_file], state_case_root)
         )
     ]
     skipped_scans = len(md_files) - len(pending_scans)
@@ -1674,7 +1687,7 @@ def main():
     # Save mapping (same file server uses)
     print("💾 Step 5: Saving mapping...")
     mapping_path = save_mapping(mapping_target, final_mapping_data)
-    update_anonymization_state(state_target, args.output, successful_scan_sources)
+    update_anonymization_state(state_target, state_case_root, successful_scan_sources)
 
     print(f"✅ Mapping saved to: {mapping_path}")
     print(f"   • Total entities: {len(final_mapping_data['mapping'])} variants")

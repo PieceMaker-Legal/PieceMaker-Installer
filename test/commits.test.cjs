@@ -24,7 +24,7 @@ const {
   safeCaseFiles,
   worktreeDetails,
 } = require('../piecemaker-plugin/scripts/lib/commits.cjs');
-const { isProtectedFile, writeProtection } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
+const { isProtectedFile, writeProtection, WORKSPACE_SUBDIR } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
 const { createLegalCase } = require('../websocket-server/admin-routes.cjs');
 
 process.env.PIECEMAKER_USER_NAME = 'Utilisateur Test';
@@ -171,7 +171,7 @@ test('la création d’un dossier installe mapping, protection et historique mai
   const gamma = path.join(data.casesRoot, 'Dossier Gamma');
 
   assert.equal(folder.name, 'Dossier Gamma');
-  assert.equal(fs.existsSync(path.join(gamma, 'mapping_default.json')), true);
+  assert.equal(fs.existsSync(path.join(gamma, WORKSPACE_SUBDIR, 'mapping_default.json')), true);
   assert.equal(fs.existsSync(path.join(gamma, '.piecemaker', 'protection.json')), true);
   assert.deepEqual(folder.branches, { active: 'main', branches: ['main'] });
   const history = await listHistory(data.casesRoot, data.home, { caseName: 'Dossier Gamma' });

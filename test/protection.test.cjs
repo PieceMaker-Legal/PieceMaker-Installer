@@ -88,16 +88,26 @@ test('le refus renvoie vers le Markdown converti, où qu’il ait été écrit',
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
 
-  // Le pipeline écrit le Markdown à la racine du dossier, même pour une pièce
-  // rangée dans un sous-dossier.
-  fs.writeFileSync(path.join(data.caseRoot, 'pièce jointe.md'), '# Annexe\n');
+  // Emplacement courant : le pipeline écrit le Markdown dans le sous-dossier
+  // `Fichiers convertis PieceMaker/`.
+  const workspaceDir = path.join(data.caseRoot, 'Fichiers convertis PieceMaker');
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  fs.writeFileSync(path.join(workspaceDir, 'pièce jointe.md'), '# Annexe\n');
   const found = markdownCounterpart(path.join(data.caseRoot, 'annexes', 'pièce jointe.docx'), data.caseRoot);
   assert.equal(found.exists, true);
-  assert.equal(path.basename(found.path), 'pièce jointe.md');
+  assert.equal(found.path, path.join(workspaceDir, 'pièce jointe.md'));
 
+  // Compatibilité : un Markdown resté à la racine par une version antérieure
+  // reste retrouvé.
+  fs.writeFileSync(path.join(data.caseRoot, 'ancienne pièce.md'), '# Ancienne\n');
+  const legacy = markdownCounterpart(path.join(data.caseRoot, 'ancienne pièce.pdf'), data.caseRoot);
+  assert.equal(legacy.exists, true);
+  assert.equal(legacy.path, path.join(data.caseRoot, 'ancienne pièce.md'));
+
+  // À défaut, on pointe vers l'emplacement *attendu* — le sous-dossier.
   const missing = markdownCounterpart(path.join(data.caseRoot, 'jamais-converti.pdf'), data.caseRoot);
   assert.equal(missing.exists, false);
-  assert.equal(missing.path, path.join(data.caseRoot, 'jamais-converti.md'));
+  assert.equal(missing.path, path.join(workspaceDir, 'jamais-converti.md'));
 });
 
 test('chaque enfant direct de la racine est un dossier juridique, et rien d’autre', (t) => {

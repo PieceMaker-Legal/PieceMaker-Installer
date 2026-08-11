@@ -51,6 +51,10 @@ Pour convertir puis scanner en un seul appel, utiliser
 qui appelle `smart_converter.py` puis
 `websocket-server/scripts/presidio-gliner/presidio-gliner.py` pour chaque
 fichier (voir la skill `anonymisation`). Sortie persistante : un Markdown par
-fichier, un unique `{output_dir}/mapping_default.json` cumulatif et le manifeste
-technique caché `.piecemaker/anonymization-state.json`. Les détections brutes
-par fichier restent temporaires et sont supprimées après leur fusion.
+fichier et un unique `{output_dir}/mapping_default.json` cumulatif. Dans le
+pipeline d'administration d'un dossier, `-o` vise le sous-dossier
+`Fichiers convertis PieceMaker/` du dossier (racine réservée aux originaux) ;
+le manifeste technique caché `.piecemaker/anonymization-state.json` reste, lui, à
+la racine du dossier, et sa clé est relative à la racine via `--case-root`. Les
+détections brutes par fichier restent temporaires et sont supprimées après leur
+fusion.

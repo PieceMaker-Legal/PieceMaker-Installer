@@ -27,6 +27,15 @@ const path = require('node:path');
 const PROTECTION_DIR = '.piecemaker';
 const PROTECTION_FILE = 'protection.json';
 
+/**
+ * Sous-dossier où le pipeline range les fichiers *produits* (Markdown converti
+ * et `mapping_default.json`), pour que la racine du dossier juridique ne garde
+ * que les originaux et les documents de travail. La constante vit ici parce que
+ * le plugin est distribué seul : les hooks en dépendent et ne peuvent pas
+ * requérir `websocket-server/`. `mapping.cjs` et `commits.cjs` l'importent.
+ */
+const WORKSPACE_SUBDIR = 'Fichiers convertis PieceMaker';
+
 /** Extensions lisibles par l'IA, sous réserve du mapping appliqué à la lecture. */
 const READABLE_EXTENSIONS = new Set(['.md', '.json']);
 
@@ -181,14 +190,16 @@ function isProtectedFile(absolutePath, caseRoot, state = null) {
 
 /**
  * Le Markdown à lire à la place d'une pièce protégée. Le pipeline écrit le `.md`
- * avec le dossier juridique comme répertoire de sortie : pour une pièce rangée
- * dans un sous-dossier, le Markdown est donc à la racine, pas à côté d'elle. On
- * regarde les deux, et à défaut on renvoie l'emplacement attendu pour que le
- * message de refus reste actionnable.
+ * dans le sous-dossier `WORKSPACE_SUBDIR`, mais d'anciens dossiers l'ont encore à
+ * la racine (ou à côté de la pièce). On regarde le sous-dossier d'abord, puis les
+ * emplacements historiques, et à défaut on renvoie l'emplacement *attendu* (le
+ * sous-dossier) pour que le message de refus reste actionnable.
  */
 function markdownCounterpart(absolutePath, caseRoot) {
   const stem = path.basename(absolutePath, path.extname(absolutePath));
+  const workspaceMarkdown = path.join(caseRoot, WORKSPACE_SUBDIR, `${stem}.md`);
   const candidates = [
+    workspaceMarkdown,
     path.join(path.dirname(absolutePath), `${stem}.md`),
     path.join(caseRoot, `${stem}.md`),
   ];
@@ -197,15 +208,17 @@ function markdownCounterpart(absolutePath, caseRoot) {
   }
   // Repli : une conversion antérieure a pu normaliser le nom (accents, casse).
   const key = documentKey(absolutePath);
-  try {
-    for (const entry of fs.readdirSync(caseRoot, { withFileTypes: true })) {
-      if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.md') continue;
-      if (documentKey(entry.name) === key) return { path: path.join(caseRoot, entry.name), exists: true };
+  for (const dir of [path.join(caseRoot, WORKSPACE_SUBDIR), caseRoot]) {
+    try {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.md') continue;
+        if (documentKey(entry.name) === key) return { path: path.join(dir, entry.name), exists: true };
+      }
+    } catch {
+      // dossier illisible : on essaie l'emplacement suivant
     }
-  } catch {
-    // dossier illisible : on retombe sur l'emplacement attendu
   }
-  return { path: candidates[1], exists: false };
+  return { path: workspaceMarkdown, exists: false };
 }
 
 module.exports = {
@@ -223,4 +236,5 @@ module.exports = {
   PROTECTION_FILE,
   READABLE_EXTENSIONS,
   FORBIDDEN_JSON_PATTERNS,
+  WORKSPACE_SUBDIR,
 };

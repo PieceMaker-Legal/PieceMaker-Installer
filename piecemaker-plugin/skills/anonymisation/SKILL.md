@@ -25,8 +25,10 @@ description: Lancer un scan PII GLiNER/Presidio sur un document PieceMaker, lire
   conversion + scan et journalise `PROGRESS:CONVERT:...` /
   `PROGRESS:SCAN:...` sur stdout. Les payloads bruts sont alors temporaires :
   seul `mapping_default.json` demeure et s'enrichit à chaque lot.
-- Le fichier de mapping consommé par l'application vit à
-  `output/mapping_default.json`
+- Le fichier de mapping consommé par l'application vit dans le sous-dossier des
+  fichiers produits du dossier,
+  `<dossier>/Fichiers convertis PieceMaker/mapping_default.json` (la lecture
+  retombe sur une copie restée à la racine pendant la migration),
   et a la forme :
   ```json
   { "mapping": { "Jean Dupont": "PERSON_01" },

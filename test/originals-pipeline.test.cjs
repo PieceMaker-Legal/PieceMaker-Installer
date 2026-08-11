@@ -28,6 +28,7 @@ const {
   anonymizationStateFile,
   markFilesAnonymized,
 } = require('../piecemaker-plugin/scripts/lib/anonymization-state.cjs');
+const { WORKSPACE_SUBDIR } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-originals-test-'));
@@ -257,7 +258,7 @@ test('les artefacts d’un lot excluent les fichiers modifiés par une autre ses
   );
   assert.deepEqual(
     await sessionArtifactPaths(legalCase, [source], 'anonymize'),
-    ['annexe.md', 'mapping_default.json'],
+    ['annexe.md', `${WORKSPACE_SUBDIR}/mapping_default.json`],
   );
 });
 
@@ -276,11 +277,12 @@ test('un lot anonymisé ne laisse que mapping_default.json et son état techniqu
     "const args = process.argv.slice(2);",
     "const source = path.resolve(args[0]);",
     "const output = path.resolve(args[args.indexOf('-o') + 1]);",
+    "const caseRoot = path.resolve(args[args.indexOf('--case-root') + 1]);",
     "const mapping = args[args.indexOf('--mapping-file') + 1];",
     "const stateFile = args[args.indexOf('--state-file') + 1];",
     "fs.writeFileSync(path.join(output, `${path.basename(source, path.extname(source))}.md`), '# Converti\\n');",
     "fs.writeFileSync(mapping, JSON.stringify({ mapping: { Martin: 'PERSONNE_PHYSIQUE_01' }, reverse_mapping: { PERSONNE_PHYSIQUE_01: ['Martin'] } }));",
-    "const relative = path.relative(output, source).split(path.sep).join('/');",
+    "const relative = path.relative(caseRoot, source).split(path.sep).join('/');",
     "const key = crypto.createHash('sha256').update(relative).digest('hex');",
     "const stat = fs.statSync(source);",
     "fs.mkdirSync(path.dirname(stateFile), { recursive: true });",
@@ -298,12 +300,17 @@ test('un lot anonymisé ne laisse que mapping_default.json et son état techniqu
   const finished = await waitForJob(started.id);
   assert.equal(finished.state, 'done', describeJob(finished));
   assert.equal((await listOriginals(data.caseRoot)).find((file) => file.name === 'annexe.docx').scanned, true);
+  // Le mapping vit désormais dans le sous-dossier des fichiers produits, pas à la racine.
   assert.deepEqual(
     fs.readdirSync(data.caseRoot).filter((name) => /^mapping.*\.json$/i.test(name)),
+    [],
+  );
+  assert.deepEqual(
+    fs.readdirSync(path.join(data.caseRoot, WORKSPACE_SUBDIR)).filter((name) => /^mapping.*\.json$/i.test(name)),
     ['mapping_default.json'],
   );
   assert.deepEqual(
-    fs.readdirSync(data.caseRoot).filter((name) => /_sensitive_map\.json$/i.test(name)),
+    fs.readdirSync(path.join(data.caseRoot, WORKSPACE_SUBDIR)).filter((name) => /_sensitive_map\.json$/i.test(name)),
     [],
   );
 });
@@ -375,7 +382,7 @@ test('une conversion admin crée un commit ciblé et laisse les changements conc
   assert.equal(finished.state, 'done', describeJob(finished));
   assert.equal(finished.result.commit.created, true);
   assert.equal((await listOriginals(data.caseRoot)).find((file) => file.name === 'annexe.docx').converted, true);
-  assert.deepEqual(finished.result.commit.files.map((file) => file.path), ['annexe.md']);
+  assert.deepEqual(finished.result.commit.files.map((file) => file.path), [`${WORKSPACE_SUBDIR}/annexe.md`]);
   assert.match((await listHistory(data.casesRoot, homeDir, { caseName: 'Dossier Alpha' }))[0].subject, /Conversion de 1 pièce/);
 
   const pending = await worktreeDetails(data.casesRoot, homeDir, 'Dossier Alpha', 'autre-session.json');
@@ -643,8 +650,14 @@ test('les anciens mappings convergent vers le seul mapping_default.json', async 
   assert.deepEqual(new Set(Object.keys(merged.mapping)), new Set(['Egaré', 'Martin']));
   writeCaseMapping(data.caseRoot, merged);
   assert.equal(fs.existsSync(path.join(data.caseRoot, 'mapping_dossier.json')), false);
+  // Toutes les copies racine (legacy comme `mapping_default.json`) sont retirées ;
+  // le fichier canonique unique vit dans le sous-dossier des fichiers produits.
   assert.deepEqual(
     fs.readdirSync(data.caseRoot).filter((name) => /^mapping.*\.json$/i.test(name)),
+    [],
+  );
+  assert.deepEqual(
+    fs.readdirSync(path.join(data.caseRoot, WORKSPACE_SUBDIR)).filter((name) => /^mapping.*\.json$/i.test(name)),
     ['mapping_default.json'],
   );
 });

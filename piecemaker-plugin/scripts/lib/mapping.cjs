@@ -20,7 +20,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { locateCase } = require('./protection.cjs');
+const { locateCase, WORKSPACE_SUBDIR } = require('./protection.cjs');
 const { locateConfiguredCase } = require('./case-folders.cjs');
 const { isInstitutionalEntity } = require('./institutional-terms.cjs');
 
@@ -144,32 +144,51 @@ function readJsonFile(file, fallback = null) {
   }
 }
 
-/** Tous les mappings présents, le fichier canonique en dernier pour priorité. */
+/**
+ * Tous les mappings présents, sous-dossier `WORKSPACE_SUBDIR` **et** racine
+ * (lecture tolérante pendant la migration). Le fichier canonique du sous-dossier
+ * passe en dernier : c'est lui qui gagne quand `readCaseMapping` fusionne, tandis
+ * que les copies legacy (racine ou `mapping_<id>.json`) ne servent qu'à ne rien
+ * perdre avant le prochain enregistrement.
+ */
 function existingMappingFiles(caseRoot) {
-  let entries = [];
-  try {
-    entries = fs.readdirSync(caseRoot, { withFileTypes: true });
-  } catch {
-    return [];
+  const dirs = [
+    { path: path.join(caseRoot, WORKSPACE_SUBDIR), inSubfolder: true },
+    { path: caseRoot, inSubfolder: false },
+  ];
+  const found = [];
+  for (const dir of dirs) {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir.path, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || !/^mapping.*\.json$/i.test(entry.name)) continue;
+      found.push({
+        full: path.join(dir.path, entry.name),
+        name: entry.name,
+        // Priorité de fusion croissante : legacy racine < canonique racine <
+        // legacy sous-dossier < canonique sous-dossier (dernier, il l'emporte).
+        rank: (dir.inSubfolder ? 2 : 0) + (entry.name === CANONICAL_MAPPING_FILE ? 1 : 0),
+      });
+    }
   }
-  return entries
-    .filter((entry) => entry.isFile() && /^mapping.*\.json$/i.test(entry.name))
-    .map((entry) => entry.name)
-    .sort((a, b) => {
-      if (a === CANONICAL_MAPPING_FILE) return 1;
-      if (b === CANONICAL_MAPPING_FILE) return -1;
-      return a.localeCompare(b, 'fr');
-    })
-    .map((name) => path.join(caseRoot, name));
+  return found
+    .sort((a, b) => (a.rank - b.rank) || a.name.localeCompare(b.name, 'fr'))
+    .map((entry) => entry.full);
 }
 
 /**
- * Il n'existe qu'une cible d'écriture par dossier. Les anciens
- * `mapping_dossier.json` / `mapping_<id>.json` sont lus pour migration, mais
- * toute écriture converge vers `mapping_default.json`.
+ * L'unique cible d'écriture par dossier vit désormais dans le sous-dossier
+ * `WORKSPACE_SUBDIR`, pour garder la racine propre. Les anciens
+ * `mapping_dossier.json` / `mapping_<id>.json` et un `mapping_default.json` resté
+ * à la racine sont lus pour migration (voir `existingMappingFiles`), mais toute
+ * écriture converge vers `<dossier>/<WORKSPACE_SUBDIR>/mapping_default.json`.
  */
 function caseMappingFile(caseRoot) {
-  return path.join(caseRoot, CANONICAL_MAPPING_FILE);
+  return path.join(caseRoot, WORKSPACE_SUBDIR, CANONICAL_MAPPING_FILE);
 }
 
 function cleanMappingString(value) {

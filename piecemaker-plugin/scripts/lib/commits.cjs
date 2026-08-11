@@ -10,6 +10,7 @@ const {
   documentKey,
   isProtectedFile,
   readProtection,
+  WORKSPACE_SUBDIR,
 } = require('./protection.cjs');
 const {
   isAnonymizedEntry,
@@ -333,6 +334,12 @@ async function originalFilesOverview(caseRoot, { safeFiles: knownSafeFiles = nul
       const absolute = path.join(directory, entry.name);
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
+        // Le sous-dossier des fichiers produits (Markdown, mapping) n'est jamais
+        // une source de pièces : ses `.md`/`.json` sont déjà écartés par
+        // `SAFE_EXTENSIONS`, mais d'éventuels dérivés non-Markdown (images
+        // MinerU) qui y vivent ne doivent pas non plus être listés comme pièces.
+        // `safeCaseFiles`, lui, continue de le parcourir pour repérer les `.md`.
+        if (entry.name === WORKSPACE_SUBDIR) continue;
         if (isIgnoredDirectoryName(entry.name) || conversionOutputs.has(documentKey(entry.name))) continue;
         await visit(absolute, relative);
         continue;

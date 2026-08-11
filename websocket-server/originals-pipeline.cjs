@@ -3,10 +3,12 @@
  * dossier juridique, pilotés depuis l'administration.
  *
  * Les originaux ne sortent jamais du dossier : `smart_converter.py` et
- * `convert_and_scan_pipeline.py` sont lancés avec le dossier juridique comme
- * répertoire de sortie, si bien que le Markdown converti et le seul
- * `mapping_default.json` atterrissent à côté des fichiers déjà versionnés.
- * Seules les lignes `PROGRESS:` et un extrait d'erreur sont conservés dans le
+ * `convert_and_scan_pipeline.py` sont lancés avec le sous-dossier
+ * `Fichiers convertis PieceMaker/` du dossier juridique comme répertoire de
+ * sortie, si bien que le Markdown converti et le seul `mapping_default.json` y
+ * atterrissent, laissant la racine du dossier aux seuls originaux et documents
+ * de travail. L'état technique (`.piecemaker/anonymization-state.json`) reste,
+ * lui, à la racine. Seules les lignes `PROGRESS:` et un extrait d'erreur sont conservés dans le
  * journal d'un travail : la sortie brute des scripts peut contenir du texte de
  * pièce, qui ne doit jamais remonter dans l'interface.
  */
@@ -22,7 +24,7 @@ const {
   resolveCase,
   safeCaseFiles,
 } = require('../piecemaker-plugin/scripts/lib/commits.cjs');
-const { documentKey } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
+const { documentKey, WORKSPACE_SUBDIR } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
 const {
   markFilesAnonymized,
   markFilesConverted,
@@ -90,15 +92,29 @@ function caseMappingPayload(document) {
 function writeCaseMapping(caseRoot, document) {
   const file = caseMappingFile(caseRoot);
   const payload = caseMappingPayload(document);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   const temporary = `${file}.piecemaker-${process.pid}.tmp`;
   fs.writeFileSync(temporary, `${JSON.stringify(payload, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   fs.renameSync(temporary, file);
-  // Une fois le fichier canonique écrit avec succès, les anciens mappings
-  // devenus redondants sont supprimés. `readCaseMapping` les a fusionnés avant
-  // les appels de migration ; aucune entité n'est perdue.
-  for (const entry of fs.readdirSync(caseRoot, { withFileTypes: true })) {
-    if (!entry.isFile() || entry.name === path.basename(file) || !/^mapping.*\.json$/i.test(entry.name)) continue;
-    fs.unlinkSync(path.join(caseRoot, entry.name));
+  // Une fois le fichier canonique écrit avec succès, tous les autres mappings
+  // sont supprimés : les legacy (`mapping_<id>.json`) comme un `mapping_default.json`
+  // resté à la racine par une version antérieure — c'est la migration. La
+  // comparaison porte sur le chemin complet, sinon un `mapping_default.json`
+  // racine passerait pour le fichier canonique (même basename) et survivrait.
+  // `readCaseMapping` les a tous fusionnés au préalable ; aucune entité n'est perdue.
+  for (const dir of new Set([caseRoot, path.dirname(file)])) {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || !/^mapping.*\.json$/i.test(entry.name)) continue;
+      const full = path.join(dir, entry.name);
+      if (full === file) continue;
+      fs.unlinkSync(full);
+    }
   }
   return { file, exists: true, ignored: payload.ignored || [], ...payload };
 }
@@ -536,7 +552,52 @@ function spawnTracked(job, script, args) {
   });
 }
 
+/**
+ * Migration « au prochain traitement », rattachée aux pièces du lot : range dans
+ * `WORKSPACE_SUBDIR` le Markdown que d'anciennes versions ont laissé à la racine
+ * pour une pièce effectivement (re)traitée. Le rattachement au lot est délibéré —
+ * comme `sessionArtifactPaths` — pour ne jamais déplacer un document de travail
+ * de l'utilisateur ni un fichier modifié en parallèle. Retourne les chemins
+ * racine retirés (POSIX) : le commit du lot les enregistre comme suppressions,
+ * sinon la relocalisation resterait un changement en attente.
+ *
+ * Le mapping n'est **pas** relocalisé ici : sa consolidation reste l'apanage du
+ * chemin de succès (`writeCaseMapping`), qui lit les copies racine puis les
+ * supprime. Un scan en échec ne doit pas migrer prématurément un ancien mapping.
+ */
+function migrateRootArtifacts(caseRoot, absoluteFiles) {
+  const documentKeys = new Set(absoluteFiles.map((file) => documentKey(file)));
+  if (!documentKeys.size) return [];
+  let entries;
+  try {
+    entries = fs.readdirSync(caseRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const toMove = entries.filter((entry) =>
+    entry.isFile()
+    && path.extname(entry.name).toLowerCase() === '.md'
+    && documentKeys.has(documentKey(entry.name)));
+  if (!toMove.length) return [];
+  const workspaceDir = path.join(caseRoot, WORKSPACE_SUBDIR);
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  const removed = [];
+  for (const entry of toMove) {
+    const source = path.join(caseRoot, entry.name);
+    const destination = path.join(workspaceDir, entry.name);
+    // Le sous-dossier fait autorité : un doublon plus récent y gagne, on se
+    // contente d'écarter la copie racine périmée.
+    if (fs.existsSync(destination)) fs.rmSync(source, { force: true });
+    else fs.renameSync(source, destination);
+    removed.push(entry.name);
+  }
+  return removed;
+}
+
 async function runJob(job, legalCase, absoluteFiles, options) {
+  const workspaceDir = path.join(legalCase.root, WORKSPACE_SUBDIR);
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  job.migratedFromRoot = migrateRootArtifacts(legalCase.root, absoluteFiles);
   if (job.action === 'convert') {
     // `smart_converter.py` ne prend qu'un fichier : on avance dossier par
     // dossier pour garder une progression lisible même sans ligne PROGRESS.
@@ -544,7 +605,7 @@ async function runJob(job, legalCase, absoluteFiles, options) {
     for (const [index, absolute] of absoluteFiles.entries()) {
       job.processed = index;
       job.percent = Math.round((index / absoluteFiles.length) * 100);
-      const args = [absolute, '-o', legalCase.root];
+      const args = [absolute, '-o', workspaceDir];
       if (options.engine) args.push('--engine', options.engine);
       if (options.mode) args.push('--mode', options.mode);
       if (options.lang) args.push('--lang', options.lang);
@@ -570,7 +631,11 @@ async function runJob(job, legalCase, absoluteFiles, options) {
   // `--mapping-file` vise la copie de travail de l'unique mapping du dossier.
   // `--state-file` découple le statut « analysé » du contenu sensible ; les
   // cartes brutes restent temporaires et ne sont jamais déposées ici.
-  const args = [...absoluteFiles, '-o', legalCase.root, '--mapping-file', workingMapping];
+  const args = [...absoluteFiles, '-o', workspaceDir, '--mapping-file', workingMapping];
+  // `--case-root` découple la clé du manifeste de `--output` : les pièces vivent
+  // sous le dossier, pas sous le sous-dossier de sortie, donc leur clé d'état doit
+  // rester relative au dossier juridique pour correspondre à celle du Node.
+  args.push('--case-root', legalCase.root);
   args.push('--state-file', path.join(legalCase.root, '.piecemaker', 'anonymization-state.json'));
   if (options.skipExisting) args.push('--skip-existing');
   if (options.engine) args.push('--engine', options.engine);
@@ -618,7 +683,10 @@ async function sessionArtifactPaths(legalCase, absoluteFiles, action) {
 
 async function commitJobArtifacts(job, legalCase, absoluteFiles, homeDir) {
   if (!homeDir) return null;
-  const paths = await sessionArtifactPaths(legalCase, absoluteFiles, job.action);
+  const artifactPaths = await sessionArtifactPaths(legalCase, absoluteFiles, job.action);
+  // Les Markdown relocalisés depuis la racine rejoignent le commit du lot pour
+  // que leur suppression à l'ancien emplacement y soit enregistrée proprement.
+  const paths = [...new Set([...artifactPaths, ...(job.migratedFromRoot || [])])];
   if (!paths.length) throw new Error('Traitement terminé, mais aucun fichier produit ne peut être commité.');
   job.phase = 'commit';
   appendLog(job, `Commit automatique de ${paths.length} fichier(s)`);
