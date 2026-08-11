@@ -57,6 +57,96 @@ export function isProcessRunning(pid) {
   }
 }
 
+function parsePidList(output) {
+  return [...new Set(
+    String(output || '')
+      .split(/\s+/)
+      .map((value) => Number.parseInt(value, 10))
+      .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid)
+  )];
+}
+
+/**
+ * Return every process listening on a TCP port, whether PieceMaker started it
+ * or not. lsof is available by default on macOS; fuser/ss cover common Linux
+ * installs, while Windows exposes the owning PID through PowerShell.
+ */
+export function findListeningPids(port) {
+  const normalizedPort = Number(port);
+  if (!Number.isInteger(normalizedPort) || normalizedPort < 1 || normalizedPort > 65_535) {
+    throw new Error(`Port TCP invalide : ${port}`);
+  }
+
+  if (IS_WINDOWS) {
+    const powershell = runCapture('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `$ErrorActionPreference='Stop'; @(Get-NetTCPConnection -State Listen -LocalPort ${normalizedPort}).OwningProcess`,
+    ]);
+    if (!powershell.error && powershell.code === 0) return parsePidList(powershell.stdout);
+
+    const netstat = runCapture('netstat', ['-ano', '-p', 'tcp']);
+    if (!netstat.error && netstat.code === 0) {
+      const pids = netstat.stdout.split(/\r?\n/).flatMap((line) => {
+        const columns = line.trim().split(/\s+/);
+        if (columns.length < 5 || columns[0].toUpperCase() !== 'TCP') return [];
+        if (!columns[1].endsWith(`:${normalizedPort}`) || columns[3].toUpperCase() !== 'LISTENING') return [];
+        return parsePidList(columns.at(-1));
+      });
+      return [...new Set(pids)];
+    }
+
+    throw new Error(`Impossible d’identifier le processus qui écoute sur le port ${normalizedPort}.`);
+  }
+
+  const lsof = runCapture('lsof', [
+    '-nP',
+    '-t',
+    `-iTCP:${normalizedPort}`,
+    '-sTCP:LISTEN',
+  ]);
+  if (!lsof.error && (lsof.code === 0 || lsof.code === 1)) return parsePidList(lsof.stdout);
+
+  const fuser = runCapture('fuser', ['-n', 'tcp', String(normalizedPort)]);
+  if (!fuser.error && (fuser.code === 0 || fuser.code === 1)) return parsePidList(fuser.stdout);
+
+  const ss = runCapture('ss', ['-H', '-ltnp', 'sport', '=', `:${normalizedPort}`]);
+  if (!ss.error && ss.code === 0) {
+    return [...new Set(
+      [...ss.stdout.matchAll(/pid=(\d+)/g)]
+        .map((match) => Number.parseInt(match[1], 10))
+        .filter((pid) => pid > 0 && pid !== process.pid)
+    )];
+  }
+
+  throw new Error(`Impossible d’identifier le processus qui écoute sur le port ${normalizedPort}.`);
+}
+
+function signalProcesses(pids, signal) {
+  const failures = [];
+  for (const pid of pids) {
+    try {
+      process.kill(pid, signal);
+    } catch (error) {
+      if (error.code !== 'ESRCH') failures.push(`${pid} (${error.code || error.message})`);
+    }
+  }
+  if (failures.length) {
+    throw new Error(`Impossible d’arrêter le(s) processus ${failures.join(', ')}.`);
+  }
+}
+
+async function waitForPortRelease(port, managedPid, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const listeners = findListeningPids(port);
+    if (!listeners.length && (!managedPid || !isProcessRunning(managedPid))) return true;
+    await delay(200);
+  }
+  return false;
+}
+
 function removePid(expectedPid = null) {
   const current = readServerPid();
   if (expectedPid && current !== expectedPid) return;
@@ -172,29 +262,42 @@ export async function startServer({ timeoutMs = 15_000 } = {}) {
   throw new Error(`Le serveur n'a pas démarré. Consultez ${LOG_FILE}.${tail ? `\n${tail}` : ''}`);
 }
 
-export async function stopServer({ timeoutMs = 8_000 } = {}) {
+export async function stopServer({ timeoutMs = 8_000, forceTimeoutMs = 2_000 } = {}) {
   const config = loadConfig();
   const status = await getServerStatus(config);
-  if (!status.running && !status.pid) return { ...status, stopped: false, alreadyStopped: true };
-  if (!status.pid) {
-    throw new Error('Le serveur répond, mais son PID n’est pas géré par PieceMaker. Arrêtez le processus qui occupe le port manuellement.');
+  const port = Number(config.port) || 43098;
+  const listeners = findListeningPids(port);
+  const targets = [...new Set([status.pid, ...listeners].filter(Boolean))];
+  if (!targets.length) return { ...status, stopped: false, alreadyStopped: true };
+
+  signalProcesses(targets, 'SIGTERM');
+  let stopped = await waitForPortRelease(port, status.pid, timeoutMs);
+
+  if (!stopped) {
+    const remaining = [...new Set([
+      ...findListeningPids(port),
+      status.pid && isProcessRunning(status.pid) ? status.pid : null,
+    ].filter(Boolean))];
+    signalProcesses(remaining, 'SIGKILL');
+    stopped = await waitForPortRelease(port, status.pid, forceTimeoutMs);
   }
 
-  try {
-    process.kill(status.pid, 'SIGTERM');
-  } catch (error) {
-    if (error.code !== 'ESRCH') throw error;
-  }
-
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!isProcessRunning(status.pid) && !(await probeServer(config))) break;
-    await delay(200);
-  }
-  removePid(status.pid);
+  if (status.pid && !isProcessRunning(status.pid)) removePid(status.pid);
+  const remaining = findListeningPids(port);
   const running = await probeServer(config);
-  if (running) throw new Error('Le serveur n’a pas pu être arrêté proprement.');
-  return { running: false, pid: null, managed: false, stopped: true, url: adminUrl(config), logFile: LOG_FILE };
+  if (!stopped || remaining.length || running) {
+    const suffix = remaining.length ? ` PID restant(s) : ${remaining.join(', ')}.` : '';
+    throw new Error(`Le port ${port} n’a pas pu être libéré.${suffix}`);
+  }
+  return {
+    running: false,
+    pid: null,
+    managed: false,
+    stopped: true,
+    stoppedPids: targets,
+    url: adminUrl(config),
+    logFile: LOG_FILE,
+  };
 }
 
 export function readLogs(lines = 80) {
