@@ -182,7 +182,7 @@ test('les dossiers tamponnables listent les pièces originales du dossier enregi
   const legalCase = fs.realpathSync(path.join(workspace, 'Dupont c-Martin'));
   const emptyCase = fs.realpathSync(path.join(workspace, 'Dossier vide'));
   fs.mkdirSync(data.home, { recursive: true });
-  fs.writeFileSync(path.join(data.home, 'config.json'), JSON.stringify({ workspacePath: workspace }));
+  fs.writeFileSync(path.join(data.home, 'config.json'), JSON.stringify({ caseFolders: [legalCase, emptyCase] }));
 
   // Pièces originales à tamponner + dérivés qui ne doivent pas apparaître.
   fs.writeFileSync(path.join(legalCase, 'contrat.pdf'), '%PDF');

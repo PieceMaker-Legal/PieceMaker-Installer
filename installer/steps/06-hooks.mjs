@@ -14,10 +14,11 @@
  */
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { log, spinner } from '../lib/ui.mjs';
 import { REPO_ROOT, HOME_DIR, runCapture, ensureDir } from '../lib/platform.mjs';
-import { updateConfig } from '../lib/state.mjs';
+import { loadConfig, updateConfig } from '../lib/state.mjs';
 
 export const meta = {
   id: '06-hooks',
@@ -68,8 +69,6 @@ function runHookSelfTest(label, scriptPath, payload) {
 }
 
 export async function install(ctx) {
-  const workspacePath = ctx.config?.workspacePath;
-
   log.step('Répertoires de facturation...');
   if (!ctx.dryRun) {
     ensureDir(BILLING_DIR);
@@ -78,13 +77,11 @@ export async function install(ctx) {
   log.ok(`${BILLING_DIR}`);
 
   // `enabled: false` est la seule sortie de secours : les hooks se taisent
-  // alors complètement, et l'IA voit les documents en clair.
+  // alors complètement, et l'IA voit les documents en clair. Les dossiers
+  // surveillés sont les dossiers juridiques explicitement enregistrés.
   const anonymizationConfig = {
     enabled: true,
-    watchPaths: [...new Set([
-      workspacePath,
-      ...(Array.isArray(ctx.config?.caseFolders) ? ctx.config.caseFolders : []),
-    ].filter(Boolean))],
+    watchPaths: [...new Set(Array.isArray(ctx.config?.caseFolders) ? ctx.config.caseFolders : [])],
   };
 
   if (ctx.dryRun) {
@@ -105,14 +102,18 @@ export async function install(ctx) {
   const spin = spinner('Vérification des hooks (payload synthétique sur stdin)...');
   const testResults = [];
   let testDir = null;
+  let selftestRegistered = false;
+  const caseFoldersBefore = Array.isArray(ctx.config?.caseFolders) ? ctx.config.caseFolders : [];
 
   try {
     // Un vrai dossier juridique factice, sans point de tête : les hooks
     // ignorent les répertoires cachés, un bac de test caché ne prouverait donc
-    // rien du garde-fou.
-    testDir = path.join(workspacePath || REPO_ROOT, 'piecemaker-hook-selftest');
-    ensureDir(testDir);
+    // rien du garde-fou. Comme un dossier n'est protégé qu'une fois enregistré,
+    // on l'ajoute à `caseFolders` le temps du test, puis on rétablit la config.
+    testDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-hook-selftest-')));
     fs.writeFileSync(path.join(testDir, 'piece-selftest.pdf'), 'PIECE DE TEST', 'utf8');
+    updateConfig({ caseFolders: [...new Set([...caseFoldersBefore, testDir])] });
+    selftestRegistered = true;
 
     // 1. protect-originals.mjs — une pièce du bac de test : protégée par
     //    défaut, donc la réponse de blocage doit être produite et bien formée.
@@ -187,6 +188,9 @@ export async function install(ctx) {
     });
     testResults.push(billingResult);
   } finally {
+    // Rétablir la liste des dossiers enregistrés : le bac de test ne doit pas
+    // rester surveillé après l'installation.
+    if (selftestRegistered) updateConfig({ caseFolders: caseFoldersBefore });
     if (testDir) fs.rmSync(testDir, { recursive: true, force: true });
   }
 

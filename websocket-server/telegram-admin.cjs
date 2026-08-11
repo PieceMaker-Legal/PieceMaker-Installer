@@ -171,7 +171,7 @@ function monitorStatus(userHome) {
 
 function configuredDossiersRoot(repoRoot, homeDir) {
   const config = readJson(path.join(homeDir, 'config.json'), {});
-  const candidate = config.workspacePath || config.dossiersRoot || config.outputPath || repoRoot;
+  const candidate = config.dossiersRoot || config.outputPath || repoRoot;
   return path.resolve(String(candidate));
 }
 

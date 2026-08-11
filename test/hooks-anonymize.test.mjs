@@ -23,7 +23,7 @@ function fixture({ withMapping = true } = {}) {
   const caseRoot = path.join(casesRoot, 'Dossier Alpha');
   fs.mkdirSync(path.join(home, '.piecemaker'), { recursive: true });
   fs.mkdirSync(path.join(caseRoot, 'annexes'), { recursive: true });
-  fs.writeFileSync(path.join(home, '.piecemaker', 'config.json'), JSON.stringify({ workspacePath: casesRoot }));
+  fs.writeFileSync(path.join(home, '.piecemaker', 'config.json'), JSON.stringify({ caseFolders: [caseRoot] }));
   fs.writeFileSync(path.join(caseRoot, 'contrat.pdf'), 'ORIGINAL SECRET');
   fs.writeFileSync(path.join(caseRoot, 'contrat.md'), 'Contrat signé par Bernard Gilly pour URGOT SA.\n');
   fs.writeFileSync(path.join(caseRoot, 'annexes', 'annexe.docx'), 'ORIGINAL SECRET');

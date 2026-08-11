@@ -2,8 +2,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { locateCase } = require('./protection.cjs');
-
 function realDirectory(value) {
   const requested = String(value || '').trim();
   if (!requested || !path.isAbsolute(requested)) return null;
@@ -68,20 +66,16 @@ function locateRegisteredCase(folders, target) {
 }
 
 /**
- * Locate a target using the explicit registry first, with the historical
- * workspace/immediate-child convention retained for existing installations.
+ * Locate a target inside one of the explicitly registered legal-case folders.
+ * There is no longer a workspace-root fallback: a matter is protected only once
+ * it is explicitly registered, never by mere location under a common root.
  */
 function locateConfiguredCase(config, target) {
-  const registered = locateRegisteredCase(registeredCaseFolders(config), target);
-  if (registered) return registered;
-  return config?.workspacePath ? locateCase(config.workspacePath, target) : null;
+  return locateRegisteredCase(registeredCaseFolders(config), target);
 }
 
 function configuredWatchPaths(config) {
-  return [...new Set([
-    config?.workspacePath ? realDirectory(config.workspacePath) : null,
-    ...registeredCaseFolders(config),
-  ].filter(Boolean))];
+  return registeredCaseFolders(config);
 }
 
 module.exports = {

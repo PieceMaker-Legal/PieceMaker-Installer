@@ -24,11 +24,9 @@ function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-folder-select-'));
   const repo = path.join(root, 'repo');
   const home = path.join(root, 'home');
-  const workspace = path.join(root, 'legacy-workspace');
   const selected = path.join(root, 'clients', 'Dossier Martin');
   fs.mkdirSync(path.join(repo, 'installer', 'templates'), { recursive: true });
   fs.mkdirSync(home, { recursive: true });
-  fs.mkdirSync(workspace, { recursive: true });
   fs.mkdirSync(selected, { recursive: true });
   fs.copyFileSync(
     path.join(projectRoot, 'installer', 'templates', 'workspace-CLAUDE.md'),
@@ -36,11 +34,10 @@ function fixture() {
   );
   fs.writeFileSync(path.join(repo, '.env'), 'PIECEMAKER_USER_NAME=Alice Martin\n');
   fs.writeFileSync(path.join(home, 'config.json'), `${JSON.stringify({
-    workspacePath: workspace,
-    anonymization: { enabled: true, watchPaths: [workspace] },
+    anonymization: { enabled: true, watchPaths: [] },
   }, null, 2)}\n`);
   fs.writeFileSync(path.join(selected, 'piece.pdf'), 'original');
-  return { root, repo, home, workspace, selected };
+  return { root, repo, home, selected };
 }
 
 test('le bouton admin sélectionne un dossier existant et ne propose plus de le créer', () => {
@@ -95,7 +92,6 @@ test('un dossier extérieur est enregistré et reçoit PieceMaker au scope proje
   const config = readRegistryConfig(path.join(data.home, 'config.json'));
   assert.deepEqual(config.caseFolders, [fs.realpathSync(data.selected)]);
   assert.deepEqual(new Set(config.anonymization.watchPaths), new Set([
-    fs.realpathSync(data.workspace),
     fs.realpathSync(data.selected),
   ]));
   const entries = listConfiguredCases(config);

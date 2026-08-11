@@ -57,7 +57,7 @@ function fixture() {
 
 function writeConfig(data) {
   fs.mkdirSync(data.home, { recursive: true });
-  fs.writeFileSync(path.join(data.home, 'config.json'), `${JSON.stringify({ workspacePath: data.casesRoot })}\n`);
+  fs.writeFileSync(path.join(data.home, 'config.json'), `${JSON.stringify({ caseFolders: [data.caseA, data.caseB] })}\n`);
 }
 
 test('le journal de performance signale les opérations lentes avec leurs métriques', () => {

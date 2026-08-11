@@ -3,7 +3,6 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { performance } = require('node:perf_hooks');
-const { configuredWorkspacePath } = require('./workspace-paths.cjs');
 const {
   listConfiguredCases,
   readRegistryConfig,
@@ -265,8 +264,6 @@ async function registerLegalCase({
 
 function defaultConfig(repoRoot, homeDir = path.join(os.homedir(), '.piecemaker')) {
   return {
-    workspacePath: null,
-    outputPath: null,
     port: 43098,
     pythonPath: null,
     venvPath: path.join(homeDir, 'venv'),
@@ -602,10 +599,6 @@ function isLocalOrigin(origin) {
   }
 }
 
-function legalWorkspaceDirectory(repoRoot, homeDir) {
-  return configuredWorkspacePath(homeDir);
-}
-
 function finishAdminTiming(res, metric, startedAt, details = {}) {
   const durationMs = Number((performance.now() - startedAt).toFixed(1));
   res.set('Server-Timing', `${metric};dur=${durationMs}`);
@@ -734,7 +727,6 @@ function createAdminRouter({
   const router = express.Router();
   const configFile = path.join(homeDir, 'config.json');
   const envFile = path.join(repoRoot, '.env');
-  const casesRoot = () => configuredWorkspacePath(homeDir);
   const registryConfig = () => readRegistryConfig(configFile);
   const selectedCase = (reference) => resolveCaseReference(registryConfig(), reference);
 
@@ -783,15 +775,6 @@ function createAdminRouter({
       const patch = req.body?.config || {};
       const next = { ...current };
 
-      if (patch.workspacePath !== undefined) {
-        const workspacePath = String(patch.workspacePath).trim();
-        if (!workspacePath || !path.isAbsolute(workspacePath)) throw new Error('Le dossier racine PieceMaker doit être un chemin absolu.');
-        next.workspacePath = workspacePath;
-        next.outputPath = workspacePath;
-        if (next.anonymization) {
-          next.anonymization = { ...next.anonymization, watchPaths: [workspacePath] };
-        }
-      }
       if (patch.port !== undefined) {
         const port = Number(patch.port);
         if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Le port doit être compris entre 1024 et 65535.');
@@ -874,7 +857,7 @@ function createAdminRouter({
     try {
       res.json({
         dossiers: await listDossiers(repoRoot, homeDir),
-        tamponConfigured: fs.existsSync(path.join(legalWorkspaceDirectory(repoRoot, homeDir), '.piecemaker', 'tampon.png')),
+        tamponConfigured: fs.existsSync(path.join(homeDir, 'tampon.png')),
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -888,7 +871,7 @@ function createAdminRouter({
       const entries = listConfiguredCases(config);
       const overview = {
         name: 'PieceMaker',
-        root: config.workspacePath || '',
+        root: '',
         branch: 'Dossiers enregistrés',
         head: '',
         shortHead: '',
@@ -909,11 +892,7 @@ function createAdminRouter({
 
   router.post('/repository/cases', async (req, res) => {
     try {
-      const config = registryConfig();
-      const initial = config.workspacePath && fs.existsSync(config.workspacePath)
-        ? config.workspacePath
-        : userHome;
-      const selected = await pickFolder(process.platform, initial);
+      const selected = await pickFolder(process.platform, userHome);
       if (!selected) return res.json({ ok: true, cancelled: true });
       const result = await registerLegalCase({
         folder: selected,
@@ -988,9 +967,9 @@ function createAdminRouter({
     }
   });
 
-  // Ouvre le dossier juridique sélectionné (ou la racine PieceMaker) dans le
-  // gestionnaire de fichiers ou le terminal du poste. Le chemin est toujours
-  // résolu par `resolveCase`, jamais reçu du navigateur.
+  // Ouvre le dossier juridique sélectionné (ou, à défaut, le dossier personnel)
+  // dans le gestionnaire de fichiers ou le terminal du poste. Le chemin est
+  // toujours résolu localement, jamais reçu du navigateur.
   router.post('/reveal', async (req, res) => {
     try {
       const target = String(req.body?.target || '');
@@ -998,7 +977,7 @@ function createAdminRouter({
       const caseName = String(req.body?.case || '').trim();
       const absolute = caseName
         ? selectedCase(caseName).root
-        : resolveCasesRoot(casesRoot());
+        : userHome;
       await revealLocalFolder(process.platform, target, absolute);
       res.json({ ok: true, target, path: absolute });
     } catch (error) {
@@ -1294,7 +1273,6 @@ module.exports = {
   folderPickerCommands,
   installProjectPlugin,
   isLocalOrigin,
-  legalWorkspaceDirectory,
   listDossiers,
   listManagedFiles,
   managedFileKind,

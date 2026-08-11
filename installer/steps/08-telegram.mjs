@@ -352,7 +352,7 @@ export async function install(ctx) {
   if (!fs.existsSync(ORCHESTRATOR_SRC)) {
     return { status: 'failed', note: `Dossier orchestrator/ introuvable : ${ORCHESTRATOR_SRC}` };
   }
-  const assistantRoot = path.resolve(ctx.config?.workspacePath || ctx.config?.dossiersRoot || ctx.config?.outputPath || REPO_ROOT);
+  const assistantRoot = path.resolve(ctx.config?.dossiersRoot || ctx.config?.outputPath || REPO_ROOT);
 
   if (ctx.dryRun) {
     log.info(`[simulation] Installation de ${PLUGIN_SPEC}`);
@@ -459,7 +459,7 @@ export async function check(ctx = {}) {
   const assistantToken = readToken(ASSISTANT_STATE_DIR);
   const daemonToken = readToken(DAEMON_STATE_DIR);
   const config = readOrchestratorConfig();
-  const assistantRoot = path.resolve(ctx.config?.workspacePath || ctx.config?.dossiersRoot || ctx.config?.outputPath || REPO_ROOT);
+  const assistantRoot = path.resolve(ctx.config?.dossiersRoot || ctx.config?.outputPath || REPO_ROOT);
   const rootConfigured = Array.isArray(config.projects) && config.projects.some((project) => (
     project?.name === 'piecemaker'
       && typeof project.workdir === 'string'

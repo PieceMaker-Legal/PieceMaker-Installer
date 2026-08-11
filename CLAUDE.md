@@ -449,7 +449,7 @@ from `/admin/` usable without publishing the repo and re-running
 | Var | Used in | Purpose |
 | --- | --- | --- |
 | `PORT` | `server.cjs:20` | HTTPS/WS server port, default `43098` |
-| `OUTPUT_PATH` | `server.cjs:24` (`getOutputPath()`) | Root dir for all generated files (mappings, compilations, uploads), default `<repo>/output` |
+| `PIECEMAKER_HOME` | `server.cjs:21` | Firm-global data dir (stamp, `dossier_folders.json`, `ressources/`), default `~/.piecemaker`. There is no longer a configurable workspace root: legal cases are registered individually as `caseFolders` in `~/.piecemaker/config.json` and can live anywhere; `getOutputPath(documentId)` routes each document's output into the registered case that contains it, and `getWorkspacePath()` (used only for the rare no-document case) returns the filesystem root, deliberately non-writable |
 | `PYTHON_PATH` | `PYTHON_SCRIPTS`, warmup checks | Python 3 interpreter to spawn for all registered scripts, default `python3` |
 | `SMART_CONVERTER_PATH` | `PYTHON_SCRIPTS.convert` | Override the path to `smart_converter.py` |
 | `MCP_URL` / `MCP_API_KEY` | `/api/mcp-config`, `/api/mcp`, `/api/anonymize/process` | Address/key for the remote MCP + anonymisation service; `/api/mcp` and the bulk anonymisation job both fail fast (401 / thrown error) without `MCP_API_KEY` |

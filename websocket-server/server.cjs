@@ -42,19 +42,21 @@ const { createAnonymizationRoutes, anonymizationMappings } = require('../taskpan
 console.log('🔍 [SERVER.JS] Variables d\'environnement au démarrage:');
 console.log('  MCP_URL:', process.env.MCP_URL);
 console.log('  MCP_API_KEY:', process.env.MCP_API_KEY ? '***' + process.env.MCP_API_KEY.slice(-4) : 'UNDEFINED');
-console.log('  PIECEMAKER_WORKSPACE_PATH:', process.env.PIECEMAKER_WORKSPACE_PATH || userConfig.workspacePath || 'NON CONFIGURÉ');
+console.log('  Dossiers juridiques enregistrés:', Array.isArray(userConfig.caseFolders) ? userConfig.caseFolders.length : 0);
 
 const app = express();
 const PORT = Number(process.env.PORT || userConfig.port || 43098);
 const HOST = process.env.PIECEMAKER_HOST || '127.0.0.1';
 
+// PieceMaker n'a plus de « dossier racine » configurable : chaque dossier
+// juridique est enregistré individuellement (caseFolders) et peut vivre
+// n'importe où sur le poste. getWorkspacePath ne sert donc que de base neutre
+// pour les rares chemins sans dossier juridique actif : la racine du disque
+// (« / » sur macOS/Linux, « C:\ » sur Windows), volontairement non
+// inscriptible — rien ne doit s'y écrire. Les données du cabinet vont sous
+// ~/.piecemaker (voir getSystemDataPath).
 function getWorkspacePath() {
-  const configured = process.env.PIECEMAKER_WORKSPACE_PATH
-    || userConfig.workspacePath
-    || process.env.OUTPUT_PATH
-    || userConfig.outputPath;
-  if (!configured) throw new Error('Le dossier racine PieceMaker n’est pas configuré.');
-  return path.resolve(configured);
+  return path.parse(os.homedir()).root;
 }
 
 // Stockage des clients WebSocket connectés
@@ -90,9 +92,33 @@ function readFileStripBOM(filePath, encoding = 'utf8') {
 const ORIGINALS_SUBFOLDER = 'pièces originales';
 const DOSSIER_FOLDERS_FILE = 'dossier_folders.json';
 
+// Données propres au cabinet — tampon, ressources, registre documentId→dossier :
+// sous ~/.piecemaker, indépendamment de tout dossier juridique.
 function getSystemDataPath(...segments) {
-  return path.join(getWorkspacePath(), '.piecemaker', ...segments);
+  return path.join(PIECEMAKER_HOME, ...segments);
 }
+
+// Migration ponctuelle : ces données vivaient sous <ancienne racine>/.piecemaker.
+// On les recopie dans ~/.piecemaker quand elles n'y sont pas encore, pour ne pas
+// perdre le tampon ou le registre d'un poste déjà installé.
+function migrateLegacySystemData() {
+  const legacyRoot = userConfig.workspacePath || userConfig.outputPath;
+  if (!legacyRoot) return;
+  try {
+    const legacyDir = path.join(path.resolve(legacyRoot), '.piecemaker');
+    if (!fs.existsSync(legacyDir)) return;
+    if (path.resolve(legacyDir) === path.resolve(PIECEMAKER_HOME)) return;
+    fs.mkdirSync(PIECEMAKER_HOME, { recursive: true });
+    for (const entry of fs.readdirSync(legacyDir, { withFileTypes: true })) {
+      const target = path.join(PIECEMAKER_HOME, entry.name);
+      if (fs.existsSync(target)) continue;
+      fs.cpSync(path.join(legacyDir, entry.name), target, { recursive: true });
+    }
+  } catch (error) {
+    console.warn('⚠️ Migration des données système vers ~/.piecemaker impossible:', error.message);
+  }
+}
+migrateLegacySystemData();
 
 function readDossierFolders() {
   try {
@@ -627,7 +653,7 @@ app.post('/api/workspace/register', (req, res) => {
   try {
     const { documentId, folder } = req.body || {};
     const legalCase = rememberDossierFolder(documentId, folder);
-    res.json({ success: true, workspacePath: getWorkspacePath(), folder: legalCase });
+    res.json({ success: true, folder: legalCase });
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -3005,7 +3031,7 @@ app.post('/api/stamping', async (req, res) => {
       return res.status(400).json({ error: `Dossier de travail introuvable : ${requestedFolder}` });
     }
 
-    // resolveLegalCaseFolder refuse tout dossier hors de la racine PieceMaker.
+    // rememberDossierFolder refuse tout dossier hors d'un dossier juridique enregistré.
     let workingFolder;
     try {
       workingFolder = rememberDossierFolder(documentId, requestedFolder);

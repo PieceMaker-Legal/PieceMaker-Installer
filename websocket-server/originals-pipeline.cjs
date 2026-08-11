@@ -412,8 +412,8 @@ function appendLog(job, line) {
 }
 
 /**
- * Le verrou porte sur la **racine** du dossier, pas sur son nom : deux racines
- * `workspacePath` distinctes peuvent porter un dossier de même nom, et un
+ * Le verrou porte sur la **racine** du dossier, pas sur son nom : deux dossiers
+ * juridiques enregistrés distincts peuvent porter le même nom, et un
  * traitement lent sur l'une bloquait alors tout traitement sur l'autre. Un job en
  * file compte aussi : sinon un double-clic empilerait deux traitements du même
  * dossier au lieu d'un seul.

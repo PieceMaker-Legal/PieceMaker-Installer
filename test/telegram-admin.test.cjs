@@ -84,7 +84,7 @@ test('chaque sous-dossier peut être lié et ne publie que des noms originaux fi
   fs.writeFileSync(path.join(dossier, 'documents-convertis', 'piece-1.md'), '# Pièce convertie\n');
   fs.writeFileSync(path.join(dossier, 'mapping_dossier.json'), `${JSON.stringify({ mapping: { Martin: 'PERSONNE_01' } })}\n`);
   fs.mkdirSync(data.homeDir, { recursive: true });
-  fs.writeFileSync(path.join(data.homeDir, 'config.json'), `${JSON.stringify({ workspacePath: dossiersRoot })}\n`);
+  fs.writeFileSync(path.join(data.homeDir, 'config.json'), `${JSON.stringify({ caseFolders: [dossier] })}\n`);
   const generalState = path.join(data.userHome, '.claude', 'channels', 'telegram-piecemaker');
   fs.mkdirSync(generalState, { recursive: true });
   fs.writeFileSync(path.join(generalState, 'access.json'), '{"allowFrom":["42"]}\n');

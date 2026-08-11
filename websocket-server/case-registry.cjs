@@ -5,8 +5,6 @@ const path = require('node:path');
 
 const {
   isTechnicalCaseDirectoryName,
-  listCases,
-  resolveCase,
 } = require('../piecemaker-plugin/scripts/lib/commits.cjs');
 const {
   configuredWatchPaths,
@@ -39,39 +37,12 @@ function explicitEntries(config) {
 }
 
 /**
- * Admin index: explicit folders plus historical immediate workspace children.
- * Once a legacy child is explicitly selected, only its registered entry is
- * shown so it has one stable id even if another folder shares its basename.
+ * Admin index: only the explicitly registered legal-case folders. There is no
+ * longer a workspace root whose immediate children are listed automatically —
+ * a matter appears once it has been registered from the admin panel.
  */
 function listConfiguredCases(config) {
-  const explicit = explicitEntries(config);
-  const roots = new Set(explicit.map((entry) => entry.root));
-  const legacy = [];
-  if (config?.workspacePath) {
-    let index = null;
-    try {
-      index = listCases(config.workspacePath);
-    } catch {
-      index = null;
-    }
-    for (const folder of index?.folders || []) {
-      try {
-        const legalCase = resolveCase(index.root, folder.name);
-        if (roots.has(legalCase.root)) continue;
-        legacy.push({
-          id: folder.path,
-          name: folder.name,
-          root: legalCase.root,
-          casesRoot: legalCase.casesRoot,
-          caseName: legalCase.name,
-          registered: false,
-        });
-      } catch {
-        // A folder disappearing during the scan is simply omitted.
-      }
-    }
-  }
-  return [...explicit, ...legacy].sort((a, b) =>
+  return explicitEntries(config).sort((a, b) =>
     a.name.localeCompare(b.name, 'fr') || a.root.localeCompare(b.root, 'fr'));
 }
 
@@ -79,17 +50,8 @@ function resolveCaseReference(config, reference) {
   const token = String(reference || '').trim();
   if (!token) throw new Error('Dossier juridique invalide.');
   const explicit = explicitEntries(config).find((entry) => entry.id === token);
-  if (explicit) return explicit;
-  if (!config?.workspacePath) throw new Error('Ce dossier juridique n’est pas enregistré.');
-  const legalCase = resolveCase(config.workspacePath, token);
-  return {
-    id: token,
-    name: legalCase.name,
-    root: legalCase.root,
-    casesRoot: legalCase.casesRoot,
-    caseName: legalCase.name,
-    registered: false,
-  };
+  if (!explicit) throw new Error('Ce dossier juridique n’est pas enregistré.');
+  return explicit;
 }
 
 function validateSelectedCaseFolder(folder) {

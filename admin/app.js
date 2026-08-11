@@ -406,7 +406,6 @@ async function loadSettings() {
     setMessage(message, 'Chargement…');
     try {
       const data = await api('/api/admin/settings');
-      byId('workspacePath').value = data.config.workspacePath || '';
       byId('port').value = data.config.port || 43098;
       byId('pythonPath').value = data.config.pythonPath || data.env.PYTHON_PATH || '';
       byId('commitUserName').value = data.env.PIECEMAKER_USER_NAME || '';
@@ -445,7 +444,6 @@ async function saveSettings(event) {
       method: 'PUT',
       body: JSON.stringify({
         config: {
-          workspacePath: form.get('workspacePath'),
           port: Number(form.get('port')),
           pythonPath: form.get('pythonPath'),
         },
