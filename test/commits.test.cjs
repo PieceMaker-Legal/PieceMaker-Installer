@@ -5,6 +5,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { performance } = require('node:perf_hooks');
 const test = require('node:test');
+const JSZip = require('jszip');
 
 const {
   caseOverview,
@@ -36,6 +37,15 @@ function git(gitDir, cwd, args) {
   const result = spawnSync('git', [`--git-dir=${gitDir}`, ...args], { cwd, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   return String(result.stdout || '').trim();
+}
+
+async function writeDocx(file, text, { compression = 'DEFLATE', date = new Date('2024-01-01T00:00:00Z') } = {}) {
+  const zip = new JSZip();
+  const options = { date };
+  zip.file('[Content_Types].xml', '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>', options);
+  zip.file('word/document.xml', `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:body></w:document>`, options);
+  zip.file('word/styles.xml', '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>', options);
+  fs.writeFileSync(file, await zip.generateAsync({ type: 'nodebuffer', compression }));
 }
 
 function fixture() {
@@ -268,6 +278,72 @@ test('les modifications sont calculées par rapport au dernier commit complet du
   const selected = await revisionDetails(data.casesRoot, data.home, 'Dossier Alpha', version2.commit, 'contrat.md');
   assert.equal(selected.selectedFile.path, 'contrat.md');
   assert.match(selected.patch, /Contrat anonymisé v2/);
+});
+
+test('un DOCX modifié est détecté par sa structure OOXML sans ralentir le chemin propre', async (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const document = path.join(data.caseA, 'conclusions.docx');
+  await writeDocx(document, 'Version confidentielle 1', { compression: 'STORE' });
+
+  const baseline = await createCommit({
+    casesRoot: data.casesRoot,
+    caseName: 'Dossier Alpha',
+    homeDir: data.home,
+    label: 'Version Word initiale',
+  });
+  const legalCase = resolveCase(data.casesRoot, 'Dossier Alpha');
+  const gitDir = historyRepo(data.home, legalCase);
+  const treeFiles = git(gitDir, data.caseA, ['ls-tree', '-r', '--name-only', baseline.commit]).split('\n');
+  assert.ok(treeFiles.some((file) => file.endsWith('history-docx-ooxml.json')));
+  assert.ok(!treeFiles.includes('conclusions.docx'), 'le binaire Word ne doit pas entrer dans Git');
+  const manifest = git(gitDir, data.caseA, ['show', `${baseline.commit}:.piecemaker/history-docx-ooxml.json`]);
+  assert.doesNotMatch(manifest, /Version confidentielle|word\/document\.xml/);
+  assert.ok(Buffer.byteLength(manifest) < 1000, 'le manifeste doit rester minuscule');
+
+  // Chemin chaud : taille/date identiques => aucun octet du DOCX n'est rouvert.
+  const originalOpen = fs.promises.open;
+  const realDocument = fs.realpathSync(document);
+  let docxOpens = 0;
+  fs.promises.open = async (...args) => {
+    if (path.resolve(String(args[0])) === realDocument) docxOpens += 1;
+    return originalOpen.call(fs.promises, ...args);
+  };
+  try {
+    await caseOverview(data.casesRoot, data.home, 'Dossier Alpha');
+  } finally {
+    fs.promises.open = originalOpen;
+  }
+  assert.equal(docxOpens, 0);
+
+  // Un ré-empaquetage ZIP identique n'est pas une modification OOXML.
+  await writeDocx(document, 'Version confidentielle 1', {
+    compression: 'DEFLATE',
+    date: new Date('2026-08-11T10:00:00Z'),
+  });
+  assert.ok(!(await caseOverview(data.casesRoot, data.home, 'Dossier Alpha')).workingChanges
+    .some((file) => file.path === 'conclusions.docx'));
+
+  // Même longueur, contenu OOXML différent : l'admin doit le voir.
+  await writeDocx(document, 'Version confidentielle 2', {
+    compression: 'DEFLATE',
+    date: new Date('2026-08-11T10:00:00Z'),
+  });
+  const overview = await caseOverview(data.casesRoot, data.home, 'Dossier Alpha');
+  assert.ok(overview.workingChanges.some((file) => file.path === 'conclusions.docx' && file.kind === 'modified'));
+  const worktree = await worktreeDetails(data.casesRoot, data.home, 'Dossier Alpha', 'conclusions.docx', overview.snapshot);
+  assert.match(worktree.patch, /Structure OOXML|Empreinte OOXML/);
+  assert.doesNotMatch(worktree.patch, /Version confidentielle/);
+
+  const updated = await createCommit({
+    casesRoot: data.casesRoot,
+    caseName: 'Dossier Alpha',
+    homeDir: data.home,
+    label: 'Modification Word',
+  });
+  assert.ok(updated.files.some((file) => file.path === 'conclusions.docx' && file.kind === 'modified'));
+  const revision = await revisionDetails(data.casesRoot, data.home, 'Dossier Alpha', updated.commit, 'conclusions.docx');
+  assert.match(revision.patch, /Empreinte OOXML/);
 });
 
 test('un commit automatique ciblé laisse les fichiers des autres sessions hors du commit', async (t) => {

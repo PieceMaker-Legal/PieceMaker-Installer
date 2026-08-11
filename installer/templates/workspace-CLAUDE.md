@@ -35,8 +35,10 @@ juridique concerné. Rien à lancer à la main.
   `~/.piecemaker/case-history/<nom-du-dossier>-<empreinte>.git`, branche
   `main`, work-tree pointé sur le dossier juridique. Le dossier juridique
   lui-même ne contient donc aucun `.git`.
-- **Quoi** : uniquement les `.md` et les `.json`. Les originaux, PDF et DOCX
-  sont exclus par construction.
+- **Quoi** : le contenu des `.md` et des `.json`. Pour les `.docx`, seul un
+  manifeste compact d’empreintes OOXML est conservé afin que l’administration
+  détecte les modifications ; ni le binaire Word ni son texte n’entrent dans
+  Git. Les PDF et autres originaux restent exclus.
 - **Quand** : après chaque écriture, et seulement si les fichiers produits par
   l'opération ont réellement changé (pas de commit vide). Le commit automatique
   est ciblé : il ne capture jamais les autres modifications présentes dans le

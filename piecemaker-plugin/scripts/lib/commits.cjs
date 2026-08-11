@@ -34,6 +34,11 @@ const MAX_SAFE_BYTES = 250 * 1024 * 1024;
 const HISTORY_REF = 'refs/heads/main';
 const LEGACY_HISTORY_REF = 'refs/heads/checkpoints';
 const SAFE_EXTENSIONS = new Set(['.md', '.json']);
+const DOCX_MANIFEST_PATH = '.piecemaker/history-docx-ooxml.json';
+const DOCX_MANIFEST_VERSION = 1;
+const DOCX_FINGERPRINT_ALGORITHM = 'ooxml-central-directory-crc32-v1';
+const MAX_DOCX_CENTRAL_BYTES = 16 * 1024 * 1024;
+const MAX_DOCX_PARTS = 20_000;
 const TECHNICAL_CASE_NAMES = new Set(['piecemaker_output']);
 /**
  * Arborescences techniques jamais parcourues. Un dossier juridique finit par
@@ -204,6 +209,162 @@ function isTechnicalCaseDirectoryName(value) {
 function isIgnoredDirectoryName(value) {
   const name = String(value || '').trim().toLowerCase();
   return IGNORED_DIRECTORY_NAMES.has(name) || TECHNICAL_CASE_NAMES.has(name);
+}
+
+function isDocxPath(value) {
+  return path.extname(String(value || '')).toLowerCase() === '.docx';
+}
+
+function emptyDocxManifest() {
+  return { version: DOCX_MANIFEST_VERSION, algorithm: DOCX_FINGERPRINT_ALGORITHM, files: {} };
+}
+
+function findZipEnd(buffer) {
+  const first = Math.max(0, buffer.length - 65_557);
+  for (let offset = buffer.length - 22; offset >= first; offset -= 1) {
+    if (buffer.readUInt32LE(offset) === 0x06054b50) return offset;
+  }
+  return -1;
+}
+
+/** Empreinte canonique des entrées OOXML, indépendante du conteneur ZIP. */
+async function fingerprintCentralDirectory(buffer, entries) {
+  if (entries > MAX_DOCX_PARTS) return null;
+  const parts = [];
+  let offset = 0;
+  for (let index = 0; index < entries; index += 1) {
+    if (offset + 46 > buffer.length || buffer.readUInt32LE(offset) !== 0x02014b50) return null;
+    const flags = buffer.readUInt16LE(offset + 8);
+    const crc32 = buffer.readUInt32LE(offset + 16).toString(16).padStart(8, '0');
+    const size = buffer.readUInt32LE(offset + 24);
+    const nameLength = buffer.readUInt16LE(offset + 28);
+    const next = offset + 46 + nameLength + buffer.readUInt16LE(offset + 30) + buffer.readUInt16LE(offset + 32);
+    if (next > buffer.length) return null;
+    const name = buffer.subarray(offset + 46, offset + 46 + nameLength)
+      .toString((flags & 0x0800) !== 0 ? 'utf8' : 'latin1')
+      .replaceAll('\\', '/');
+    if (name && !name.endsWith('/')) parts.push({ name, crc32, size });
+    offset = next;
+    if (index > 0 && index % 1000 === 0) await new Promise((resolve) => setImmediate(resolve));
+  }
+  parts.sort((left, right) => left.name.localeCompare(right.name));
+  const hash = crypto.createHash('sha256');
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    hash.update(`${part.name}\0${part.crc32}\0${part.size}\n`);
+    if (index > 0 && index % 1000 === 0) await new Promise((resolve) => setImmediate(resolve));
+  }
+  return { fingerprint: hash.digest('hex'), format: 'ooxml', partCount: parts.length };
+}
+
+const docxFingerprintCache = new Map();
+const docxTreeCache = new Map();
+
+function boundedCacheSet(cache, key, value, max) {
+  if (cache.has(key)) cache.delete(key);
+  cache.set(key, value);
+  if (cache.size > max) cache.delete(cache.keys().next().value);
+}
+
+function docxStat(stat) {
+  return {
+    size: stat.size,
+    mtimeMs: Number(stat.mtimeMs.toFixed(3)),
+    ctimeMs: Number(stat.ctimeMs.toFixed(3)),
+  };
+}
+
+function sameDocxStat(entry, stat) {
+  return entry?.size === stat.size && entry?.mtimeMs === stat.mtimeMs && entry?.ctimeMs === stat.ctimeMs;
+}
+
+async function readRange(handle, length, position) {
+  const buffer = Buffer.allocUnsafe(length);
+  const { bytesRead } = await handle.read(buffer, 0, length, position);
+  return bytesRead === length ? buffer : buffer.subarray(0, bytesRead);
+}
+
+async function fingerprintDocx(file, stat) {
+  const key = `${file}\0${stat.size}\0${stat.mtimeMs}\0${stat.ctimeMs}`;
+  if (docxFingerprintCache.has(key)) return docxFingerprintCache.get(key);
+  let fingerprint = null;
+  let handle;
+  try {
+    handle = await fsp.open(file, 'r');
+    const tailLength = Math.min(stat.size, 65_557);
+    const tail = await readRange(handle, tailLength, stat.size - tailLength);
+    const end = findZipEnd(tail);
+    if (end >= 0) {
+      const entries = tail.readUInt16LE(end + 10);
+      const centralSize = tail.readUInt32LE(end + 12);
+      const centralOffset = tail.readUInt32LE(end + 16);
+      if (entries !== 0xffff && centralSize <= MAX_DOCX_CENTRAL_BYTES && centralOffset + centralSize <= stat.size) {
+        fingerprint = await fingerprintCentralDirectory(await readRange(handle, centralSize, centralOffset), entries);
+      }
+    }
+  } catch {
+    fingerprint = null;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+  // Repli pour un faux/ZIP64 DOCX : métadonnées seulement, jamais le binaire.
+  fingerprint ||= {
+    fingerprint: crypto.createHash('sha256').update(`metadata\0${stat.size}\0${stat.mtimeMs}\0${stat.ctimeMs}`).digest('hex'),
+    format: 'metadata-fallback',
+    partCount: 0,
+  };
+  boundedCacheSet(docxFingerprintCache, key, fingerprint, 20_000);
+  return fingerprint;
+}
+
+async function currentDocxManifest(caseRoot, baseline = emptyDocxManifest()) {
+  const root = await fsp.realpath(caseRoot);
+  const files = {};
+  let count = 0;
+  async function visit(directory, prefix = '') {
+    for (const entry of await fsp.readdir(directory, { withFileTypes: true })) {
+      if (entry.name.startsWith('.') || entry.name.startsWith('~$') || entry.isSymbolicLink()) continue;
+      const absolute = path.join(directory, entry.name);
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        if (!isIgnoredDirectoryName(entry.name)) await visit(absolute, relative);
+        continue;
+      }
+      if (!entry.isFile() || !isDocxPath(entry.name)) continue;
+      if (count >= MAX_SAFE_FILES) throw new Error('Ce dossier contient trop de documents Word pour calculer leur historique.');
+      const stat = docxStat(await fsp.stat(absolute));
+      const previous = baseline.files[relative];
+      if (sameDocxStat(previous, stat)) {
+        files[relative] = previous;
+      } else {
+        const fingerprint = await fingerprintDocx(absolute, stat);
+        files[relative] = previous?.fingerprint === fingerprint.fingerprint ? previous : { ...stat, ...fingerprint };
+      }
+      count += 1;
+      if (count % 100 === 0) await new Promise((resolve) => setImmediate(resolve));
+    }
+  }
+  await visit(root);
+  return {
+    version: DOCX_MANIFEST_VERSION,
+    algorithm: DOCX_FINGERPRINT_ALGORITHM,
+    files: Object.fromEntries(Object.entries(files).sort(([left], [right]) => left.localeCompare(right, 'fr'))),
+  };
+}
+
+function serializeDocxManifest(manifest) {
+  return `${JSON.stringify(manifest, null, 2)}\n`;
+}
+
+function parseDocxManifest(value) {
+  try {
+    const manifest = JSON.parse(String(value || ''));
+    return manifest?.version === DOCX_MANIFEST_VERSION && manifest.files && typeof manifest.files === 'object'
+      ? manifest
+      : emptyDocxManifest();
+  } catch {
+    return emptyDocxManifest();
+  }
 }
 
 function resolveCasesRoot(casesRoot) {
@@ -530,11 +691,69 @@ async function withCaseLock(homeDir, legalCase, callback, { waitMs = 0 } = {}) {
   }
 }
 
-async function buildCurrentTree(legalCase, gitDir, homeDir) {
+async function putDocxManifestInIndex(legalCase, gitDir, env, manifest) {
+  if (!Object.keys(manifest.files).length) return;
+  const blob = (await runGit(legalCase.root, ['hash-object', '-w', '--stdin'], {
+    gitDir,
+    input: serializeDocxManifest(manifest),
+  })).stdout;
+  await runGit(legalCase.root, ['update-index', '--add', '--cacheinfo', `100644,${blob},${DOCX_MANIFEST_PATH}`], {
+    gitDir,
+    workTree: legalCase.root,
+    env,
+  });
+}
+
+async function treeDocxManifest(legalCase, gitDir, treeish) {
+  if (!treeish) return emptyDocxManifest();
+  const key = `${gitDir}\0${treeish}`;
+  if (docxTreeCache.has(key)) return docxTreeCache.get(key);
+  const result = await runGit(legalCase.root, ['show', `${treeish}:${DOCX_MANIFEST_PATH}`], { gitDir, allowFailure: true });
+  const manifest = result.code === 0 ? parseDocxManifest(result.stdout) : emptyDocxManifest();
+  boundedCacheSet(docxTreeCache, key, manifest, 2_000);
+  return manifest;
+}
+
+function docxChanges(beforeManifest, afterManifest) {
+  const before = beforeManifest.files;
+  const after = afterManifest.files;
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .sort((left, right) => left.localeCompare(right, 'fr'))
+    .flatMap((filePath) => {
+      if (!before[filePath]) return [{ status: 'A', path: filePath, previousPath: null, kind: 'added' }];
+      if (!after[filePath]) return [{ status: 'D', path: filePath, previousPath: null, kind: 'deleted' }];
+      return before[filePath].fingerprint === after[filePath].fingerprint
+        ? []
+        : [{ status: 'M', path: filePath, previousPath: null, kind: 'modified' }];
+    });
+}
+
+function docxStructureDiff(beforeManifest, afterManifest, filePath) {
+  const before = beforeManifest.files[filePath];
+  const after = afterManifest.files[filePath];
+  const lines = [
+    `diff --ooxml a/${filePath} b/${filePath}`,
+    `--- ${before ? `a/${filePath}` : '/dev/null'}`,
+    `+++ ${after ? `b/${filePath}` : '/dev/null'}`,
+    '@@ Structure OOXML @@',
+  ];
+  if (before) lines.push(`- Empreinte OOXML ${before.fingerprint.slice(0, 16)}… · ${before.partCount || 0} partie(s)`);
+  if (after) lines.push(`+ Empreinte OOXML ${after.fingerprint.slice(0, 16)}… · ${after.partCount || 0} partie(s)`);
+  return {
+    stdout: `${lines.join('\n')}\n`,
+    truncated: false,
+    stats: { files: 1, added: after ? 1 : 0, deleted: before ? 1 : 0 },
+  };
+}
+
+async function buildCurrentTree(legalCase, gitDir, homeDir, baselineDocx = emptyDocxManifest(), { includeDocx = true } = {}) {
   const startedAt = performance.now();
   const temporaryIndex = path.join(historyDirectory(homeDir), `index-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
   const env = { GIT_INDEX_FILE: temporaryIndex };
-  const files = await safeCaseFiles(legalCase.root);
+  const [files, docxManifest] = await Promise.all([
+    safeCaseFiles(legalCase.root),
+    currentDocxManifest(legalCase.root, baselineDocx),
+  ]);
   try {
     await runGit(legalCase.root, ['read-tree', '--empty'], { gitDir, workTree: legalCase.root, env });
     if (files.length) {
@@ -552,12 +771,17 @@ async function buildCurrentTree(legalCase, gitDir, homeDir) {
         input: Buffer.from(`${files.map((file) => process.platform === 'darwin' ? file.normalize('NFC') : file).join('\0')}\0`, 'utf8'),
       });
     }
+    if (includeDocx) await putDocxManifestInIndex(legalCase, gitDir, env, docxManifest);
     const tree = (await runGit(legalCase.root, ['write-tree'], { gitDir, workTree: legalCase.root, env })).stdout;
+    if (includeDocx) boundedCacheSet(docxTreeCache, `${gitDir}\0${tree}`, docxManifest, 2_000);
+    const snapshot = includeDocx
+      ? tree
+      : crypto.createHash('sha1').update(`${tree}\0${serializeDocxManifest(docxManifest)}`).digest('hex');
     logPerformance('buildCurrentTree', startedAt, {
       files: files.length,
       gitAddBatches: files.length ? 1 : 0,
     });
-    return { tree, files };
+    return { tree, snapshot, files, docxManifest };
   } finally {
     try { fs.unlinkSync(temporaryIndex); } catch {}
   }
@@ -615,9 +839,19 @@ function statusKind(code) {
   return 'modified';
 }
 
-async function diffTrees(legalCase, gitDir, from, to) {
+async function diffTrees(legalCase, gitDir, from, to, manifests = null) {
   const raw = (await runGit(legalCase.root, ['diff-tree', '--no-commit-id', '--name-status', '-r', from, to], { gitDir })).stdout;
-  return parseNameStatus(raw).map((file) => ({ ...file, kind: statusKind(file.status) }));
+  const parsed = parseNameStatus(raw);
+  const regular = parsed
+    .filter((file) => file.path !== DOCX_MANIFEST_PATH)
+    .map((file) => ({ ...file, kind: statusKind(file.status) }));
+  let wordChanges = [];
+  if (manifests) {
+    wordChanges = docxChanges(manifests.before, manifests.after);
+  } else if (parsed.some((file) => file.path === DOCX_MANIFEST_PATH)) {
+    wordChanges = docxChanges(await treeDocxManifest(legalCase, gitDir, from), await treeDocxManifest(legalCase, gitDir, to));
+  }
+  return [...regular, ...wordChanges].sort((left, right) => left.path.localeCompare(right.path, 'fr'));
 }
 
 async function workingState(casesRoot, homeDir, caseName) {
@@ -625,11 +859,14 @@ async function workingState(casesRoot, homeDir, caseName) {
   const legalCase = resolveCase(casesRoot, caseName);
   const gitDir = await ensureHistoryRepo(homeDir, legalCase);
   const latest = await latestCommit(legalCase, gitDir);
-  const current = await buildCurrentTree(legalCase, gitDir, homeDir);
   const base = latest || await emptyTree(legalCase, gitDir);
-  const changes = await diffTrees(legalCase, gitDir, base, current.tree);
+  const baselineDocx = latest ? await treeDocxManifest(legalCase, gitDir, base) : emptyDocxManifest();
+  // L'admin compare le manifeste en mémoire. Il n'est écrit dans l'index Git
+  // qu'au commit : aucun processus Git supplémentaire sur le chemin chaud.
+  const current = await buildCurrentTree(legalCase, gitDir, homeDir, baselineDocx, { includeDocx: false });
+  const changes = await diffTrees(legalCase, gitDir, base, current.tree, { before: baselineDocx, after: current.docxManifest });
   logPerformance('workingState', startedAt, { files: current.files.length, changes: changes.length });
-  const state = { legalCase, gitDir, latest, current, base, changes };
+  const state = { legalCase, gitDir, latest, current, base, baselineDocx, changes };
   caseStateCache.set(caseStateCacheKey(homeDir, legalCase), state);
   return state;
 }
@@ -657,12 +894,15 @@ async function createCommit({
   return withCaseLock(homeDir, legalCase, async () => {
     const gitDir = await ensureHistoryRepo(homeDir, legalCase);
     const parent = await latestCommit(legalCase, gitDir);
-    const current = selectedPaths === null
-      ? await buildCurrentTree(legalCase, gitDir, homeDir)
-      : await buildSelectedTree(legalCase, gitDir, homeDir, parent, selectedPaths);
     const parentTree = parent
       ? (await runGit(legalCase.root, ['rev-parse', `${parent}^{tree}`], { gitDir })).stdout
       : await emptyTree(legalCase, gitDir);
+    const baselineDocx = selectedPaths === null && parent
+      ? await treeDocxManifest(legalCase, gitDir, parentTree)
+      : emptyDocxManifest();
+    const current = selectedPaths === null
+      ? await buildCurrentTree(legalCase, gitDir, homeDir, baselineDocx)
+      : await buildSelectedTree(legalCase, gitDir, homeDir, parent, selectedPaths);
     if (current.tree === parentTree) {
       return { created: false, commit: parent || null, caseName: legalCase.name, files: [] };
     }
@@ -681,7 +921,13 @@ async function createCommit({
     const args = ['commit-tree', current.tree, ...(parent ? ['-p', parent] : [])];
     const commit = (await runGit(legalCase.root, args, { gitDir, env: gitIdentity, input: message })).stdout;
     await runGit(legalCase.root, ['update-ref', await activeHistoryRef(legalCase, gitDir), commit, ...(parent ? [parent] : [])], { gitDir });
-    const files = await diffTrees(legalCase, gitDir, parentTree, current.tree);
+    const files = await diffTrees(
+      legalCase,
+      gitDir,
+      parentTree,
+      current.tree,
+      selectedPaths === null ? { before: baselineDocx, after: current.docxManifest } : null,
+    );
     return {
       created: true,
       commit,
@@ -730,16 +976,26 @@ async function listHistory(casesRoot, homeDir, { caseName, limit = 120 } = {}) {
   return history;
 }
 
-function validateRelativeSafePath(legalCase, relativePath) {
+function normalizeRelativeHistoryPath(relativePath) {
   const normalized = String(relativePath || '').replaceAll('\\', '/').replace(/^\.\//, '');
   if (!normalized || path.posix.isAbsolute(normalized) || normalized.split('/').includes('..')) {
     throw new Error('Chemin de fichier invalide.');
   }
+  return normalized;
+}
+
+function validateRelativeSafePath(legalCase, relativePath) {
+  const normalized = normalizeRelativeHistoryPath(relativePath);
   const absolute = path.join(legalCase.root, ...normalized.split('/'));
   if (isProtectedFile(absolute, legalCase.root) || !SAFE_EXTENSIONS.has(path.extname(normalized).toLowerCase())) {
     throw new Error('Ce fichier n’est pas accessible à l’IA.');
   }
   return normalized;
+}
+
+function validateRelativeHistoryPath(legalCase, relativePath) {
+  const normalized = normalizeRelativeHistoryPath(relativePath);
+  return isDocxPath(normalized) ? normalized : validateRelativeSafePath(legalCase, normalized);
 }
 
 async function revisionMetadata(legalCase, gitDir, hash) {
@@ -767,25 +1023,35 @@ async function revisionDetails(casesRoot, homeDir, caseName, hash, filePath = ''
   const legalCase = resolveCase(casesRoot, caseName);
   const gitDir = await ensureHistoryRepo(homeDir, legalCase);
   const meta = await revisionMetadata(legalCase, gitDir, hash);
-  const files = parseNameStatus((await runGit(legalCase.root, [
-    'diff-tree', '--root', '--no-commit-id', '--name-status', '-r', meta.commit,
-  ], { gitDir })).stdout).map((file) => ({ ...file, kind: statusKind(file.status) }));
-  const selectedPath = filePath ? validateRelativeSafePath(legalCase, filePath) : '';
+  const commitTree = (await runGit(legalCase.root, ['rev-parse', `${meta.commit}^{tree}`], { gitDir })).stdout;
+  const parent = await runGit(legalCase.root, ['rev-parse', '--verify', `${meta.commit}^`], { gitDir, allowFailure: true });
+  const parentTree = parent.code === 0
+    ? (await runGit(legalCase.root, ['rev-parse', `${parent.stdout}^{tree}`], { gitDir })).stdout
+    : await emptyTree(legalCase, gitDir);
+  const files = await diffTrees(legalCase, gitDir, parentTree, commitTree);
+  const selectedPath = filePath ? validateRelativeHistoryPath(legalCase, filePath) : '';
   const selectedFile = selectedPath ? files.find((file) => file.path === selectedPath) : null;
   if (selectedPath && !selectedFile) throw new Error('Ce fichier ne fait pas partie de cette révision.');
   // Sur un commit complet, Git doit parcourir tous les blobs une deuxième fois
   // pour produire le shortstat. Le patch contient déjà l'information utile et
   // est borné ci-dessous : ne calculer les statistiques que pour un fichier
   // explicitement sélectionné évite ce parcours redondant.
-  const stats = selectedPath
+  const wordDiff = isDocxPath(selectedPath)
+    ? docxStructureDiff(
+      await treeDocxManifest(legalCase, gitDir, parentTree),
+      await treeDocxManifest(legalCase, gitDir, commitTree),
+      selectedPath,
+    )
+    : null;
+  const stats = wordDiff?.stats || (selectedPath
     ? parseShortStat((await runGit(legalCase.root, [
       'diff-tree', '--root', '--no-commit-id', '--shortstat', '-r', meta.commit, '--', selectedPath,
     ], { gitDir })).stdout)
-    : { files: 0, added: 0, deleted: 0 };
+    : { files: 0, added: 0, deleted: 0 });
   // Le premier clic sur un commit ne calcule que sa liste de fichiers. Le
   // patch, potentiellement volumineux, n'est demandé qu'après sélection d'un
   // fichier dans la colonne dédiée.
-  const patchResult = selectedPath
+  const patchResult = wordDiff || (selectedPath
     ? await runGit(legalCase.root, [
       'show', '--format=', '--no-ext-diff', '--unified=3', meta.commit, '--', selectedPath,
     ], {
@@ -793,7 +1059,7 @@ async function revisionDetails(casesRoot, homeDir, caseName, hash, filePath = ''
       maxOutputBytes: MAX_PATCH_BYTES,
       truncateOutput: true,
     })
-    : { stdout: '', truncated: false };
+    : { stdout: '', truncated: false });
   const result = {
     ...meta,
     kind: 'commit',
@@ -818,27 +1084,30 @@ async function worktreeDetails(casesRoot, homeDir, caseName, filePath = '', snap
   const startedAt = performance.now();
   const legalCase = resolveCase(casesRoot, caseName);
   const cached = caseStateCache.get(caseStateCacheKey(homeDir, legalCase));
-  const state = snapshot && cached?.current.tree === snapshot
+  const state = snapshot && cached?.current.snapshot === snapshot
     ? cached
     : await workingState(casesRoot, homeDir, caseName);
-  const selectedPath = filePath ? validateRelativeSafePath(state.legalCase, filePath) : '';
+  const selectedPath = filePath ? validateRelativeHistoryPath(state.legalCase, filePath) : '';
   if (selectedPath && !state.changes.some((file) => file.path === selectedPath)) {
     throw new Error('Ce fichier ne fait pas partie des modifications actuelles.');
   }
   const selectedFile = selectedPath ? state.changes.find((file) => file.path === selectedPath) : null;
-  const statsRaw = (await runGit(state.legalCase.root, [
-    'diff', '--shortstat', state.base, state.current.tree,
-    ...(selectedPath ? ['--', selectedPath] : []),
+  const wordDiff = isDocxPath(selectedPath)
+    ? docxStructureDiff(state.baselineDocx, state.current.docxManifest, selectedPath)
+    : null;
+  const statsRaw = wordDiff || !selectedPath ? '' : (await runGit(state.legalCase.root, [
+    'diff', '--shortstat', state.base, state.current.tree, '--', selectedPath,
   ], { gitDir: state.gitDir })).stdout;
-  const stats = parseShortStat(statsRaw);
-  const patchResult = await runGit(state.legalCase.root, [
-    'diff', '--no-ext-diff', '--unified=3', state.base, state.current.tree,
-    ...(selectedPath ? ['--', selectedPath] : []),
-  ], {
-    gitDir: state.gitDir,
-    maxOutputBytes: MAX_PATCH_BYTES,
-    truncateOutput: true,
-  });
+  const stats = wordDiff?.stats || parseShortStat(statsRaw);
+  const patchResult = wordDiff || (!selectedPath
+    ? { stdout: '', truncated: false }
+    : await runGit(state.legalCase.root, [
+      'diff', '--no-ext-diff', '--unified=3', state.base, state.current.tree, '--', selectedPath,
+    ], {
+      gitDir: state.gitDir,
+      maxOutputBytes: MAX_PATCH_BYTES,
+      truncateOutput: true,
+    }));
   const result = {
     hash: 'WORKTREE',
     shortHash: '',
@@ -897,7 +1166,7 @@ async function caseOverview(casesRoot, homeDir, caseName) {
     workingChanges: state.changes,
     head: state.latest,
     shortHead: state.latest.slice(0, 7),
-    snapshot: state.current.tree,
+    snapshot: state.current.snapshot,
     originals,
     protectedOriginals: originals.filter((file) => file.protected).length,
   };
@@ -955,7 +1224,9 @@ async function restoreRevision({ casesRoot, caseName, homeDir = path.join(os.hom
   });
   if (safety.skipped === 'busy') throw new Error('Un commit est déjà en cours. Réessayez dans quelques secondes.');
 
-  const targetFiles = (await runGit(legalCase.root, ['ls-tree', '-r', '--name-only', meta.commit], { gitDir })).stdout.split(/\r?\n/).filter(Boolean);
+  const targetFiles = (await runGit(legalCase.root, ['ls-tree', '-r', '--name-only', meta.commit], { gitDir })).stdout
+    .split(/\r?\n/)
+    .filter((relative) => relative && relative !== DOCX_MANIFEST_PATH);
   const targetSet = new Set(targetFiles);
   for (const relative of await safeCaseFiles(legalCase.root)) {
     if (!targetSet.has(relative)) fs.unlinkSync(safeDestination(legalCase, relative).absolute);
