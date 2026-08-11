@@ -16,6 +16,9 @@ const {
   stampedPiecesDirectory,
 } = require('./lib/stamping.cjs');
 const { isInside, resolveConfiguredLegalCaseFolder } = require('./workspace-paths.cjs');
+const { injectAutoOpen } = require('./lib/docx-autoopen.cjs');
+const { ensureDevRegistration, launchWord, activateWord } = require('./lib/word-launcher.cjs');
+const { ADDIN_ID } = require('./lib/docx-autoopen.cjs');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const PIECEMAKER_HOME = process.env.PIECEMAKER_HOME || path.join(os.homedir(), '.piecemaker');
@@ -61,6 +64,13 @@ function getWorkspacePath() {
 
 // Stockage des clients WebSocket connectés
 const wordClients = new Set();
+
+// Sous-ensemble : les clients qui se sont annoncés comme volet PieceMaker
+// (message `pane-hello`), par opposition aux WebSocket de l'administration
+// (terminal, python…). Sert à /api/word/open-doc pour savoir qu'un volet est
+// réellement prêt à recevoir des ordres Office.js après l'ouverture de Word.
+const wordPanes = new Set();
+const MANIFEST_PATH = path.join(REPO_ROOT, 'taskpane', 'manifest.xml');
 
 // Stockage des mappings d'anonymisation par document
 // MOVED TO MODULE: const anonymizationMappings = new Map();
@@ -540,8 +550,100 @@ app.get('/health', (req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     port: PORT,
-    wordClientsConnected: wordClients.size
+    wordClientsConnected: wordClients.size,
+    wordPanesConnected: wordPanes.size
   });
+});
+
+// Attend qu'un volet PieceMaker soit connecté (message `pane-hello`), jusqu'à
+// `timeoutMs`. Résout true dès qu'un volet est présent.
+function waitForPane(timeoutMs) {
+  return new Promise((resolve) => {
+    if (wordPanes.size > 0) return resolve(true);
+    const start = Date.now();
+    const timer = setInterval(() => {
+      if (wordPanes.size > 0) {
+        clearInterval(timer);
+        resolve(true);
+      } else if (Date.now() - start >= timeoutMs) {
+        clearInterval(timer);
+        resolve(false);
+      }
+    }, 500);
+  });
+}
+
+/**
+ * Ouvre Word sur un document et fait apparaître automatiquement le volet
+ * PieceMaker, sans clic manuel — c'est ce qui permet à une session extérieure
+ * (Claude Code) d'écrire directement dans le document. Mécanisme :
+ *   1. enregistrement « développeur » de l'add-in (une fois, idempotent) ;
+ *   2. injection des parties webextension dans le .docx (idempotent) ;
+ *   3. lancement de Word sur ce document (multi-plateforme) ;
+ *   4. attente qu'un volet s'annonce.
+ * Le fichier n'est modifié que par l'ajout des parties webextension : le
+ * contenu visible du document est inchangé. Voir lib/docx-autoopen.cjs et
+ * lib/word-launcher.cjs.
+ */
+app.post('/api/word/open-doc', async (req, res) => {
+  try {
+    const docPath = typeof req.body?.path === 'string' ? req.body.path.trim() : '';
+    if (!docPath) {
+      return res.status(400).json({ error: 'Paramètre « path » requis (chemin du document .docx).' });
+    }
+    const resolved = path.resolve(docPath);
+    if (!fs.existsSync(resolved)) {
+      return res.status(404).json({ error: `Document introuvable : ${resolved}` });
+    }
+    if (!resolved.toLowerCase().endsWith('.docx')) {
+      return res.status(400).json({
+        error: 'Seuls les fichiers .docx sont supportés pour l\'ouverture automatique du volet (les .doc/.pdf doivent d\'abord être convertis).',
+      });
+    }
+
+    // 1. Enregistrement développeur (idempotent) — sans lui la référence
+    //    webextension (storeType="Registry") ne se résout pas.
+    const registration = ensureDevRegistration(MANIFEST_PATH, ADDIN_ID);
+
+    // 2. Injection des parties d'auto-ouverture dans le document (idempotent).
+    let injection;
+    try {
+      injection = await injectAutoOpen(resolved);
+    } catch (err) {
+      return res.status(422).json({
+        error: `Impossible de préparer le document (n'est peut-être pas un .docx valide) : ${err.message}`,
+      });
+    }
+
+    // 3. Lancement de Word sur ce document, mise au premier plan.
+    const launch = launchWord(resolved);
+    if (!launch.launched) {
+      return res.status(500).json({ error: `Échec du lancement de Word : ${launch.error || 'inconnu'}` });
+    }
+    activateWord();
+
+    // 4. Attente de la disponibilité d'un volet.
+    const timeoutMs = Number(req.body?.timeoutMs) > 0 ? Number(req.body.timeoutMs) : 45000;
+    const paneReady = await waitForPane(timeoutMs);
+
+    return res.json({
+      ok: true,
+      path: resolved,
+      registered: registration.registered,
+      registrationMethod: registration.method,
+      injected: injection.injected,
+      injectionReason: injection.reason,
+      launchMethod: launch.method,
+      paneReady,
+      panesConnected: wordPanes.size,
+      message: paneReady
+        ? 'Word ouvert et volet PieceMaker prêt : vous pouvez utiliser read_doc / edit_doc.'
+        : 'Word lancé mais aucun volet ne s\'est annoncé dans le délai imparti — vérifiez que l\'add-in est bien installé (étape installeur « volet Word »).',
+    });
+  } catch (error) {
+    console.error('Erreur /api/word/open-doc:', error);
+    return res.status(500).json({ error: error.message });
+  }
 });
 
 // Endpoints pour les outils Word (appelés par Claude Desktop via MCP)
@@ -4386,6 +4488,13 @@ wss.on('connection', (ws) => {
           closePtyTerminal(ws);
           break;
 
+        case 'pane-hello':
+          // Le volet PieceMaker (taskpane.js) s'annonce à l'ouverture de sa
+          // WebSocket : on le distingue des autres clients pour la détection de
+          // disponibilité dans /api/word/open-doc.
+          wordPanes.add(ws);
+          break;
+
         case 'python-exec':
           executePythonScript(ws, data.jobId, data.scriptId, data.filePath, data.options || {}, sanitizeDocumentId(data.documentId));
           break;
@@ -4498,6 +4607,7 @@ wss.on('connection', (ws) => {
     closePtyTerminal(ws);
     cleanupPythonProcesses(ws);
     wordClients.delete(ws);
+    wordPanes.delete(ws);
   });
 
   ws.on('error', (error) => {
@@ -4505,6 +4615,7 @@ wss.on('connection', (ws) => {
     closePtyTerminal(ws);
     cleanupPythonProcesses(ws);
     wordClients.delete(ws);
+    wordPanes.delete(ws);
   });
 
   // Envoyer un message de bienvenue

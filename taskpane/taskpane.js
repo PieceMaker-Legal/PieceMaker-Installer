@@ -113,6 +113,14 @@ function connectWebSocket() {
 
         ws.onopen = () => {
             console.log('✅ WebSocket connecté au serveur');
+            // S'annoncer comme volet PieceMaker : permet au serveur de savoir
+            // qu'un volet est réellement prêt (voir /api/word/open-doc, qui
+            // ouvre Word et attend cette annonce avant de rendre la main).
+            try {
+                ws.send(JSON.stringify({ type: 'pane-hello' }));
+            } catch (e) {
+                console.warn('pane-hello non envoyé:', e);
+            }
         };
 
         ws.onmessage = async (event) => {

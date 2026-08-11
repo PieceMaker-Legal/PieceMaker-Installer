@@ -16,6 +16,7 @@ import {
   IS_MAC,
   IS_WINDOWS,
   REPO_ROOT,
+  commandExists,
   ensureDir,
   npmBin,
   npmEnv,
@@ -259,6 +260,52 @@ export function restartTelegramDaemon() {
 
 function gitOut(args, label) {
   return runOrThrow('git', args, label).stdout;
+}
+
+/**
+ * Claude Code plugin coordinates — kept in sync with the marketplace/plugin
+ * names declared in installer/steps/09-claude-assets.mjs.
+ */
+const CLAUDE_MARKETPLACE = 'piecemaker';
+const CLAUDE_PLUGIN_SPEC = 'piecemaker@piecemaker';
+
+/**
+ * Refresh the installed Claude Code plugin after a repository update.
+ *
+ * `piecemaker update` moves the checked-out repo to origin, but the plugin
+ * Claude Code actually loads is a frozen marketplace copy under
+ * ~/.claude/plugins/. It only moves when the marketplace clone is pulled
+ * (`plugin marketplace update`) and the plugin reinstalled from it
+ * (`plugin update`) — the two commands a user otherwise runs by hand. Both
+ * pull from the same GitHub source as the repo, so an update already published
+ * upstream is exactly what this propagates into the running plugin.
+ *
+ * Best-effort by design: a missing `claude` CLI or a failing subcommand is
+ * reported, never thrown, so it can't turn a successful repo update into a
+ * failed command. A session restart is still required for Claude Code to load
+ * the new revision — that part is on the user.
+ */
+export function refreshClaudePlugin() {
+  if (!commandExists('claude', ['--version'])) {
+    return { ok: false, refreshed: false, reason: 'CLI « claude » introuvable' };
+  }
+  const market = runCapture('claude', ['plugin', 'marketplace', 'update', CLAUDE_MARKETPLACE]);
+  if (market.code !== 0) {
+    return {
+      ok: false,
+      refreshed: false,
+      reason: market.stderr || market.stdout || `« plugin marketplace update » a échoué (code ${market.code})`,
+    };
+  }
+  const plugin = runCapture('claude', ['plugin', 'update', CLAUDE_PLUGIN_SPEC]);
+  if (plugin.code !== 0) {
+    return {
+      ok: false,
+      refreshed: false,
+      reason: plugin.stderr || plugin.stdout || `« plugin update » a échoué (code ${plugin.code})`,
+    };
+  }
+  return { ok: true, refreshed: true, reason: '' };
 }
 
 /**

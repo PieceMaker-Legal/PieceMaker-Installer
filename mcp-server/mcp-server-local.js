@@ -36,6 +36,36 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 // Outils proxy Word disponibles
 const LOCAL_TOOLS = [
         {
+        name: 'open_doc',
+        description: `Open a Word document and auto-show the PieceMaker task pane — no manual click.
+
+Use this FIRST, from an outside session, to start working on a specific .docx:
+it registers the add-in (once), embeds the auto-open task-pane reference into
+the document, launches Microsoft Word on it (macOS and Windows), and waits for
+the pane to connect. After it returns paneReady:true you can call read_doc /
+edit_doc, which operate on that now-active document.
+
+Notes:
+- Only .docx is supported (convert .doc/.pdf first).
+- The document's visible content is NOT changed — only an internal task-pane
+  reference is added.
+- If the document is already open in Word, close it first so it can be prepared.`,
+            inputSchema: {
+            type: 'object',
+            properties: {
+                path: {
+                type: 'string',
+                description: 'Absolute path to the .docx to open.'
+                },
+                timeoutMs: {
+                type: 'number',
+                description: 'How long to wait for the pane to connect (default 45000).'
+                }
+            },
+            required: ['path']
+            }
+        },
+        {
         name: 'read_doc',
         description: `Read Word document with Markdown formatting and index-based navigation.
 Modes:
@@ -448,6 +478,11 @@ function getPrompt(name, args = {}) {
 }
 
 // Schémas Zod pour validation des arguments
+const OpenDocSchema = z.object({
+  path: z.string().min(1),
+  timeoutMs: z.number().int().positive().optional()
+});
+
 const ReadDocSchema = z.object({
   list_headings: z.boolean().optional().default(false),
   heading: z.string().optional(),
@@ -520,6 +555,7 @@ const CallOllamaSchema = z.object({});
 
 // Mapper des schémas Zod par outil
 const TOOL_SCHEMAS = {
+  'open_doc': OpenDocSchema,
   'read_doc': ReadDocSchema,
   'edit_doc': EditDocSchema,
   'read_case': ReadCaseSchema,
@@ -544,6 +580,9 @@ async function callLocalTool(toolName, toolArgs) {
 
   let endpoint;
   switch (toolName) {
+    case 'open_doc':
+      endpoint = 'https://localhost:43098/api/word/open-doc';
+      break;
     case 'read_doc':
       endpoint = 'https://localhost:43098/api/word/read-doc';
       break;

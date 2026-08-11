@@ -38,6 +38,7 @@ import {
   stopServer,
   checkForUpdate,
   updateRepository,
+  refreshClaudePlugin,
 } from '../lib/service.mjs';
 
 const STEPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'steps');
@@ -324,6 +325,19 @@ async function runOperationalCommand(command, knownUpdate = null) {
       log.ok(`PieceMaker mis à jour (${result.ref}, ${result.target.slice(0, 7)}).`);
       if (result.pythonChanged) {
         log.warn('requirements.txt a changé : relancez « piecemaker install » puis l’étape 03 — Python & GLiNER.');
+      }
+
+      // Le dépôt est à jour, mais le plugin que Claude Code charge est une copie
+      // figée du marketplace : on la rafraîchit ici pour éviter le double
+      // « claude plugin marketplace update » + « claude plugin update » manuel.
+      const spin = spinner('Rafraîchissement du plugin Claude Code...');
+      const plugin = refreshClaudePlugin();
+      if (plugin.refreshed) {
+        spin.succeed('Plugin Claude Code rafraîchi — redémarrez votre session Claude Code pour charger la nouvelle version.');
+      } else {
+        spin.stop();
+        log.warn(`Plugin Claude Code non rafraîchi (${plugin.reason}).`);
+        log.detail('Rattrapage manuel : « claude plugin marketplace update piecemaker » puis « claude plugin update piecemaker@piecemaker ».');
       }
     } finally {
       if (previous.running && previous.managed) {
