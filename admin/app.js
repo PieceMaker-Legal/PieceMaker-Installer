@@ -1648,11 +1648,38 @@ function setDetailView(view) {
   byId('mappingView').hidden = view !== 'mapping';
   byId('telegramCaseView').hidden = view !== 'telegram';
   byId('chronologyPane').hidden = view !== 'chronology';
+  const chronologyToggle = byId('showChronology');
+  if (chronologyToggle) {
+    chronologyToggle.classList.toggle('active', view === 'chronology');
+    chronologyToggle.setAttribute('aria-pressed', view === 'chronology' ? 'true' : 'false');
+    chronologyToggle.textContent = view === 'chronology' ? 'Masquer la chronologie' : 'Afficher la chronologie';
+  }
   byId('caseTelegramCard').classList.toggle('active', view === 'telegram');
   if (view !== 'diff') {
     revisionRequestSerial += 1;
     setChangedFilesPane(false);
   }
+}
+
+// Affiche la chronologie dans le volet de droite depuis la vue « Pièces
+// protégées » (la frise est reconstruite à partir des pièces listées à gauche),
+// ou la masque si elle est déjà ouverte.
+function toggleChronologyView() {
+  if (!selectedFolder) {
+    toast('Sélectionnez un dossier');
+    return;
+  }
+  if (detailView === 'chronology') {
+    showRevisionPlaceholder('Sélectionnez une modification ou ouvrez le mapping');
+    return;
+  }
+  setDetailView('chronology');
+  selectedRevision = null;
+  byId('revisionKind').textContent = 'Chronologie';
+  byId('revisionSha').textContent = '';
+  byId('revisionTitle').textContent = 'Chronologie du dossier';
+  byId('revisionMeta').textContent = `Dossier « ${currentCase()?.name || selectedFolder} »`;
+  loadChronology();
 }
 
 function showMappingEditorHeader() {
@@ -1748,18 +1775,14 @@ function renderHistoryItems() {
   list.textContent = '';
   updateManualCommitForm();
   const protectedMode = historyView === 'protected';
-  const chronologyMode = historyView === 'chronology';
   byId('protectedTools').hidden = !protectedMode;
   byId('originalList').hidden = !protectedMode;
-  list.hidden = protectedMode || chronologyMode;
-  if (chronologyMode) {
-    byId('historyTitle').textContent = 'Chronologie';
-    setDetailView('chronology');
-    loadChronology();
-    return;
-  }
+  list.hidden = protectedMode;
   if (protectedMode) {
     renderOriginals();
+    // La chronologie occupe le volet de droite tant qu'on reste dans « Pièces
+    // protégées » : on ne repose le placeholder que si aucune vue riche (mapping,
+    // chronologie) n'est déjà ouverte.
     if (detailView === 'diff') showRevisionPlaceholder('Sélectionnez une modification ou ouvrez le mapping');
     return;
   }
@@ -2525,13 +2548,11 @@ function truncate(value, max) {
 async function setHistoryView(view) {
   historyView = view;
   selectedRevision = null;
-  // La chronologie prend tout le volet de droite : on ne repasse pas par le
-  // placeholder de diff, qui rebasculerait l'affichage sur la vue « diff ».
-  if (view !== 'chronology') {
-    showRevisionPlaceholder(view === 'protected'
-      ? 'Sélectionnez une modification ou ouvrez le mapping'
-      : view === 'changes' ? 'Sélectionnez une modification' : 'Sélectionnez un commit');
-  }
+  // Changer de vue referme la chronologie / le mapping : on repose le placeholder
+  // de diff, ce qui rebascule aussi le bouton « Afficher la chronologie ».
+  showRevisionPlaceholder(view === 'protected'
+    ? 'Sélectionnez une modification ou ouvrez le mapping'
+    : view === 'changes' ? 'Sélectionnez une modification' : 'Sélectionnez un commit');
   document.querySelectorAll('[data-history-view]').forEach((button) => button.classList.toggle('active', button.dataset.historyView === view));
   await loadHistoryItems();
 }
@@ -2712,6 +2733,7 @@ function initPerformanceMonitoring() {
 }
 
 document.querySelectorAll('[data-history-view]').forEach((button) => button.addEventListener('click', () => setHistoryView(button.dataset.historyView)));
+byId('showChronology').addEventListener('click', toggleChronologyView);
 byId('refreshHistory').addEventListener('click', () => loadRepositoryHistory());
 byId('caseSelect').addEventListener('change', (event) => selectHistoryFolder(event.currentTarget.value));
 byId('branchSelect').addEventListener('change', selectHistoryBranch);
