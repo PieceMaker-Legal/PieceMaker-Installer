@@ -1411,6 +1411,116 @@ def update_anonymization_state(state_path: Path, case_root: str, source_files: L
     update_processing_state(state_path, case_root, source_files, "scanned")
 
 
+# ---------------------------------------------------------------------------
+# Per-document index — chronology / nature / entity attribution
+# ---------------------------------------------------------------------------
+# The individual sensitive maps are the only place that knows which entities and
+# which document_meta belong to a given file; they are deleted right after the
+# merge, so the attribution has to be captured here. The persistent index keys
+# each document by the SAME hash the scan-state manifest uses (a filename can
+# carry a client's name), and stores only entity CODES plus the non-PII
+# nature/date/juridiction. It is never a source of clear PII on disk.
+
+def load_document_index(index_path: Path) -> Dict:
+    try:
+        with open(index_path, "r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        raw = {}
+    documents = raw.get("documents", {}) if isinstance(raw, dict) else {}
+    return {"version": 1, "documents": documents if isinstance(documents, dict) else {}}
+
+
+def _mapping_code_lookup(final_mapping_data: Dict) -> Dict[str, str]:
+    """Case-insensitive {variant -> code}, longest variant first so a short name
+    that is a substring of a stored variant does not shadow the longer code."""
+    lookup: Dict[str, str] = {}
+    items = sorted(
+        final_mapping_data.get("mapping", {}).items(),
+        key=lambda kv: len(kv[0]),
+        reverse=True,
+    )
+    for variant, code in items:
+        key = str(variant).strip().lower()
+        if key:
+            lookup.setdefault(key, code)
+    return lookup
+
+
+def _codes_for_entities(entities: Dict, code_lookup: Dict[str, str]) -> List[str]:
+    codes: Set[str] = set()
+    for entity_list in (entities or {}).values():
+        if not isinstance(entity_list, list):
+            continue
+        for entity in entity_list:
+            text = entity.get("text") if isinstance(entity, dict) else None
+            if not text:
+                continue
+            code = code_lookup.get(str(text).strip().lower())
+            if code:
+                codes.add(code)
+    return sorted(codes)
+
+
+def write_document_index(
+    index_path: Path,
+    case_root: str,
+    scan_records: List[Dict],
+    final_mapping_data: Dict,
+) -> int:
+    """Merge this run's scanned documents into <case>/.piecemaker/document-index.json.
+
+    Returns the number of document entries written/updated.
+    """
+    if not scan_records:
+        return 0
+    code_lookup = _mapping_code_lookup(final_mapping_data)
+    index = load_document_index(index_path)
+    updated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    written = 0
+    for record in scan_records:
+        source = record.get("source")
+        if not source:
+            continue
+        # The payload fields are captured in-memory before the transient scan
+        # workspace is cleaned; fall back to re-reading json_path for standalone
+        # callers (and tests) that pass the file directly.
+        if "entities" in record or "document_meta" in record:
+            entities = record.get("entities") or {}
+            meta = record.get("document_meta") or {}
+        else:
+            try:
+                with open(record.get("json_path"), "r", encoding="utf-8") as handle:
+                    data = json.load(handle)
+            except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError):
+                continue
+            entities = data.get("entities") or {}
+            meta = data.get("document_meta") or {}
+        key = anonymization_state_key(source, case_root)
+        if not key:
+            continue
+        index["documents"][key] = {
+            "nature": meta.get("nature"),
+            "nature_confidence": meta.get("nature_confidence"),
+            "doc_date": meta.get("doc_date"),
+            "doc_date_iso": meta.get("doc_date_iso"),
+            "juridiction": meta.get("juridiction"),
+            "codes": _codes_for_entities(entities, code_lookup),
+            "updatedAt": updated_at,
+        }
+        written += 1
+    if not written:
+        return 0
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = index_path.with_name(f"{index_path.name}.piecemaker-{os.getpid()}.tmp")
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump(index, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, index_path)
+    return written
+
+
 def main():
     """Main pipeline orchestration."""
     parser = argparse.ArgumentParser(
@@ -1615,6 +1725,10 @@ def main():
     scan_success_count = 0
     successful_scan_sources = []
     json_files = []
+    # Keeps each scanned document's payload tied to its source so the per-document
+    # index can attribute entity codes and metadata after the merge (the payloads
+    # are deleted with the workspace below).
+    scan_records: List[Dict] = []
     # Raw detections contain PII. They live only in a private OS temporary
     # directory and disappear after consolidation, including on exceptions.
     scan_workspace = tempfile.TemporaryDirectory(prefix="piecemaker-scans-")
@@ -1639,6 +1753,7 @@ def main():
             scan_success_count += 1
             successful_scan_sources.append(md_sources[md_file])
             json_files.append(str(json_path))
+            scan_records.append({"source": md_sources[md_file], "json_path": str(json_path)})
         else:
             print(f"   ⚠️  Scan failed, markdown preserved")
 
@@ -1670,6 +1785,18 @@ def main():
 
     # Read individual mappings
     consolidated = read_individual_mappings(json_files)
+    # Capture each document's entities + metadata in memory before the transient
+    # scan workspace is deleted, so the per-document index can be built once the
+    # final mapping (and therefore the codes) is known further down.
+    for record in scan_records:
+        try:
+            with open(record["json_path"], "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            record["entities"] = payload.get("entities") or {}
+            record["document_meta"] = payload.get("document_meta") or {}
+        except (FileNotFoundError, json.JSONDecodeError, OSError, KeyError):
+            record["entities"] = {}
+            record["document_meta"] = {}
     scan_workspace.cleanup()
 
     # Convert to anonymization format
@@ -1688,6 +1815,16 @@ def main():
     print("💾 Step 5: Saving mapping...")
     mapping_path = save_mapping(mapping_target, final_mapping_data)
     update_anonymization_state(state_target, state_case_root, successful_scan_sources)
+
+    # Per-document index (chronology / nature / entity codes) lives next to the
+    # scan-state manifest, keyed by the same hash so a filename is never stored.
+    index_path = state_target.parent / "document-index.json"
+    try:
+        indexed = write_document_index(index_path, state_case_root, scan_records, final_mapping_data)
+        if indexed:
+            print(f"🗂️  Document index updated: {indexed} document(s)")
+    except Exception as exc:  # noqa: BLE001
+        print(f"⚠️  Document index update skipped: {exc}", file=sys.stderr)
 
     print(f"✅ Mapping saved to: {mapping_path}")
     print(f"   • Total entities: {len(final_mapping_data['mapping'])} variants")

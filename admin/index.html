@@ -65,6 +65,7 @@
                 <button id="changesView" class="active" type="button" data-history-view="changes">Modifications</button>
                 <button id="commitsView" type="button" data-history-view="commits">Historique</button>
                 <button id="protectedView" type="button" data-history-view="protected">Pièces protégées</button>
+                <button id="chronologyView" type="button" data-history-view="chronology">Chronologie</button>
               </div>
               <div class="history-summary">
                 <strong id="historyTitle">Modifications</strong>
@@ -159,6 +160,16 @@
                     <button id="rebuildMapping" class="button ghost compact" type="button">Régénérer depuis les scans PII</button>
                     <span id="mappingMessage" class="message"></span>
                     <button id="saveMapping" class="button primary compact" type="button">Enregistrer le mapping</button>
+                  </div>
+                </div>
+                <div id="chronologyPane" class="inline-detail chronology-pane" hidden>
+                  <div class="inline-detail-toolbar">
+                    <div><strong>Chronologie du dossier</strong><span id="chronologyHint">Reconstituée à partir des scans PII — nature, date et personnes citées de chaque pièce.</span></div>
+                    <span id="chronologyStats" class="count-badge">0</span>
+                  </div>
+                  <p class="inline-detail-hint">La nature et la date sont détectées automatiquement (GLiNER2) et restent indicatives. Le graphe relie chaque pièce aux personnes, sociétés et adresses qu’elle cite ; deux pièces partageant une entité sont liées.</p>
+                  <div id="chronologyBody" class="chronology-body">
+                    <p class="chronology-empty">Sélectionnez un dossier puis lancez un scan PII pour alimenter la chronologie.</p>
                   </div>
                 </div>
                 <form id="telegramCaseView" class="inline-detail telegram-inline-editor" hidden>

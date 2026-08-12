@@ -42,6 +42,7 @@ const {
   readProtection,
   writeProtection,
 } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
+const { buildChronology } = require('./document-index.cjs');
 const {
   readInstitutionalTerms,
   writeInstitutionalTerms,
@@ -930,6 +931,25 @@ function createAdminRouter({
         originals: folder.originals.length,
       });
       res.json({ folder });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  router.get('/repository/chronology', async (req, res) => {
+    const startedAt = performance.now();
+    try {
+      const legalCase = selectedCase(req.query.case);
+      // Vue cabinet par défaut (codes ré-identifiés, comme l'éditeur de mapping) ;
+      // `?deanonymize=0` renvoie le graphe indexé par code, sans aucun nom.
+      const deanonymize = req.query.deanonymize !== '0' && req.query.deanonymize !== 'false';
+      const chronology = await buildChronology(legalCase.root, { deanonymize });
+      chronology.case = { path: legalCase.id, name: legalCase.caseName, location: legalCase.root };
+      finishAdminTiming(res, 'chronology', startedAt, {
+        documents: chronology.stats.documents,
+        entities: chronology.stats.entities,
+      });
+      res.json(chronology);
     } catch (error) {
       res.status(400).json({ error: error.message });
     }
