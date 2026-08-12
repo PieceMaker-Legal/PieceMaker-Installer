@@ -63,6 +63,11 @@ test('categoryForCode maps every code family', () => {
   assert.equal(categoryForCode('ADRESSE_01'), 'adresse');
   assert.equal(categoryForCode('SIREN_01'), 'siren');
   assert.equal(categoryForCode('EMAIL_01'), 'autre');
+  // A legacy malformed code ("SOCIETE SA_02" with a space) must still bucket as a company.
+  assert.equal(categoryForCode('SOCIETE SA_02'), 'societe');
+  // Role-prefixed person codes from the mapping vocabulary bucket as people.
+  assert.equal(categoryForCode('CLIENT_DEMANDEUR_PERSONNE_PHYSIQUE_01'), 'personne');
+  assert.equal(categoryForCode('ADVERSAIRE_DEFENDEUR_PERSONNE_PHYSIQUE_01'), 'personne');
 });
 
 test('readDocumentIndex tolerates a missing or corrupt file', () => {
@@ -132,6 +137,20 @@ test('buildChronology drops codes no longer present in the mapping', async () =>
   const assignation = chrono.documents.find((d) => d.name === 'Assignation.pdf');
   assert.ok(!assignation.codes.some((c) => c.code === 'PERSONNE_PHYSIQUE_99'));
   assert.ok(!chrono.entities.some((e) => e.code === 'PERSONNE_PHYSIQUE_99'));
+  fs.rmSync(caseRoot, { recursive: true, force: true });
+});
+
+test('buildChronology scrubs a juridiction that leaks a mapped party name', async () => {
+  const index = SAMPLE_INDEX();
+  // The Assignation keeps a genuine court; the Courrier's juridiction was
+  // mis-extracted as a mapped party ("Bernard Gilly") — that must be dropped.
+  index.documents[stateKey('Courrier.pdf')].juridiction = 'Bernard Gilly';
+  const caseRoot = fixture({ index, mapping: SAMPLE_MAPPING() });
+  const chrono = await buildChronology(caseRoot, { deanonymize: true });
+  const assignation = chrono.documents.find((d) => d.name === 'Assignation.pdf');
+  const courrier = chrono.documents.find((d) => d.name === 'Courrier.pdf');
+  assert.equal(assignation.juridiction, 'Tribunal judiciaire de Paris');
+  assert.equal(courrier.juridiction, null, 'a leaked party name must never surface as a juridiction');
   fs.rmSync(caseRoot, { recursive: true, force: true });
 });
 

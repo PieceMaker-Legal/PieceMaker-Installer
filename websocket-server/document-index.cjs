@@ -53,13 +53,48 @@ function readDocumentIndex(caseRoot) {
   return { version: 1, documents: clean };
 }
 
-/** Catégorie d'un code, déduite de son préfixe (même vocabulaire que le pipeline). */
+/** Catégorie d'un code, déduite de sa famille (même vocabulaire que le pipeline). */
 function categoryForCode(code) {
-  if (code.startsWith('PERSONNE_PHYSIQUE_') || code.startsWith('DIRIGEANT_')) return 'personne';
-  if (code.startsWith('PERSONNE_MORALE_') || code.startsWith('SOCIETE_')) return 'societe';
-  if (code.startsWith('ADRESSE_')) return 'adresse';
-  if (code.startsWith('SIREN_')) return 'siren';
+  // On teste par inclusion, pas par préfixe : le mapping enrichit souvent le code
+  // d'un rôle procédural ("CLIENT_DEMANDEUR_PERSONNE_PHYSIQUE_01",
+  // "ADVERSAIRE_DEFENDEUR_PERSONNE_PHYSIQUE_01"), et un mapping ancien peut mal
+  // former le séparateur ("SOCIETE SA_02"). Blancs normalisés, casse ignorée.
+  const c = String(code).replace(/\s+/g, '_').toUpperCase();
+  if (c.includes('PERSONNE_PHYSIQUE') || c.includes('DIRIGEANT')) return 'personne';
+  if (c.includes('PERSONNE_MORALE') || c.includes('SOCIETE')) return 'societe';
+  if (c.includes('ADRESSE')) return 'adresse';
+  if (c.includes('SIREN')) return 'siren';
   return 'autre';
+}
+
+const FREE_TEXT_STOPWORDS = new Set([
+  'sarl', 'sasu', 'société', 'societe', 'compagnie', 'groupe', 'group',
+  'holding', 'association', 'syndicat', 'france',
+]);
+
+/** Tokens distinctifs (>=4) de chaque entité mappée — pour épurer les champs libres. */
+function sensitiveTokens(mappingDict) {
+  const tokens = new Set();
+  for (const variant of Object.keys(mappingDict || {})) {
+    for (const token of String(variant).toLowerCase().match(/[a-zà-ÿ0-9]{4,}/g) || []) {
+      if (!FREE_TEXT_STOPWORDS.has(token)) tokens.add(token);
+    }
+  }
+  return tokens;
+}
+
+/**
+ * Défense en profondeur, en miroir du pipeline Python : la « juridiction » est un
+ * champ libre où GLiNER confond souvent une partie avec le tribunal. Un index déjà
+ * écrit (avant le correctif Python) peut contenir un nom en clair — on le retire
+ * s'il partage un token avec une entité mappée, dans toutes les vues.
+ */
+function scrubFreeText(value, tokens) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const found = value.toLowerCase().match(/[a-zà-ÿ0-9]{4,}/g) || [];
+  // Noise-only extraction ("SA", "n/a", "RCS") carries no court name — drop it.
+  if (!found.length) return null;
+  return found.some((token) => tokens.has(token)) ? null : value;
 }
 
 /**
@@ -75,6 +110,7 @@ async function buildChronology(caseRoot, { deanonymize = false } = {}) {
   // Un code renuméroté/supprimé dans l'éditeur ne doit pas rester fantôme dans le
   // graphe : on ne garde que les codes encore présents dans le mapping courant.
   const knownCodes = new Set(Object.keys(reverse));
+  const scrubTokens = sensitiveTokens(mapping.mapping || {});
 
   const labelFor = (code) => {
     if (!deanonymize) return null;
@@ -121,7 +157,7 @@ async function buildChronology(caseRoot, { deanonymize = false } = {}) {
       natureConfidence: entry ? entry.nature_confidence : null,
       date: entry ? entry.doc_date : null,
       dateIso: entry ? entry.doc_date_iso : null,
-      juridiction: entry ? entry.juridiction : null,
+      juridiction: entry ? scrubFreeText(entry.juridiction, scrubTokens) : null,
       codes: codes.map((code) => ({ code, category: categoryForCode(code), label: labelFor(code) })),
     });
   }

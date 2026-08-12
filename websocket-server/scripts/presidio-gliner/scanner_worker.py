@@ -184,6 +184,14 @@ def normalize_document_date(raw: Optional[str]) -> Optional[str]:
     if not raw:
         return None
     text = str(raw).strip().lower()
+    # Already-ISO forms are the most common thing GLiNER returns ("2023-05-15",
+    # "2023/05/15"); test the unambiguous year-first shape before the day-first
+    # numeric one, which would otherwise never match it (\d{1,2} can't eat 2023).
+    iso = re.search(r"\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b", text)
+    if iso:
+        year, month, day = int(iso.group(1)), int(iso.group(2)), int(iso.group(3))
+        if 1 <= month <= 12 and 1 <= day <= 31:
+            return f"{year:04d}-{month:02d}-{day:02d}"
     worded = re.search(r"(\d{1,2})\s+([a-zàâäéèêëîïôöûüç]+)\.?\s+(\d{4})", text)
     if worded:
         day, month_name, year = worded.group(1), worded.group(2), worded.group(3)

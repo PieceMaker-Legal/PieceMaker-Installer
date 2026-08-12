@@ -16,8 +16,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 from convert_and_scan_pipeline import (  # noqa: E402
     write_document_index,
     load_document_index,
+    anonymization_state_key,
     _mapping_code_lookup,
     _codes_for_entities,
+    _sensitive_tokens,
+    _scrub_free_text,
 )
 
 
@@ -86,9 +89,57 @@ def test_write_document_index_merges_across_runs():
     print("✓ write_document_index merges documents across runs")
 
 
+def test_juridiction_scrub_drops_party_names_keeps_courts():
+    final = {"mapping": {"URGOT SA": "SOCIETE_SA_06", "CAITLYN SA": "SOCIETE_SA_02",
+                         "Bernard Gilly": "PERSONNE_PHYSIQUE_01"}}
+    tokens = _sensitive_tokens(final)
+    # Full match, partial match and a lone token all get dropped.
+    assert _scrub_free_text("CAITLYN SA", tokens) is None
+    assert _scrub_free_text("URGOT", tokens) is None
+    assert _scrub_free_text("Gilly", tokens) is None
+    # A genuine institutional court survives — no token overlap with any party.
+    assert _scrub_free_text("Tribunal de commerce de Paris", tokens) == "Tribunal de commerce de Paris"
+    # "SA" alone is noise, not a court — dropped (no >=4-char token).
+    assert "sa" not in tokens
+    assert _scrub_free_text("SA", tokens) is None
+    assert _scrub_free_text("n/a", tokens) is None
+    print("✓ _scrub_free_text drops party names and noise, keeps courts")
+
+
+def test_write_document_index_never_persists_a_leaked_juridiction():
+    final = {"mapping": {"URGOT SA": "SOCIETE_SA_06"}}
+    records = [{
+        "source": "/case/jugement.pdf",
+        "entities": {},
+        "document_meta": {"nature": "jugement", "juridiction": "URGOT SA"},
+    }]
+    with tempfile.TemporaryDirectory() as directory:
+        index_path = Path(directory) / "document-index.json"
+        write_document_index(index_path, "/case", records, final)
+        blob = index_path.read_text(encoding="utf-8")
+        assert "URGOT" not in blob, "a mis-extracted party name must never reach the index"
+        entry = json.loads(blob)["documents"][hashlib.sha256(b"jugement.pdf").hexdigest()]
+        assert entry["juridiction"] is None
+    print("✓ write_document_index scrubs a leaked juridiction before disk")
+
+
+def test_state_key_is_nfc_stable():
+    # The same accented filename in decomposed (NFD) and composed (NFC) form must
+    # hash to one key, or the chronology join drops it on macOS.
+    import unicodedata
+    nfc = unicodedata.normalize("NFC", "Procès-verbal.pdf")
+    nfd = unicodedata.normalize("NFD", "Procès-verbal.pdf")
+    assert nfc != nfd  # the two byte forms really differ
+    assert anonymization_state_key(f"/case/{nfc}", "/case") == anonymization_state_key(f"/case/{nfd}", "/case")
+    print("✓ anonymization_state_key is NFC-stable across NFC/NFD filenames")
+
+
 if __name__ == "__main__":
     test_mapping_code_lookup_is_case_insensitive_and_longest_first()
     test_codes_for_entities_dedups_and_sorts()
     test_write_document_index_keys_by_hash_of_relpath()
     test_write_document_index_merges_across_runs()
+    test_juridiction_scrub_drops_party_names_keeps_courts()
+    test_write_document_index_never_persists_a_leaked_juridiction()
+    test_state_key_is_nfc_stable()
     print("\nAll document-index tests passed.")

@@ -1347,6 +1347,10 @@ def anonymization_state_key(source_file: str, case_root: str) -> Optional[str]:
         # Standalone CLI use can place outputs outside the input tree. Hashing
         # the absolute identity preserves --skip-existing without persisting it.
         identity = f"absolute:{source.as_posix()}"
+    # Match the Node side (anonymization-state.cjs): an accented filename must
+    # hash identically whether it reaches us as NFC or NFD, or the document-index
+    # join drops it. Normalise to NFC on both sides, independent of the OS.
+    identity = unicodedata.normalize("NFC", identity)
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
@@ -1447,6 +1451,47 @@ def _mapping_code_lookup(final_mapping_data: Dict) -> Dict[str, str]:
     return lookup
 
 
+# Legal-form / generic tokens shared by company names and court names alike —
+# excluded from the sensitive set so a real "Tribunal de commerce" is not scrubbed
+# because some mapped company is a "... SA".
+_FREE_TEXT_STOPWORDS = frozenset({
+    "sarl", "sasu", "société", "societe", "compagnie", "groupe", "group",
+    "holding", "association", "syndicat", "france",
+})
+
+
+def _sensitive_tokens(final_mapping_data: Dict) -> Set[str]:
+    """Distinctive tokens (>=4 chars) of every mapped entity.
+
+    Used to scrub free-text metadata (the juridiction): GLiNER's extract_json
+    "juridiction" head routinely mis-captures a litigant's name as the court, and
+    that name must never reach the non-PII index. Any free-text field sharing a
+    token with a mapped entity is dropped rather than stored in clear.
+    """
+    tokens: Set[str] = set()
+    for variant in final_mapping_data.get("mapping", {}):
+        for token in re.findall(r"[a-zà-ÿ0-9]{4,}", str(variant).lower()):
+            if token not in _FREE_TEXT_STOPWORDS:
+                tokens.add(token)
+    return tokens
+
+
+def _scrub_free_text(value, sensitive_tokens: Set[str]) -> Optional[str]:
+    """Return the text, or None if it carries any mapped-entity token (PII)."""
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    found = set(re.findall(r"[a-zà-ÿ0-9]{4,}", text.lower()))
+    # Noise-only extraction ("SA", "n/a", "RCS") carries no court name — drop it.
+    if not found:
+        return None
+    if found & sensitive_tokens:
+        return None
+    return text
+
+
 def _codes_for_entities(entities: Dict, code_lookup: Dict[str, str]) -> List[str]:
     codes: Set[str] = set()
     for entity_list in (entities or {}).values():
@@ -1475,6 +1520,7 @@ def write_document_index(
     if not scan_records:
         return 0
     code_lookup = _mapping_code_lookup(final_mapping_data)
+    sensitive_tokens = _sensitive_tokens(final_mapping_data)
     index = load_document_index(index_path)
     updated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     written = 0
@@ -1504,7 +1550,7 @@ def write_document_index(
             "nature_confidence": meta.get("nature_confidence"),
             "doc_date": meta.get("doc_date"),
             "doc_date_iso": meta.get("doc_date_iso"),
-            "juridiction": meta.get("juridiction"),
+            "juridiction": _scrub_free_text(meta.get("juridiction"), sensitive_tokens),
             "codes": _codes_for_entities(entities, code_lookup),
             "updatedAt": updated_at,
         }
