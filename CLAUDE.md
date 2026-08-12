@@ -72,7 +72,7 @@ Claude Desktop (MCP client) ──stdio──► mcp-server/ ──HTTPS──�
   the ad hoc types used for MCP tool relaying / chat.
 - REST endpoints all live in `server.cjs` as `app.get/post/put/delete(...)`
   calls — there are ~50 of them, roughly grouped as: AI provider proxies
-  (`/api/claude`, `/api/openai`, `/api/mistral`, `/api/ollama`, `/api/mcp`),
+  (`/api/claude`, `/api/openai`, `/api/mistral`, `/api/ollama`),
   Word document ops (`/api/word/*`), anonymisation (`/api/anonymize/*`,
   partly delegated to a router — see below), Python bridge
   (`/api/python/*`), and legal workflow endpoints (`/api/word/draft-conclusions`,
@@ -126,35 +126,21 @@ called from `Office.onReady` in `taskpane.js`. `handlePythonMessage(message)`
 routes `python-output` / `python-done` / `python-error` to the right
 per-job callback.
 
-## Anonymisation and mapping — two different pipelines, don't confuse them
+## Anonymisation and mapping
 
-1. **Bulk document anonymisation** (`POST /api/anonymize/process`, around
-   **server.cjs:644**): the client extracts text from uploaded files
-   client-side and posts `extractedTexts` (not raw files, for speed). The
-   server does **not** anonymise locally for this path — it forwards the
-   texts to a **remote** MCP endpoint
-   (`https://mcp.festival-letino-app.com/mcp-remote/api/anonymize/process`,
-   authenticated with `MCP_API_KEY`), then polls
-   `.../api/anonymize/result/<jobId>` every 60s until the remote service
-   returns `mapping` + `reverse_mapping`. Progress/status is tracked in the
-   in-memory `anonymizationJobs` Map and exposed via
-   `GET /api/anonymize/status/:jobId`. On completion the server writes:
-   - `output/mapping_<documentId>.json` — `{ mapping, reverse_mapping }`
-   - `output/compilation_dossier_<documentId>.json` — dossier metadata +
-     per-document entries.
-2. **Local PII scanning** (GLiNER/Presidio, no network call): the standalone
-   script `websocket-server/scripts/presidio-gliner/presidio-gliner.py`
-   scans a Markdown file for PII with a Presidio `AnalyzerEngine` + a custom
-   GLiNER2 `LocalRecognizer`, and writes
-   `<output_dir>/<stem>_sensitive_map.json`. `smart_converter.py` (see
-   below) is typically run first to get Markdown, and
-   `convert_and_scan_pipeline.py` chains the two for batch use, emitting
-   `PROGRESS:CONVERT:...` / `PROGRESS:SCAN:...` lines on stdout. This local
-   raw map is transient when the batch pipeline runs: it is merged into
-   `mapping_default.json` from a private temporary directory. The local scan
-   is separate from the remote anonymisation job above — it is what the
-   `anonymisation` skill (see `piecemaker-plugin/skills/anonymisation/`) and
-   the Python bridge's `convert-scan` entry drive.
+**Local PII scanning** (GLiNER/Presidio, no network call) is the only
+anonymisation pipeline — there is no remote service. The standalone
+script `websocket-server/scripts/presidio-gliner/presidio-gliner.py`
+scans a Markdown file for PII with a Presidio `AnalyzerEngine` + a custom
+GLiNER2 `LocalRecognizer`, and writes
+`<output_dir>/<stem>_sensitive_map.json`. `smart_converter.py` (see
+below) is typically run first to get Markdown, and
+`convert_and_scan_pipeline.py` chains the two for batch use, emitting
+`PROGRESS:CONVERT:...` / `PROGRESS:SCAN:...` lines on stdout. This local
+raw map is transient when the batch pipeline runs: it is merged into
+`mapping_default.json` from a private temporary directory. It is what the
+`anonymisation` skill (see `piecemaker-plugin/skills/anonymisation/`) and
+the Python bridge's `convert-scan` entry drive.
 
 **Mapping storage/editing API** —
 `taskpane/modules/anonymization-server.cjs` mounts a router at
@@ -280,8 +266,8 @@ Four hooks, wired in `piecemaker-plugin/hooks/hooks.json`:
 ## Originals pipeline (admin)
 
 `websocket-server/originals-pipeline.cjs` drives the per-case pieces frame in
-`/admin/`. It is the *local* pipeline (`smart_converter.py` then
-`presidio-gliner.py`), never the remote bulk anonymisation job.
+`/admin/`. It is the local pipeline (`smart_converter.py` then
+`presidio-gliner.py`) — the only anonymisation pipeline.
 
 - `originalFilesOverview` (`commits.cjs`) walks the **whole case recursively**.
   A piece is any file that is not `.md`/`.json`; each carries `converted` /
@@ -364,6 +350,28 @@ Four hooks, wired in `piecemaker-plugin/hooks/hooks.json`:
   `.piecemaker/anonymization-state.json`; each hashed relative path carries only
   source size/mtime fingerprints for conversion and scan, so a modified piece is
   reconverted and scanned again automatically.
+- **Per-document index (chronology / nature / entity attribution).** The scanner
+  worker also runs GLiNER2's *classification* and *structured* heads once per
+  document — a single header slice, sub-second — to read its nature
+  (`classify_text` against `NATURE_LABELS`) and a header record (`extract_json`:
+  date + juridiction), emitting a `document_meta` block inside the transient
+  sensitive map. Because only the Python side ever sees per-file entities (the
+  sensitive maps are deleted at merge), the pipeline captures each scanned
+  document's `document_meta` + entity list in memory before cleanup and, once the
+  final mapping is known, writes `.piecemaker/document-index.json`
+  (`write_document_index`). That index is **non-PII**: it keys each document by
+  the **same `sha256(relpath)` hash** the scan-state manifest uses (a filename can
+  carry a client name) and stores only entity **codes** plus nature/date/
+  juridiction — never a clear name, never a filename. `websocket-server/document-index.cjs`
+  (`buildChronology`) joins it to `originalFilesOverview` and the case mapping to
+  produce a chronology + a bipartite pieces↔entities graph; codes are the join
+  key, so the graph is inherently anonymised and de-anonymised on the fly (like
+  the mapping editor) only for the cabinet's own view. Exposed at
+  `GET /api/admin/repository/chronology` (`?deanonymize=0` returns codes only) and
+  rendered by the "Chronologie" history-view in `/admin/`. GLiNER2 capabilities,
+  the measured timings, and the *entities-empty-in-unified-`extract()`* caveat
+  (why entities stay a separate call) are written up in
+  `docs/gliner2-capabilities.md`.
 - The case mapping is the single
   `<case>/Fichiers convertis PieceMaker/mapping_default.json` (resolved by
   `caseMappingFile`; reads also fall back to a copy left at the case root during
@@ -476,8 +484,7 @@ from `/admin/` usable without publishing the repo and re-running
 | `PIECEMAKER_HOME` | `server.cjs:21` | Firm-global data dir (stamp, `dossier_folders.json`, `ressources/`), default `~/.piecemaker`. There is no longer a configurable workspace root: legal cases are registered individually as `caseFolders` in `~/.piecemaker/config.json` and can live anywhere; `getOutputPath(documentId)` routes each document's output into the registered case that contains it, and `getWorkspacePath()` (used only for the rare no-document case) returns the filesystem root, deliberately non-writable |
 | `PYTHON_PATH` | `PYTHON_SCRIPTS`, warmup checks | Python 3 interpreter to spawn for all registered scripts, default `python3` |
 | `SMART_CONVERTER_PATH` | `PYTHON_SCRIPTS.convert` | Override the path to `smart_converter.py` |
-| `MCP_URL` / `MCP_API_KEY` | `/api/mcp-config`, `/api/mcp`, `/api/anonymize/process` | Address/key for the remote MCP + anonymisation service; `/api/mcp` and the bulk anonymisation job both fail fast (401 / thrown error) without `MCP_API_KEY` |
-| `MCP_REMOTE_URL` | `/api/mcp` proxy | Remote MCP endpoint, default `https://mcp.festival-letino-app.com/mcp-remote/mcp` (the anonymisation job additionally hardcodes the sibling `/mcp-remote/api/anonymize/...` paths on the same host) |
+| `MCP_URL` / `MCP_API_KEY` | `/api/mcp-config` | Address/key echoed to the task pane by `/api/mcp-config`; optional, no default. Vestigial — the MCP tooling is local; there is no remote MCP or anonymisation service |
 
 ## Running things
 

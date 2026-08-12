@@ -2,10 +2,8 @@
 # -*- coding: utf-8 -*-
 """Gestion des sessions utilisateur et authentification"""
 
-import requests
 from datetime import datetime
 from typing import Dict, Any, Optional
-from config.settings import API_BASE_URL
 
 
 class SessionManager:
@@ -13,23 +11,6 @@ class SessionManager:
     
     def __init__(self):
         self._sessions: Dict[str, Dict[str, Any]] = {}
-    
-    def verify_api_key(self, api_key: str) -> Optional[Dict[str, Any]]:
-        """Vérifie la clé API auprès de PieceMakerAPI"""
-        if not api_key or not api_key.startswith('lca_'):
-            return None
-        
-        try:
-            response = requests.get(
-                f"{API_BASE_URL}/user/info",
-                headers={'X-API-Key': api_key},
-                timeout=10
-            )
-            if response.status_code == 200:
-                return response.json()
-            return None
-        except requests.exceptions.RequestException:
-            return None
     
     def set_session(self, user_id: str, data: Dict[str, Any]) -> None:
         """Définit les données de session pour un utilisateur"""

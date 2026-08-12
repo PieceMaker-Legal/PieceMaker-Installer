@@ -16,7 +16,6 @@
   <SupportUrl DefaultValue="https://piecemaker.fr/support"/>
   <AppDomains>
     <AppDomain>https://localhost:43098</AppDomain>
-    <AppDomain>https://mcp.festival-letino-app.com</AppDomain>
   </AppDomains>
  
 <Requirements>

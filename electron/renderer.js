@@ -439,7 +439,7 @@ async function loadMCPConfig() {
         if (url) {
             mcpUrlInput.value = url;
         } else {
-            mcpUrlInput.value = 'https://mcp.festival-letino-app.com/mcp-remote/mcp';
+            mcpUrlInput.value = '';
         }
 
         if (apiKey) {

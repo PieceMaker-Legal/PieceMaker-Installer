@@ -6,8 +6,8 @@ const { app } = require('electron');
 
 class UpdateManager {
   constructor() {
-    this.updateUrl = 'https://mcp.festival-letino-app.com/mcp-remote/updates/manifest.json';
-    this.githubTokenUrl = 'https://mcp.festival-letino-app.com/mcp-remote/updates/github-token.json';
+    this.updateUrl = process.env.UPDATE_MANIFEST_URL || '';
+    this.githubTokenUrl = process.env.UPDATE_GITHUB_TOKEN_URL || '';
     this.githubRepo = 'PieceMaker-Legal/PieceMaker';
     this.currentVersion = app.getVersion();
 

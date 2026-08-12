@@ -7,12 +7,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# API PieceMaker — conservée uniquement parce que tools/session_manager.py
-# l'importe au chargement du module (compatibilité d'import). Aucun des 8
-# outils exposés par ce serveur (Search_*, consulter_decision, Tracking_BODACC)
-# n'appelle cette API.
-API_BASE_URL = os.getenv('API_BASE_URL', 'https://api.festival-letino-app.com/api')
-
 # Légifrance (PISTE)
 # SECURITY: pas de valeur par défaut. Les identifiants précédemment codés en
 # dur ici ont été committés dans un dépôt public et sont considérés comme

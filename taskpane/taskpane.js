@@ -5005,9 +5005,7 @@ function addMessage(type, content, options = {}) {
                 // Désactiver les boutons après click
                 buttonsContainer.querySelectorAll('button').forEach(b => b.disabled = true);
                 // Appeler la fonction correspondante
-                if (btn.action === 'anonymizeWithPresidio') {
-                    anonymizeWithPresidio();
-                } else if (btn.action === 'anonymizeWithOllama') {
+                if (btn.action === 'anonymizeWithOllama') {
                     analyzeWithOllama();
                 }
             };
@@ -5641,84 +5639,6 @@ async function loadAnonymizationFiles() {
     }
 }
 
-/**
- * Polling pour récupérer le résultat d'un job asynchrone
- * @param {string} jobId - ID du job à surveiller
- * @param {Function} progressCallback - Callback pour mise à jour de la progression (progress, message)
- * @returns {Promise<Object>} - Le résultat final du job
- */
-async function pollJobStatus(jobId, progressCallback = null) {
-    const POLL_INTERVAL = 2000; // 2 secondes entre chaque requête
-    const MAX_ATTEMPTS = 600; // 20 minutes max (600 * 2s = 1200s) pour traitement OCR long
-    let attempts = 0;
-
-    console.log(`[pollJobStatus] Démarrage polling pour job ${jobId} (timeout: ${MAX_ATTEMPTS * POLL_INTERVAL / 1000}s)`);
-
-    while (attempts < MAX_ATTEMPTS) {
-        attempts++;
-
-        try {
-            const response = await fetch(`https://localhost:43098/api/anonymize/status/${jobId}`, {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                console.error(`❌ Erreur récupération status job ${jobId}:`, response.status, errorText);
-                throw new Error(`Erreur status job: ${response.status} - ${errorText}`);
-            }
-
-            const status = await response.json();
-            console.log(`[pollJobStatus] Tentative ${attempts}/${MAX_ATTEMPTS} - Status:`, status.status, `(${status.progress}%)`);
-
-            // Mettre à jour la progression si callback fourni
-            if (progressCallback && status.progress !== undefined) {
-                progressCallback(status.progress, status.message || 'Traitement en cours...');
-            }
-
-            // Job terminé avec succès
-            if (status.status === 'completed' && status.result) {
-                console.log(`✅ [pollJobStatus] Job ${jobId} terminé avec succès`);
-                return status.result;
-            }
-
-            // Job échoué
-            if (status.status === 'failed') {
-                const errorMsg = status.error || 'Erreur inconnue lors du traitement';
-                console.error(`❌ [pollJobStatus] Job ${jobId} échoué:`, errorMsg);
-                throw new Error(errorMsg);
-            }
-
-            // Job en cours - attendre avant de réessayer
-            if (status.status === 'processing') {
-                await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
-                continue;
-            }
-
-            // Status inconnu
-            console.warn(`⚠️ [pollJobStatus] Status inconnu pour job ${jobId}:`, status.status);
-            await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
-
-        } catch (error) {
-            console.error(`❌ [pollJobStatus] Erreur tentative ${attempts}:`, error);
-
-            // Si c'est la dernière tentative, propager l'erreur
-            if (attempts >= MAX_ATTEMPTS) {
-                throw error;
-            }
-
-            // Sinon, attendre et réessayer
-            await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
-        }
-    }
-
-    // Timeout atteint
-    throw new Error(`Timeout: Le traitement a pris plus de ${MAX_ATTEMPTS * POLL_INTERVAL / 1000} secondes`);
-}
-
 // Sélectionner des fichiers - EXTRACTION UNIQUEMENT
 async function selectFiles() {
     console.log('[selectFiles] Ouverture du modal informations dossier');
@@ -5845,7 +5765,6 @@ async function proceedWithFileSelection() {
             // Afficher les boutons d'anonymisation dans le chat
             addMessage('system', '📊 Choisissez une méthode d\'anonymisation:', {
                 buttons: [
-                    { text: '🔒 Anonymize with Presidio', action: 'anonymizeWithPresidio' },
                     { text: '🤖 Anonymize with Ollama', action: 'anonymizeWithOllama' }
                 ]
             });
@@ -6507,124 +6426,3 @@ async function addFilesFromModal() {
     updateFilesListDisplay();
 }
 
-// ============================================
-// ANONYMISATION AVEC PRESIDIO (MCP REMOTE)
-// ============================================
-
-/**
- * Anonymiser avec Presidio via le serveur MCP Remote
- * Utilise l'ancienne route /api/anonymize/process avec callback asynchrone
- */
-async function anonymizeWithPresidio() {
-    try {
-        // Vérifier qu'il y a une compilation chargée
-        if (!anonymization.files || anonymization.files.length === 0) {
-            addMessage('system', '❌ Aucun fichier chargé. Veuillez d\'abord charger des fichiers via 📁 Fichiers.');
-            return;
-        }
-
-        if (!anonymization.documentId) {
-            addMessage('system', '❌ Erreur: documentId manquant');
-            return;
-        }
-
-        addMessage('system', `🔒 Début de l'anonymisation Presidio...`);
-        addMessage('system', `📊 ${anonymization.files.length} document(s) à analyser`);
-
-        // Préparer les données pour le serveur
-        const extractedTexts = anonymization.files.map(doc => ({
-            fileName: doc.filename || 'document.txt',
-            text: doc.texte_integral || ''
-        }));
-
-        // Afficher la progression
-        updateAnonymizationProgress({
-            step: 'mapping',
-            current: 0,
-            total: 1,
-            message: 'Envoi au serveur Presidio...'
-        });
-
-        // Envoyer au serveur MCP Remote avec les informations du dossier
-        const response = await fetch('https://localhost:43098/api/anonymize/process', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                extractedTexts: extractedTexts,
-                documentId: anonymization.documentId,
-                dossierInfo: anonymization.dossierInfo || null
-            })
-        });
-
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Erreur lors de l\'anonymisation Presidio');
-        }
-
-        const serverResponse = await response.json();
-
-        // La route retourne toujours un jobId (traitement asynchrone avec callback)
-        if (!serverResponse.jobId) {
-            throw new Error('Réponse serveur invalide: jobId manquant');
-        }
-
-        addMessage('system', `🔄 Analyse en cours (Job: ${serverResponse.jobId})...`);
-
-        // Polling pour récupérer le résultat
-        const result = await pollJobStatus(serverResponse.jobId, (progress, message) => {
-            updateAnonymizationProgress({
-                step: 'mapping',
-                current: progress,
-                total: 100,
-                message: message
-            });
-        });
-
-        updateAnonymizationProgress({
-            step: 'complete',
-            current: 1,
-            total: 1,
-            message: 'Analyse terminée !'
-        });
-
-        addMessage('system', `✅ Anonymisation Presidio terminée !`);
-
-        // Compter les entités
-        let totalEntities = 0;
-        if (result.mapping) {
-            totalEntities = Object.keys(result.mapping).length;
-        }
-
-        addMessage('system', `📋 ${totalEntities} entité(s) détectée(s)`);
-
-        // ✅ FUSION avec informations du dossier avant affichage
-        if (anonymization.dossierInfo) {
-            console.log('[Presidio] Fusion du mapping avec informations dossier...');
-            const merged = mergeMappingWithDossierInfo(
-                result.mapping,
-                result.reverse_mapping,
-                anonymization.dossierInfo
-            );
-            result.mapping = merged.mapping;
-            result.reverse_mapping = merged.reverse_mapping;
-
-            addMessage('system', `🔄 Mapping fusionné avec les parties du dossier`);
-        }
-
-        // Afficher le mapping pour validation
-        showMappingValidation(result);
-
-    } catch (error) {
-        console.error('Erreur anonymisation Presidio:', error);
-        addMessage('system', `❌ Erreur: ${error.message}`);
-
-        updateAnonymizationProgress({
-            step: 'complete',
-            current: 0,
-            total: 0,
-            message: 'Erreur lors de l\'anonymisation'
-        });
-    }
-}

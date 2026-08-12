@@ -75,11 +75,9 @@ qu'en éditant un mapping JSON à la main.
 
 ## Limites à connaître
 
-- Le flux de production principal de PieceMaker
-  (`POST /api/anonymize/process` dans `websocket-server/server.cjs`) délègue
-  l'anonymisation en masse à un service MCP distant et n'utilise pas
-  `presidio-gliner.py` directement — cette skill couvre le scan/mapping
-  **local**, utilisé pour l'audit, le contrôle qualité et l'édition fine.
+- L'anonymisation de PieceMaker est **entièrement locale** : le scan et le
+  mapping reposent sur `presidio-gliner.py` (pipeline admin ou cette skill).
+  Il n'existe pas de service d'anonymisation distant.
 - `presidio-gliner.py` ne détecte pas nécessairement 100% des PII (faux
   négatifs possibles sur des formats atypiques) : une relecture humaine du
   document anonymisé reste nécessaire avant tout envoi à un tiers.
