@@ -195,6 +195,9 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .originals-actions .button { width: 100%; font-size: .7rem; }
 .originals-progress { margin: 0 12px 8px; border-radius: 7px; background: #ddf4ff; padding: 6px 8px; color: #0a3069; font-size: .62rem; line-height: 1.4; }
 .originals-progress.error { background: #ffebe9; color: #82071e; }
+.originals-chronology { margin: 0 12px 10px; width: calc(100% - 24px); justify-content: center; }
+.originals-chronology.active { background: var(--brand); border-color: var(--brand); color: #fff; }
+.originals-chronology.active:hover { background: var(--brand-dark); }
 .original-list { min-height: 0; flex: 1; overflow: auto; }
 .original-row { display: grid; align-items: start; gap: 8px; grid-template-columns: 15px minmax(0, 1fr) auto; border-top: 1px solid #eaeef2; padding: 9px 10px 9px 12px; background: #fff; }
 .original-row input[type="checkbox"] { margin-top: 2px; cursor: pointer; }
@@ -492,3 +495,59 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
   .procedure-party-list { overflow: visible; }
   .procedure-parties-card { overflow: auto; }
 }
+
+/* --- Chronologie & graphe des liens --------------------------------------- */
+.chronology-pane { display: flex; flex-direction: column; min-height: 0; }
+.chronology-body { flex: 1; min-height: 0; overflow: auto; padding: 4px 2px 12px; }
+.chronology-empty { border: 1px dashed #cbd6d4; border-radius: 10px; padding: 22px; color: var(--muted); text-align: center; }
+
+.chronology-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.chronology-summary span { border-radius: 999px; background: #edf1ef; padding: 4px 11px; color: var(--brand-dark); font-size: .76rem; font-weight: 700; }
+
+.chronology-toggle { display: inline-flex; gap: 4px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+.chronology-toggle button { border: 0; border-radius: 999px; padding: 5px 14px; background: transparent; color: var(--muted); font-weight: 700; font-size: .8rem; cursor: pointer; }
+.chronology-toggle button.active { background: var(--brand); color: #fff; }
+
+/* Frise */
+.chronology-timeline { display: flex; flex-direction: column; }
+.chronology-row { display: grid; grid-template-columns: 96px 1fr; gap: 12px; }
+.chronology-rail { position: relative; display: flex; flex-direction: column; align-items: flex-end; padding-top: 4px; }
+.chronology-rail::before { content: ""; position: absolute; top: 0; bottom: -18px; right: 5px; width: 2px; background: var(--line); }
+.chronology-row:last-child .chronology-rail::before { bottom: 50%; }
+.chronology-dot { position: relative; z-index: 1; width: 12px; height: 12px; border-radius: 999px; background: var(--brand); border: 2px solid var(--paper); }
+.chronology-date { margin-top: 4px; color: var(--muted); font-size: .72rem; font-weight: 700; }
+.chronology-card { margin: 0 0 18px; border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; background: var(--card); }
+.chronology-card.protected { border-style: dashed; opacity: .82; }
+.chronology-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.chronology-nature { border-radius: 999px; background: var(--accent); padding: 3px 9px; color: var(--brand-dark); font-size: .72rem; font-weight: 800; }
+.chronology-name { font-size: .92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.chronology-juris { margin-top: 5px; color: var(--muted); font-size: .78rem; }
+.chronology-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.chronology-nochip { margin-top: 8px; color: var(--muted); font-size: .74rem; font-style: italic; }
+.chronology-undated-head { margin: 6px 0 14px; color: var(--muted); font-size: .72rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+
+.entity-chip { border-radius: 999px; padding: 3px 9px; font-size: .74rem; font-weight: 700; border: 1px solid transparent; }
+.entity-chip.cat-personne { background: #e5effb; color: #1d4e89; }
+.entity-chip.cat-societe { background: #efe8fb; color: #5a3aa8; }
+.entity-chip.cat-adresse { background: #dff3ef; color: #10726a; }
+.entity-chip.cat-siren { background: #fbf1dc; color: #8a6300; }
+.entity-chip.cat-autre { background: #edf1ef; color: var(--muted); }
+
+/* Graphe */
+.chronology-graph-scroll { width: 100%; overflow: auto; }
+.chronology-svg { width: 100%; min-width: 640px; height: auto; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+.chronology-axis-label { fill: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; }
+.chronology-edge { fill: none; stroke: #c3cfcc; stroke-width: 1.1; opacity: .55; transition: opacity .12s, stroke-width .12s; }
+.chronology-edge.cat-personne { stroke: #7aa6d8; }
+.chronology-edge.cat-societe { stroke: #a488d8; }
+.chronology-edge.cat-adresse { stroke: #5fb7ac; }
+.chronology-svg.has-focus .chronology-edge { opacity: .12; }
+.chronology-svg.has-focus .chronology-edge.active { opacity: 1; stroke-width: 2; }
+.chronology-node text { fill: var(--ink); font-size: 11px; }
+.chronology-node circle { fill: var(--brand); stroke: var(--paper); stroke-width: 1.5; cursor: pointer; }
+.chronology-node.entity.cat-personne circle { fill: #1d4e89; }
+.chronology-node.entity.cat-societe circle { fill: #5a3aa8; }
+.chronology-node.entity.cat-adresse circle { fill: #10726a; }
+.chronology-node.entity.cat-siren circle { fill: #8a6300; }
+.chronology-node.document circle { fill: var(--brand); }
+.chronology-node:hover text { font-weight: 800; }

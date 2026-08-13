@@ -1647,11 +1647,39 @@ function setDetailView(view) {
   byId('diffView').hidden = view !== 'diff';
   byId('mappingView').hidden = view !== 'mapping';
   byId('telegramCaseView').hidden = view !== 'telegram';
+  byId('chronologyPane').hidden = view !== 'chronology';
+  const chronologyToggle = byId('showChronology');
+  if (chronologyToggle) {
+    chronologyToggle.classList.toggle('active', view === 'chronology');
+    chronologyToggle.setAttribute('aria-pressed', view === 'chronology' ? 'true' : 'false');
+    chronologyToggle.textContent = view === 'chronology' ? 'Masquer la chronologie' : 'Afficher la chronologie';
+  }
   byId('caseTelegramCard').classList.toggle('active', view === 'telegram');
   if (view !== 'diff') {
     revisionRequestSerial += 1;
     setChangedFilesPane(false);
   }
+}
+
+// Affiche la chronologie dans le volet de droite depuis la vue « Pièces
+// protégées » (la frise est reconstruite à partir des pièces listées à gauche),
+// ou la masque si elle est déjà ouverte.
+function toggleChronologyView() {
+  if (!selectedFolder) {
+    toast('Sélectionnez un dossier');
+    return;
+  }
+  if (detailView === 'chronology') {
+    showRevisionPlaceholder('Sélectionnez une modification ou ouvrez le mapping');
+    return;
+  }
+  setDetailView('chronology');
+  selectedRevision = null;
+  byId('revisionKind').textContent = 'Chronologie';
+  byId('revisionSha').textContent = '';
+  byId('revisionTitle').textContent = 'Chronologie du dossier';
+  byId('revisionMeta').textContent = `Dossier « ${currentCase()?.name || selectedFolder} »`;
+  loadChronology();
 }
 
 function showMappingEditorHeader() {
@@ -1752,6 +1780,9 @@ function renderHistoryItems() {
   list.hidden = protectedMode;
   if (protectedMode) {
     renderOriginals();
+    // La chronologie occupe le volet de droite tant qu'on reste dans « Pièces
+    // protégées » : on ne repose le placeholder que si aucune vue riche (mapping,
+    // chronologie) n'est déjà ouverte.
     if (detailView === 'diff') showRevisionPlaceholder('Sélectionnez une modification ou ouvrez le mapping');
     return;
   }
@@ -2229,9 +2260,296 @@ async function saveCaseTelegramBot(event) {
   }
 }
 
+const CATEGORY_LABELS = {
+  personne: 'Personne',
+  societe: 'Société',
+  adresse: 'Adresse',
+  siren: 'SIREN',
+  autre: 'Autre',
+};
+
+const NATURE_ICONS = {
+  assignation: '⚖️', conclusions: '📝', requête: '📄', courrier: '✉️',
+  courriel: '✉️', 'mise en demeure': '⚠️', contrat: '🤝', facture: '🧾',
+  devis: '🧾', attestation: '📃', jugement: '⚖️', arrêt: '⚖️',
+  ordonnance: '⚖️', 'procès-verbal': '📋', constat: '📋', expertise: '🔬',
+  'statuts de société': '🏛️', 'extrait Kbis': '🏛️', 'relevé bancaire': '🏦',
+  'acte notarié': '🖋️', 'bordereau de pièces': '📚',
+};
+
+let chronologyData = null;
+
+function escapeHtml(value) {
+  return String(value == null ? '' : value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function svg(tag, attrs = {}) {
+  const element = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [key, value] of Object.entries(attrs)) element.setAttribute(key, String(value));
+  return element;
+}
+
+async function loadChronology() {
+  const body = byId('chronologyBody');
+  if (!selectedFolder) {
+    chronologyData = null;
+    byId('chronologyStats').textContent = '0';
+    body.innerHTML = '<p class="chronology-empty">Sélectionnez un dossier pour afficher sa chronologie.</p>';
+    return;
+  }
+  body.innerHTML = '<p class="chronology-empty">Chargement de la chronologie…</p>';
+  try {
+    const data = await api(`/api/admin/repository/chronology?${new URLSearchParams({ case: selectedFolder })}`);
+    chronologyData = data;
+    renderChronology(data);
+  } catch (error) {
+    body.innerHTML = `<p class="chronology-empty">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function renderChronology(data) {
+  const body = byId('chronologyBody');
+  body.textContent = '';
+  const { stats } = data;
+  byId('chronologyStats').textContent = `${stats.documents}`;
+
+  if (!stats.indexed) {
+    body.innerHTML = '<p class="chronology-empty">Aucune pièce scannée pour l’instant. Lancez « Anonymiser & mapper » sur les pièces pour alimenter la chronologie.</p>';
+    return;
+  }
+
+  const summary = document.createElement('div');
+  summary.className = 'chronology-summary';
+  const spanText = stats.span
+    ? `${formatChronoDate(stats.span.from)} → ${formatChronoDate(stats.span.to)}`
+    : 'dates non détectées';
+  summary.innerHTML = `<span>${stats.indexed} pièce${stats.indexed > 1 ? 's' : ''} indexée${stats.indexed > 1 ? 's' : ''}</span>`
+    + `<span>${stats.dated} datée${stats.dated > 1 ? 's' : ''}</span>`
+    + `<span>${stats.entities} entité${stats.entities > 1 ? 's' : ''}</span>`
+    + `<span>${spanText}</span>`;
+  body.append(summary);
+
+  // Sélecteur de vue : frise chronologique / graphe des liens.
+  const toggle = document.createElement('div');
+  toggle.className = 'chronology-toggle';
+  toggle.innerHTML = '<button type="button" class="active" data-chrono-view="timeline">Frise</button>'
+    + '<button type="button" data-chrono-view="graph">Graphe des liens</button>';
+  body.append(toggle);
+
+  const timeline = document.createElement('div');
+  timeline.className = 'chronology-timeline';
+  timeline.append(renderTimeline(data));
+  body.append(timeline);
+
+  const graph = document.createElement('div');
+  graph.className = 'chronology-graph';
+  graph.hidden = true;
+  body.append(graph);
+
+  toggle.querySelectorAll('[data-chrono-view]').forEach((button) => {
+    button.addEventListener('click', () => {
+      toggle.querySelectorAll('[data-chrono-view]').forEach((other) => other.classList.toggle('active', other === button));
+      const wantGraph = button.dataset.chronoView === 'graph';
+      timeline.hidden = wantGraph;
+      graph.hidden = !wantGraph;
+      if (wantGraph && !graph.dataset.rendered) {
+        graph.append(renderChronologyGraph(data));
+        graph.dataset.rendered = '1';
+      }
+    });
+  });
+}
+
+function formatChronoDate(iso) {
+  if (!iso) return 'Sans date';
+  const [year, month, day] = iso.split('-');
+  return `${day}/${month}/${year}`;
+}
+
+function renderTimeline(data) {
+  const fragment = document.createDocumentFragment();
+  const dated = data.documents.filter((doc) => doc.dateIso);
+  const undated = data.documents.filter((doc) => !doc.dateIso);
+  for (const doc of dated) fragment.append(renderTimelineRow(doc));
+  if (undated.length) {
+    const header = document.createElement('div');
+    header.className = 'chronology-undated-head';
+    header.textContent = `Sans date détectée (${undated.length})`;
+    fragment.append(header);
+    for (const doc of undated) fragment.append(renderTimelineRow(doc));
+  }
+  return fragment;
+}
+
+function renderTimelineRow(doc) {
+  const row = document.createElement('div');
+  row.className = 'chronology-row';
+  const icon = doc.nature ? (NATURE_ICONS[doc.nature] || '📄') : '📄';
+
+  const rail = document.createElement('div');
+  rail.className = 'chronology-rail';
+  rail.innerHTML = `<span class="chronology-dot"></span><span class="chronology-date">${escapeHtml(formatChronoDate(doc.dateIso))}</span>`;
+  row.append(rail);
+
+  const card = document.createElement('div');
+  card.className = 'chronology-card';
+  if (doc.protected) card.classList.add('protected');
+
+  const head = document.createElement('div');
+  head.className = 'chronology-card-head';
+  const nature = doc.nature ? `<span class="chronology-nature">${icon} ${escapeHtml(doc.nature)}</span>` : '';
+  head.innerHTML = `${nature}<strong class="chronology-name" title="${escapeHtml(doc.name)}">${escapeHtml(doc.name)}</strong>`;
+  card.append(head);
+
+  if (doc.juridiction) {
+    const juris = document.createElement('div');
+    juris.className = 'chronology-juris';
+    juris.textContent = doc.juridiction;
+    card.append(juris);
+  }
+
+  if (doc.codes.length) {
+    const chips = document.createElement('div');
+    chips.className = 'chronology-chips';
+    for (const entity of doc.codes) {
+      const chip = document.createElement('span');
+      chip.className = `entity-chip cat-${entity.category}`;
+      chip.textContent = entity.label || entity.code;
+      chip.title = `${CATEGORY_LABELS[entity.category] || entity.category} · ${entity.code}`;
+      chips.append(chip);
+    }
+    card.append(chips);
+  } else if (doc.indexed) {
+    const none = document.createElement('div');
+    none.className = 'chronology-nochip';
+    none.textContent = 'Aucune entité citée';
+    card.append(none);
+  }
+
+  row.append(card);
+  return row;
+}
+
+// Graphe biparti déterministe : entités à gauche (triées par degré), pièces à
+// droite (ordre chronologique). Aucune physique — le survol met en évidence les
+// liens d'un nœud. Lisible en lot, et sans dépendance externe.
+function renderChronologyGraph(data) {
+  const docs = data.documents;
+  const entities = data.entities;
+  if (!docs.length || !entities.length) {
+    const empty = document.createElement('p');
+    empty.className = 'chronology-empty';
+    empty.textContent = 'Pas assez de liens pour tracer un graphe (aucune entité partagée).';
+    return empty;
+  }
+  const rowH = 26;
+  const padTop = 30;
+  const height = Math.max(entities.length, docs.length) * rowH + padTop + 20;
+  const width = 720;
+  const leftX = 200;
+  const rightX = width - 200;
+  const entityY = new Map();
+  const docY = new Map();
+  entities.forEach((entity, i) => entityY.set(entity.code, padTop + i * rowH));
+  docs.forEach((doc, i) => docY.set(doc.id, padTop + i * rowH));
+
+  const root = svg('svg', {
+    class: 'chronology-svg', viewBox: `0 0 ${width} ${height}`,
+    preserveAspectRatio: 'xMidYMin meet', role: 'img',
+    'aria-label': 'Graphe des liens entre pièces et entités',
+  });
+
+  root.append(svgHeader(leftX, 'Entités'));
+  root.append(svgHeader(rightX, 'Pièces (chronologique)'));
+
+  const edgeLayer = svg('g', { class: 'chronology-edges' });
+  const edgeElements = [];
+  for (const doc of docs) {
+    const y2 = docY.get(doc.id);
+    for (const entity of doc.codes) {
+      const y1 = entityY.get(entity.code);
+      if (y1 == null) continue;
+      const midX = (leftX + rightX) / 2;
+      const path = svg('path', {
+        d: `M ${leftX} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${rightX} ${y2}`,
+        class: `chronology-edge cat-${entity.category}`,
+      });
+      path.dataset.entity = entity.code;
+      path.dataset.doc = doc.id;
+      edgeLayer.append(path);
+      edgeElements.push(path);
+    }
+  }
+  root.append(edgeLayer);
+
+  const highlight = (predicate) => {
+    for (const path of edgeElements) path.classList.toggle('active', predicate(path));
+    root.classList.toggle('has-focus', typeof predicate === 'function' && edgeElements.some((p) => p.classList.contains('active')));
+  };
+  const clearHighlight = () => {
+    for (const path of edgeElements) path.classList.remove('active');
+    root.classList.remove('has-focus');
+  };
+
+  // Nœuds entités (gauche).
+  for (const entity of entities) {
+    const y = entityY.get(entity.code);
+    const node = svg('g', { class: `chronology-node entity cat-${entity.category}` });
+    node.append(svg('circle', { cx: leftX, cy: y, r: 5 }));
+    const label = svg('text', { x: leftX - 12, y: y + 4, 'text-anchor': 'end' });
+    label.textContent = truncate(entity.label || entity.code, 26);
+    node.append(label);
+    const title = svg('title');
+    title.textContent = `${CATEGORY_LABELS[entity.category] || entity.category} · ${entity.label || entity.code} · ${entity.documentCount} pièce(s)`;
+    node.append(title);
+    node.addEventListener('mouseenter', () => highlight((path) => path.dataset.entity === entity.code));
+    node.addEventListener('mouseleave', clearHighlight);
+    root.append(node);
+  }
+
+  // Nœuds pièces (droite).
+  for (const doc of docs) {
+    const y = docY.get(doc.id);
+    const node = svg('g', { class: 'chronology-node document' });
+    node.append(svg('circle', { cx: rightX, cy: y, r: 5 }));
+    const label = svg('text', { x: rightX + 12, y: y + 4, 'text-anchor': 'start' });
+    label.textContent = truncate(doc.name, 26);
+    node.append(label);
+    const title = svg('title');
+    title.textContent = `${doc.nature ? doc.nature + ' · ' : ''}${formatChronoDate(doc.dateIso)} · ${doc.name}`;
+    node.append(title);
+    node.addEventListener('mouseenter', () => highlight((path) => path.dataset.doc === doc.id));
+    node.addEventListener('mouseleave', clearHighlight);
+    root.append(node);
+  }
+
+  const scroll = document.createElement('div');
+  scroll.className = 'chronology-graph-scroll';
+  scroll.append(root);
+  return scroll;
+}
+
+function svgHeader(x, text) {
+  const label = svg('text', { x, y: 16, 'text-anchor': 'middle', class: 'chronology-axis-label' });
+  label.textContent = text;
+  return label;
+}
+
+function truncate(value, max) {
+  const text = String(value || '');
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
 async function setHistoryView(view) {
   historyView = view;
   selectedRevision = null;
+  // Changer de vue referme la chronologie / le mapping : on repose le placeholder
+  // de diff, ce qui rebascule aussi le bouton « Afficher la chronologie ».
   showRevisionPlaceholder(view === 'protected'
     ? 'Sélectionnez une modification ou ouvrez le mapping'
     : view === 'changes' ? 'Sélectionnez une modification' : 'Sélectionnez un commit');
@@ -2415,6 +2733,7 @@ function initPerformanceMonitoring() {
 }
 
 document.querySelectorAll('[data-history-view]').forEach((button) => button.addEventListener('click', () => setHistoryView(button.dataset.historyView)));
+byId('showChronology').addEventListener('click', toggleChronologyView);
 byId('refreshHistory').addEventListener('click', () => loadRepositoryHistory());
 byId('caseSelect').addEventListener('change', (event) => selectHistoryFolder(event.currentTarget.value));
 byId('branchSelect').addEventListener('change', selectHistoryBranch);

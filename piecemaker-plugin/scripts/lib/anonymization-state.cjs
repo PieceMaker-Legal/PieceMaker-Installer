@@ -20,7 +20,11 @@ function anonymizationStateFile(caseRoot) {
 function normalizeRelativePath(value) {
   const relative = String(value || '').replaceAll('\\', '/').replace(/^\.\//, '');
   if (!relative || path.posix.isAbsolute(relative) || relative.split('/').includes('..')) return null;
-  return relative;
+  // macOS hands accented filenames back from readdir in NFD, while Python's
+  // pathlib yields NFC for the same file. Both sides must hash the same bytes or
+  // an accented piece ("Procès-verbal.pdf") gets two different sha256 keys and
+  // silently drops out of the join. Normalise to NFC unconditionally.
+  return relative.normalize('NFC');
 }
 
 function stateKey(relativePath) {
