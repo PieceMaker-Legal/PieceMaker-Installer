@@ -498,13 +498,19 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 
 /* --- Chronologie & graphe des liens --------------------------------------- */
 .chronology-pane { display: flex; flex-direction: column; min-height: 0; }
-.chronology-body { flex: 1; min-height: 0; overflow: auto; padding: 4px 2px 12px; }
+.chronology-body { flex: 1; min-height: 0; overflow: auto; padding: 2px 2px 8px; }
 .chronology-empty { border: 1px dashed #cbd6d4; border-radius: 10px; padding: 22px; color: var(--muted); text-align: center; }
 
-.chronology-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-.chronology-summary span { border-radius: 999px; background: #edf1ef; padding: 4px 11px; color: var(--brand-dark); font-size: .76rem; font-weight: 700; }
+/* En-tête partagé comprimé quand la chronologie occupe le volet : on rend au
+   maximum de hauteur à la frise (méta masquée, titre resserré). */
+#history .revision-column.chronology-mode .revision-header { min-height: 0; padding: 8px 20px; }
+.revision-column.chronology-mode .revision-header h2 { margin: 0; font-size: .9rem; }
+.revision-column.chronology-mode .revision-header p { display: none; }
 
-.chronology-toggle { display: inline-flex; gap: 4px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+.chronology-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
+.chronology-summary span { border-radius: 999px; background: #edf1ef; padding: 3px 10px; color: var(--brand-dark); font-size: .74rem; font-weight: 700; }
+
+.chronology-toggle { display: inline-flex; gap: 4px; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
 .chronology-toggle button { border: 0; border-radius: 999px; padding: 5px 14px; background: transparent; color: var(--muted); font-weight: 700; font-size: .8rem; cursor: pointer; }
 .chronology-toggle button.active { background: var(--brand); color: #fff; }
 
@@ -512,19 +518,19 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .chronology-timeline { display: flex; flex-direction: column; }
 .chronology-row { display: grid; grid-template-columns: 96px 1fr; gap: 12px; }
 .chronology-rail { position: relative; display: flex; flex-direction: column; align-items: flex-end; padding-top: 4px; }
-.chronology-rail::before { content: ""; position: absolute; top: 0; bottom: -18px; right: 5px; width: 2px; background: var(--line); }
+.chronology-rail::before { content: ""; position: absolute; top: 0; bottom: -10px; right: 5px; width: 2px; background: var(--line); }
 .chronology-row:last-child .chronology-rail::before { bottom: 50%; }
 .chronology-dot { position: relative; z-index: 1; width: 12px; height: 12px; border-radius: 999px; background: var(--brand); border: 2px solid var(--paper); }
-.chronology-date { margin-top: 4px; color: var(--muted); font-size: .72rem; font-weight: 700; }
-.chronology-card { margin: 0 0 18px; border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px; background: var(--card); }
+.chronology-date { margin-top: 3px; color: var(--muted); font-size: .72rem; font-weight: 700; }
+.chronology-card { margin: 0 0 10px; border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; background: var(--card); }
 .chronology-card.protected { border-style: dashed; opacity: .82; }
 .chronology-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.chronology-nature { border-radius: 999px; background: var(--accent); padding: 3px 9px; color: var(--brand-dark); font-size: .72rem; font-weight: 800; }
-.chronology-name { font-size: .92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
-.chronology-juris { margin-top: 5px; color: var(--muted); font-size: .78rem; }
-.chronology-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
-.chronology-nochip { margin-top: 8px; color: var(--muted); font-size: .74rem; font-style: italic; }
-.chronology-undated-head { margin: 6px 0 14px; color: var(--muted); font-size: .72rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.chronology-nature { border-radius: 999px; background: var(--accent); padding: 2px 9px; color: var(--brand-dark); font-size: .72rem; font-weight: 800; }
+.chronology-name { font-size: .9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.chronology-juris { margin-top: 4px; color: var(--muted); font-size: .78rem; }
+.chronology-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chronology-nochip { margin-top: 6px; color: var(--muted); font-size: .74rem; font-style: italic; }
+.chronology-undated-head { margin: 4px 0 8px; color: var(--muted); font-size: .72rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 
 .entity-chip { border-radius: 999px; padding: 3px 9px; font-size: .74rem; font-weight: 700; border: 1px solid transparent; }
 .entity-chip.cat-personne { background: #e5effb; color: #1d4e89; }

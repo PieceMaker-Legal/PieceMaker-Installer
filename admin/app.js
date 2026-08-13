@@ -1648,6 +1648,9 @@ function setDetailView(view) {
   byId('mappingView').hidden = view !== 'mapping';
   byId('telegramCaseView').hidden = view !== 'telegram';
   byId('chronologyPane').hidden = view !== 'chronology';
+  // La chronologie a besoin d'un maximum de hauteur : on comprime l'en-tête
+  // partagé (badge + titre, méta masquée) tant qu'elle occupe le volet.
+  document.querySelector('.revision-column')?.classList.toggle('chronology-mode', view === 'chronology');
   const chronologyToggle = byId('showChronology');
   if (chronologyToggle) {
     chronologyToggle.classList.toggle('active', view === 'chronology');
@@ -2460,6 +2463,10 @@ function renderChronologyGraph(data) {
 
   const root = svg('svg', {
     class: 'chronology-svg', viewBox: `0 0 ${width} ${height}`,
+    // Dimensions intrinsèques explicites : sans elles, une <svg> en width:100% /
+    // height:auto s'effondre à 0px de haut dans un ancêtre flex/grid (Safari,
+    // Firefox) — le graphe n'affichait alors rien du tout.
+    width, height,
     preserveAspectRatio: 'xMidYMin meet', role: 'img',
     'aria-label': 'Graphe des liens entre pièces et entités',
   });
