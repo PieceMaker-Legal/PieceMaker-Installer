@@ -1,10 +1,12 @@
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
 const {
+  checkOllamaModelUpdate,
   createManagedFile,
   isLocalOrigin,
   listDossiers,
@@ -17,6 +19,26 @@ const {
   saveManagedFile,
   updateEnvFile,
 } = require('../websocket-server/admin-routes.cjs');
+
+test('la vérification Ollama compare le digest local au manifeste distant sans télécharger le modèle', async () => {
+  const manifest = Buffer.from('{"schemaVersion":2,"layers":[]}');
+  const digest = crypto.createHash('sha256').update(manifest).digest('hex');
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    if (url.endsWith('/api/version')) return new Response(JSON.stringify({ version: '1.2.3' }));
+    if (url.endsWith('/api/tags')) {
+      return new Response(JSON.stringify({ models: [{ name: 'modele-test:latest', digest, size: 42 }] }));
+    }
+    if (url.includes('/manifests/')) return new Response(manifest);
+    return new Response('', { status: 404 });
+  };
+
+  const result = await checkOllamaModelUpdate('modele-test:latest', fetchImpl);
+  assert.equal(result.status, 'current');
+  assert.equal(calls.filter((url) => url.includes('/manifests/')).length, 1);
+  assert.ok(!calls.some((url) => url.includes('/api/pull')), 'aucun téléchargement ni pull ne doit être lancé');
+});
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-admin-test-'));

@@ -190,6 +190,7 @@ app.use('/api/admin', createAdminRouter({
     port: PORT,
     host: HOST,
     libreOffice: libreOfficeAvailable(),
+    terminalReady: Boolean(pty),
   }),
 }));
 

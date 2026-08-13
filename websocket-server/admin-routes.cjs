@@ -1,7 +1,8 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const crypto = require('node:crypto');
+const { spawn, spawnSync } = require('child_process');
 const { performance } = require('node:perf_hooks');
 const {
   listConfiguredCases,
@@ -349,6 +350,277 @@ function maskSecret(value) {
   if (!value) return { configured: false, hint: '' };
   const suffix = value.length > 4 ? value.slice(-4) : '';
   return { configured: true, hint: suffix ? `••••${suffix}` : 'configurée' };
+}
+
+function captureCommand(command, args = [], timeout = 3000) {
+  const executable = process.platform === 'win32' && !command.endsWith('.exe')
+    ? `${command}.cmd`
+    : command;
+  const result = spawnSync(executable, args, {
+    encoding: 'utf8',
+    timeout,
+    windowsHide: true,
+    // Windows cannot execute a .cmd shim directly. The command and arguments
+    // are constants owned by PieceMaker, never values supplied by the browser.
+    shell: process.platform === 'win32',
+  });
+  return {
+    ok: result.status === 0 && !result.error,
+    output: String(result.stdout || result.stderr || '').trim(),
+  };
+}
+
+function installedClaudePlugin() {
+  const result = captureCommand('claude', ['plugin', 'list', '--json'], 5000);
+  if (!result.ok) return null;
+  try {
+    const plugins = JSON.parse(result.output);
+    return Array.isArray(plugins)
+      ? plugins.find((plugin) => plugin?.id === 'piecemaker@piecemaker' && plugin.enabled !== false) || null
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchWithTimeout(fetchImpl, url, options = {}, timeout = 3000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    return await fetchImpl(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function ollamaState(fetchImpl = global.fetch) {
+  if (typeof fetchImpl !== 'function') return { installed: false, version: '', models: [] };
+  try {
+    const [versionResponse, tagsResponse] = await Promise.all([
+      fetchWithTimeout(fetchImpl, 'http://127.0.0.1:11434/api/version', {}, 1800).catch(() => null),
+      fetchWithTimeout(fetchImpl, 'http://127.0.0.1:11434/api/tags', {}, 2500),
+    ]);
+    if (!tagsResponse?.ok) return { installed: false, version: '', models: [] };
+    const data = await tagsResponse.json();
+    const versionData = versionResponse?.ok ? await versionResponse.json().catch(() => ({})) : {};
+    const models = Array.isArray(data.models) ? data.models.map((model) => ({
+      name: String(model.name || model.model || ''),
+      digest: String(model.digest || ''),
+      size: Number(model.size) || 0,
+      modifiedAt: model.modified_at || '',
+      family: model.details?.family || '',
+      parameterSize: model.details?.parameter_size || '',
+      quantization: model.details?.quantization_level || '',
+    })).filter((model) => model.name) : [];
+    return { installed: true, version: String(versionData.version || ''), models };
+  } catch {
+    return { installed: false, version: '', models: [] };
+  }
+}
+
+function ollamaRegistryReference(modelName) {
+  const value = String(modelName || '').trim();
+  if (!value || value.length > 240 || !/^[A-Za-z0-9._/-]+(?::[A-Za-z0-9._-]+)?$/.test(value)) {
+    throw new Error('Nom de modèle Ollama invalide.');
+  }
+  const lastSlash = value.lastIndexOf('/');
+  const tagSeparator = value.indexOf(':', lastSlash + 1);
+  const repositoryName = tagSeparator >= 0 ? value.slice(0, tagSeparator) : value;
+  const tag = tagSeparator >= 0 ? value.slice(tagSeparator + 1) : 'latest';
+  // Names beginning with a registry host (notably hf.co/...) are imports, not
+  // models published in Ollama's registry, so their update cannot be inferred.
+  if (/^[^/]+\.[^/]+\//.test(repositoryName)) return null;
+  const repository = repositoryName.includes('/') ? repositoryName : `library/${repositoryName}`;
+  return { repository, tag };
+}
+
+async function checkOllamaModelUpdate(modelName, fetchImpl = global.fetch) {
+  const reference = ollamaRegistryReference(modelName);
+  if (!reference) {
+    return { status: 'unknown', message: 'Ce modèle provient d’un registre externe ; vérification automatique indisponible.' };
+  }
+  const local = await ollamaState(fetchImpl);
+  const model = local.models.find((entry) => entry.name === modelName);
+  if (!model) throw new Error('Ce modèle local n’est plus disponible dans Ollama.');
+  const repositoryPath = reference.repository.split('/').map(encodeURIComponent).join('/');
+  const url = `https://registry.ollama.ai/v2/${repositoryPath}/manifests/${encodeURIComponent(reference.tag)}`;
+  let response;
+  try {
+    response = await fetchWithTimeout(fetchImpl, url, {
+      headers: { Accept: 'application/vnd.docker.distribution.manifest.v2+json' },
+    }, 8000);
+  } catch (error) {
+    return { status: 'unknown', message: `Registre Ollama injoignable (${error.message}).` };
+  }
+  if (response.status === 404) {
+    return { status: 'unknown', message: 'Modèle local ou privé : aucune version publique correspondante.' };
+  }
+  if (!response.ok) {
+    return { status: 'unknown', message: `Vérification impossible (registre HTTP ${response.status}).` };
+  }
+  const manifest = Buffer.from(await response.arrayBuffer());
+  const remoteDigest = crypto.createHash('sha256').update(manifest).digest('hex');
+  const updateAvailable = Boolean(model.digest) && remoteDigest !== model.digest.replace(/^sha256:/, '');
+  return updateAvailable
+    ? { status: 'update', message: 'Une mise à jour est disponible dans le registre Ollama.' }
+    : { status: 'current', message: 'Le modèle local est à jour.' };
+}
+
+async function configurationOverview({ repoRoot, homeDir, userHome, getRuntimeStatus, fetchImpl }) {
+  const env = readEnvFile(path.join(repoRoot, '.env'));
+  const installer = readJson(path.join(homeDir, 'state.json'), { steps: {} });
+  const steps = installer.steps || {};
+  const runtime = getRuntimeStatus();
+  const plugin = installedClaudePlugin();
+  const claude = captureCommand('claude', ['--version']);
+  const codex = captureCommand('codex', ['--version']);
+  const clients = [
+    claude.ok && { name: 'Claude Code', version: claude.output.replace(/\s*\(Claude Code\)\s*$/i, '') },
+    codex.ok && { name: 'Codex', version: codex.output.replace(/^codex(?:-cli)?\s*/i, '') },
+  ].filter(Boolean);
+  const hookFiles = [
+    'protect-originals.mjs',
+    'anonymize-read.mjs',
+    'deanonymize-write.mjs',
+    'commit-track.mjs',
+    'billing-track.mjs',
+  ].map((name) => path.join(repoRoot, 'piecemaker-plugin', 'scripts', name));
+  const hooksReady = hookFiles.every((file) => fs.existsSync(file))
+    && fs.existsSync(path.join(repoRoot, 'piecemaker-plugin', 'hooks', 'hooks.json'));
+  let nodePtyReady = false;
+  try { nodePtyReady = Boolean(require.resolve('node-pty')); } catch { /* dépendance optionnelle */ }
+
+  const mcpItems = [
+    {
+      name: 'PieceMaker · Word',
+      installed: fs.existsSync(path.join(repoRoot, 'mcp-server', 'mcp-server-local.js')),
+      configured: true,
+      detail: 'Outils locaux pour lire, éditer et tamponner les documents Word.',
+    },
+    {
+      name: 'Légifrance',
+      installed: fs.existsSync(path.join(repoRoot, 'piecemaker-plugin', 'mcp', 'legifrance', 'mcp_stdio_server.py')),
+      configured: Boolean(env.LEGIFRANCE_CLIENT_ID && env.LEGIFRANCE_CLIENT_SECRET),
+      detail: 'Recherche juridique locale via les API officielles PISTE.',
+    },
+  ];
+  const models = await ollamaState(fetchImpl);
+  const telegram = getTelegramState({ repoRoot, homeDir, userHome });
+
+  // Moteurs Python locaux du venv — détection par présence de paquet, sans import
+  // (importer gliner2/mineru chargerait des centaines de Mo à chaque appel).
+  const config = readJson(path.join(homeDir, 'config.json'), {});
+  const venvDir = config.venvPath || path.join(homeDir, 'venv');
+  const sitePackages = (() => {
+    if (process.platform === 'win32') return path.join(venvDir, 'Lib', 'site-packages');
+    const libDir = path.join(venvDir, 'lib');
+    try {
+      const py = fs.readdirSync(libDir).find((name) => name.startsWith('python'));
+      return py ? path.join(libDir, py, 'site-packages') : '';
+    } catch { return ''; }
+  })();
+  const hasPackage = (name) => Boolean(sitePackages) && fs.existsSync(path.join(sitePackages, name));
+  const glinerDir = path.join(repoRoot, 'websocket-server', 'scripts', 'presidio-gliner');
+  const glinerReady = fs.existsSync(path.join(glinerDir, 'presidio-gliner.py'))
+    && (hasPackage('gliner2') || hasPackage('gliner') || steps['03-python-gliner']?.status === 'done');
+  const coreml = (() => {
+    try { return fs.readdirSync(glinerDir).some((name) => name.endsWith('.mlmodelc')); } catch { return false; }
+  })();
+  const mineruReady = hasPackage('mineru') || hasPackage('magic_pdf')
+    || fs.existsSync(path.join(venvDir, 'bin', 'mineru'));
+  const folders = listConfiguredCases(readRegistryConfig(path.join(homeDir, 'config.json'))).map((entry) => {
+    const bot = telegram.dossiers.find((candidate) => {
+      try { return path.resolve(candidate.workdir) === path.resolve(entry.root); } catch { return false; }
+    });
+    return {
+      id: entry.id,
+      name: entry.name,
+      path: entry.root,
+      bot: bot ? {
+        id: bot.id,
+        name: bot.name,
+        configured: Boolean(bot.linked),
+        running: Boolean(bot.running),
+      } : null,
+    };
+  });
+
+  return {
+    components: {
+      client: {
+        name: clients.map((client) => client.name).join(' + ') || 'Client IA',
+        installed: clients.length > 0,
+        summary: clients.length
+          ? clients.map((client) => `${client.name}${client.version ? ` ${client.version}` : ''}`).join(' · ')
+          : 'Aucun client en ligne de commande détecté',
+        clients,
+        pluginInstalled: Boolean(plugin) || steps['09-claude-assets']?.status === 'done',
+        pluginVersion: plugin?.version || '',
+      },
+      terminal: {
+        name: 'Terminal intégré',
+        installed: runtime.terminalReady ?? nodePtyReady,
+        summary: runtime.terminalReady ?? nodePtyReady
+          ? `PTY local · ${os.userInfo().shell || process.env.COMSPEC || 'shell système'}`
+          : 'Le pont PTY optionnel est absent',
+        shell: os.userInfo().shell || process.env.COMSPEC || '',
+      },
+      hooks: {
+        name: 'Hooks PieceMaker',
+        installed: hooksReady && (Boolean(plugin) || steps['06-hooks']?.status === 'done'),
+        summary: `${hookFiles.filter((file) => fs.existsSync(file)).length}/${hookFiles.length} garde-fous disponibles`,
+        count: hookFiles.filter((file) => fs.existsSync(file)).length,
+        installerStatus: steps['06-hooks']?.status || '',
+      },
+      mcp: {
+        name: 'MCP locaux',
+        installed: mcpItems.every((item) => item.installed),
+        configured: mcpItems.every((item) => item.installed && item.configured),
+        summary: `${mcpItems.filter((item) => item.installed).length}/${mcpItems.length} serveurs présents`,
+        items: mcpItems,
+      },
+      gliner: {
+        name: 'GLiNER · PII',
+        installed: glinerReady,
+        summary: glinerReady
+          ? coreml ? 'Détection locale · GPU CoreML' : 'Détection locale · CPU'
+          : 'Modèle d’anonymisation absent',
+        coreml,
+        engine: coreml ? 'CoreML (GPU)' : 'torch (CPU)',
+      },
+      mineru: {
+        name: 'MinerU · OCR',
+        installed: mineruReady,
+        optional: true,
+        summary: mineruReady
+          ? 'OCR local · PDF scannés et images'
+          : 'Optionnel · non installé',
+      },
+      telegram: {
+        name: 'Telegram',
+        installed: true,
+        optional: true,
+        configured: Boolean(telegram.assistant.token.configured || telegram.monitor.token.configured),
+        summary: (() => {
+          const running = [telegram.assistant.running && 'Assistant', telegram.monitor.running && 'Surveillance'].filter(Boolean);
+          if (running.length) return `${running.join(' + ')} en ligne`;
+          if (telegram.assistant.token.configured || telegram.monitor.token.configured) return 'Configuré · arrêté';
+          return 'Aucun bot configuré';
+        })(),
+        bots: [
+          { name: telegram.assistant.name, role: 'Assistant', configured: Boolean(telegram.assistant.token.configured), running: Boolean(telegram.assistant.running) },
+          { name: telegram.monitor.name, role: 'Surveillance', configured: Boolean(telegram.monitor.token.configured), running: Boolean(telegram.monitor.running) },
+        ],
+      },
+    },
+    models: {
+      provider: 'Ollama',
+      installed: models.installed,
+      version: models.version,
+      items: models.models,
+    },
+    folders,
+  };
 }
 
 function normalizeManagedPath(relativePath) {
@@ -719,6 +991,7 @@ function createAdminRouter({
   homeDir = path.join(os.homedir(), '.piecemaker'),
   userHome = os.homedir(),
   getRuntimeStatus = () => ({}),
+  fetchImpl = global.fetch,
   pickFolder = selectLocalFolder,
   projectPluginInstaller = installProjectPlugin,
 } = {}) {
@@ -756,6 +1029,33 @@ function createAdminRouter({
       },
       ...getRuntimeStatus(),
     });
+  });
+
+  router.get('/configuration', async (req, res) => {
+    try {
+      res.json(await configurationOverview({
+        repoRoot,
+        homeDir,
+        userHome,
+        getRuntimeStatus,
+        fetchImpl,
+      }));
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  router.post('/configuration/models/check', async (req, res) => {
+    try {
+      res.json({
+        ok: true,
+        model: String(req.body?.model || ''),
+        checkedAt: new Date().toISOString(),
+        ...await checkOllamaModelUpdate(req.body?.model, fetchImpl),
+      });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
   });
 
   router.get('/settings', (req, res) => {
@@ -1287,6 +1587,8 @@ function createAdminRouter({
 }
 
 module.exports = {
+  checkOllamaModelUpdate,
+  configurationOverview,
   createLegalCase,
   createAdminRouter,
   createManagedFile,

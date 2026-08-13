@@ -6,18 +6,62 @@ const test = require('node:test');
 const root = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
-test('Dossiers est le premier onglet et Vue d’ensemble est intégrée aux paramètres', () => {
+test('Dossiers est le premier onglet ; Paramètres et Telegram sont repliés dans la Configuration', () => {
   const html = read('admin/index.html');
   const nav = html.match(/<nav class="tabs"[\s\S]*?<\/nav>/)?.[0] || '';
   const settings = html.match(/<section id="settings"[\s\S]*?<form id="settingsForm">/)?.[0] || '';
 
   assert.match(nav, /<button class="tab active" data-tab="history">Dossiers<\/button>/);
-  assert.ok(nav.indexOf('Dossiers') < nav.indexOf('Paramètres'));
+  // Les onglets Paramètres et Telegram ont disparu de la barre : tout passe par Configuration.
+  assert.doesNotMatch(nav, /data-tab="settings"/);
+  assert.doesNotMatch(nav, /data-tab="telegram"/);
   assert.doesNotMatch(nav, /Vue d’ensemble|dashboard/);
   assert.doesNotMatch(html, /id="dashboard"/);
+  // Le contenu Paramètres subsiste (déplacé dans le tiroir) avec ses métriques.
   for (const id of ['version', 'wordStatus', 'certStatus', 'assetCount', 'repoRoot']) {
     assert.match(settings, new RegExp(`id="${id}"`));
   }
+  // Groupes déplaçables dans le tiroir de configuration.
+  for (const id of ['settingsDrawerGroup', 'telegramDrawerGroup', 'institutionalTermsCard']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+});
+
+test('Configuration montre le flux d’anonymisation, les moteurs locaux et héberge Paramètres/Telegram', () => {
+  const html = read('admin/index.html');
+  const app = read('admin/app.js');
+  const css = read('admin/styles.css');
+  const routes = read('websocket-server/admin-routes.cjs');
+  const nav = html.match(/<nav class="tabs"[\s\S]*?<\/nav>/)?.[0] || '';
+  const configuration = html.match(/<section id="configuration"[\s\S]*?<section id="settings"/)?.[0] || '';
+
+  assert.match(nav, /data-tab="configuration">Configuration/);
+  for (const component of ['client', 'terminal', 'hooks', 'mcp', 'telegram', 'gliner', 'mineru', 'ollama', 'docs']) {
+    assert.match(configuration, new RegExp(`data-config-component="${component}"`));
+  }
+  // Le rôle des hooks à la lecture / à l’écriture est explicité dans le schéma.
+  assert.match(configuration, /cfg-transform-row read/);
+  assert.match(configuration, /cfg-transform-row write/);
+  for (const id of [
+    'configurationModelList', 'configurationFolderList', 'configurationDrawer',
+    'configurationDrawerBackdrop', 'refreshConfiguration',
+  ]) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(app, /api\('\/api\/admin\/configuration'\)/);
+  assert.match(app, /\/api\/admin\/configuration\/models\/check/);
+  assert.match(app, /openConfigurationDrawer\('folder'/);
+  // Paramètres, Telegram et termes institutionnels sont montés dans le tiroir.
+  assert.match(app, /mountDrawerForm\('settingsDrawerGroup'/);
+  assert.match(app, /mountDrawerForm\('telegramDrawerGroup'/);
+  assert.match(app, /mountDrawerForm\('institutionalTermsCard'/);
+  // Le serveur détecte GLiNER, MinerU et Telegram parmi les composants.
+  for (const component of ['gliner', 'mineru', 'telegram']) {
+    assert.match(routes, new RegExp(`${component}: \\{`));
+  }
+  assert.match(css, /\.configuration-map/);
+  assert.match(css, /\.configuration-drawer/);
+  assert.match(css, /\.cfg-boundary/);
 });
 
 test('les paramètres permettent de modifier le nom appliqué à chaque commit', () => {

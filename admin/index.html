@@ -17,9 +17,8 @@
 
     <nav class="tabs" aria-label="Sections">
       <button class="tab active" data-tab="history">Dossiers</button>
-      <button class="tab" data-tab="settings">Paramètres</button>
+      <button class="tab" data-tab="configuration">Configuration</button>
       <button class="tab" data-tab="pieces">Tampon et pièces</button>
-      <button class="tab" data-tab="telegram">Telegram</button>
       <button class="tab" data-tab="files">Skills et agents</button>
     </nav>
 
@@ -191,6 +190,155 @@
         </div>
       </section>
 
+      <section id="configuration" class="panel">
+        <div class="configuration-intro">
+          <div>
+            <p class="eyebrow">CARTE DU PROJET</p>
+            <h2>Votre installation, en un regard</h2>
+          </div>
+          <button id="refreshConfiguration" class="button secondary" type="button">Actualiser</button>
+        </div>
+
+        <div id="configurationMap" class="configuration-map" aria-busy="true">
+          <!-- 1 · Client IA -->
+          <div class="cfg-client-row">
+            <button class="configuration-node client-node loading" type="button" data-config-component="client">
+              <span class="configuration-node-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path></svg>
+              </span>
+              <span class="configuration-node-copy"><small>Client IA</small><strong id="configurationClientName">Détection…</strong><span id="configurationClientSummary">Lecture de l’installation locale</span></span>
+              <span id="configurationClientStatus" class="component-state pending"><i></i>Vérification</span>
+              <span class="configuration-node-arrow" aria-hidden="true">›</span>
+            </button>
+          </div>
+
+          <!-- Accès au client -->
+          <p class="cfg-band-label">On lui parle par</p>
+          <div class="cfg-access-row">
+            <button class="configuration-node compact loading" type="button" data-config-component="terminal">
+              <span class="configuration-node-icon terminal" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="m7 9 3 3-3 3M13 15h4"></path></svg>
+              </span>
+              <span class="configuration-node-copy"><strong>Terminal</strong><span id="configurationTerminalSummary">Détection…</span></span>
+              <span id="configurationTerminalStatus" class="component-state pending"><i></i>Vérification</span>
+            </button>
+            <button class="configuration-node compact loading" type="button" data-config-component="mcp">
+              <span class="configuration-node-icon mcp" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"></circle><circle cx="18" cy="6" r="3"></circle><circle cx="12" cy="18" r="3"></circle><path d="m8.6 7.5 2.2 7M15.4 7.5l-2.2 7M9 6h6"></path></svg>
+              </span>
+              <span class="configuration-node-copy"><strong>MCP</strong><span id="configurationMcpSummary">Détection…</span></span>
+              <span id="configurationMcpStatus" class="component-state pending"><i></i>Vérification</span>
+            </button>
+            <button class="configuration-node compact loading" type="button" data-config-component="telegram">
+              <span class="configuration-node-icon telegram" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M21 4 3 11l6 2 2 6 3-4 4 3z"></path><path d="m9 13 8-6"></path></svg>
+              </span>
+              <span class="configuration-node-copy"><strong>Telegram</strong><span id="configurationTelegramSummary">Détection…</span></span>
+              <span id="configurationTelegramStatus" class="component-state pending"><i></i>Vérification</span>
+            </button>
+          </div>
+
+          <div class="cfg-down-arrow" aria-hidden="true"><span></span></div>
+
+          <!-- 2 · Barrière d'anonymisation (hooks) -->
+          <div class="cfg-boundary">
+            <button class="configuration-node hooks-node loading" type="button" data-config-component="hooks">
+              <span class="configuration-node-icon hooks" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"></path><path d="m9 12 2 2 4-4"></path></svg>
+              </span>
+              <span class="configuration-node-copy"><small>Barrière d’anonymisation</small><strong>Hooks</strong><span id="configurationHooksSummary">Détection…</span></span>
+              <span id="configurationHooksStatus" class="component-state pending"><i></i>Vérification</span>
+              <span class="configuration-node-arrow" aria-hidden="true">›</span>
+            </button>
+            <div class="cfg-transform" aria-hidden="false">
+              <div class="cfg-transform-row read">
+                <span class="cfg-dir">Lecture</span>
+                <span class="cfg-chip name">Jean Dupont</span>
+                <span class="cfg-arrow">→</span>
+                <span class="cfg-chip code">PERSONNE_1</span>
+                <span class="cfg-note">le modèle ne voit que des codes</span>
+              </div>
+              <div class="cfg-transform-row write">
+                <span class="cfg-dir">Écriture</span>
+                <span class="cfg-chip code">PERSONNE_1</span>
+                <span class="cfg-arrow">→</span>
+                <span class="cfg-chip name">Jean Dupont</span>
+                <span class="cfg-note">le dossier garde les vrais noms</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="cfg-down-arrow" aria-hidden="true"><span></span></div>
+
+          <!-- 3 · Le dossier -->
+          <div class="cfg-client-row">
+            <button class="configuration-node docs-node" type="button" data-config-component="docs">
+              <span class="configuration-node-icon docs" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M4 4h9l3 3h4v13H4z"></path><path d="M8 13h8M8 16h5"></path></svg>
+              </span>
+              <span class="configuration-node-copy"><small>Sur le disque</small><strong>Dossier &amp; pièces</strong><span id="configurationDocsSummary">Les fichiers ne sont jamais réécrits — seule la vue du modèle est codée.</span></span>
+              <span class="configuration-node-arrow" aria-hidden="true">›</span>
+            </button>
+          </div>
+
+          <!-- Moteurs locaux -->
+          <p class="cfg-band-label engines">Moteurs locaux</p>
+          <div class="cfg-engines-row">
+            <button class="configuration-node compact loading" type="button" data-config-component="gliner">
+              <span class="configuration-node-icon gliner" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M12 3v3M12 18v3M3 12h3M18 12h3M6 6l2 2M16 16l2 2M18 6l-2 2M8 16l-2 2"></path></svg>
+              </span>
+              <span class="configuration-node-copy"><strong>GLiNER · PII</strong><span id="configurationGlinerSummary">Détection…</span></span>
+              <span id="configurationGlinerStatus" class="component-state pending"><i></i>Vérification</span>
+            </button>
+            <button class="configuration-node compact loading" type="button" data-config-component="mineru">
+              <span class="configuration-node-icon mineru" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"></path><path d="M4 9h16M9 9v10"></path></svg>
+              </span>
+              <span class="configuration-node-copy"><strong>MinerU · OCR</strong><span id="configurationMineruSummary">Détection…</span></span>
+              <span id="configurationMineruStatus" class="component-state pending"><i></i>Vérification</span>
+            </button>
+            <button class="configuration-node compact loading" type="button" data-config-component="ollama">
+              <span class="configuration-node-icon ollama" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M12 3a5 5 0 0 1 5 5v2a4 4 0 0 1 0 8H7a4 4 0 0 1 0-8V8a5 5 0 0 1 5-5z"></path><path d="M9 11h.01M15 11h.01"></path></svg>
+              </span>
+              <span class="configuration-node-copy"><strong>Ollama · LLM</strong><span id="configurationOllamaSummary">Détection…</span></span>
+              <span id="configurationOllamaStatus" class="component-state pending"><i></i>Vérification</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="configuration-detail-grid">
+          <article class="configuration-list-card models-card">
+            <header class="configuration-list-heading">
+              <div>
+                <p class="eyebrow">MODÈLES LOCAUX</p>
+                <h2>Ollama <span id="configurationOllamaVersion" class="quiet-version"></span></h2>
+                <p>Cliquez sur un modèle pour vérifier sa version dans le registre.</p>
+              </div>
+              <span id="configurationModelCount" class="configuration-count">—</span>
+            </header>
+            <div id="configurationModelList" class="configuration-item-list" aria-live="polite">
+              <div class="configuration-empty">Recherche des modèles installés…</div>
+            </div>
+          </article>
+
+          <article class="configuration-list-card folders-card">
+            <header class="configuration-list-heading">
+              <div>
+                <p class="eyebrow">DOSSIERS & TELEGRAM</p>
+                <h2>Dossiers enregistrés</h2>
+                <p>Le bot associé à chaque dossier apparaît directement dans la liste.</p>
+              </div>
+              <span id="configurationFolderCount" class="configuration-count">—</span>
+            </header>
+            <div id="configurationFolderList" class="configuration-item-list" aria-live="polite">
+              <div class="configuration-empty">Chargement des dossiers…</div>
+            </div>
+          </article>
+        </div>
+      </section>
+
       <section id="settings" class="panel">
         <div class="hero card">
           <div>
@@ -200,6 +348,7 @@
           </div>
           <a class="button secondary" href="/taskpane.html">Ouvrir le volet Word</a>
         </div>
+        <div id="settingsDrawerGroup" class="drawer-form-group">
         <div class="metrics">
           <article class="card metric"><span>Version</span><strong id="version">—</strong></article>
           <article class="card metric"><span>Word connecté</span><strong id="wordStatus">—</strong></article>
@@ -246,8 +395,9 @@
             <button class="button primary" type="submit">Enregistrer les paramètres</button>
           </div>
         </form>
+        </div>
 
-        <article class="card form-card">
+        <article id="institutionalTermsCard" class="card form-card">
           <div class="section-heading">
             <div>
               <p class="eyebrow">ANONYMISATION</p>
@@ -352,6 +502,7 @@
       </section>
 
       <section id="telegram" class="panel">
+        <div id="telegramDrawerGroup" class="drawer-form-group">
         <form id="telegramForm">
           <div class="telegram-intro card">
             <div>
@@ -413,6 +564,7 @@
           </div>
           <div id="dossierBotList" class="dossier-bot-list">Chargement…</div>
         </article>
+        </div>
       </section>
 
       <section id="files" class="panel">
@@ -469,6 +621,16 @@
       </section>
     </main>
   </div>
+
+  <div id="configurationDrawerBackdrop" class="configuration-drawer-backdrop" hidden></div>
+  <aside id="configurationDrawer" class="configuration-drawer" role="dialog" aria-modal="true" aria-labelledby="configurationDrawerTitle" hidden>
+    <header class="configuration-drawer-header">
+      <div><p id="configurationDrawerEyebrow" class="eyebrow">CONFIGURATION</p><h2 id="configurationDrawerTitle">Composant</h2></div>
+      <button id="closeConfigurationDrawer" class="configuration-drawer-close" type="button" aria-label="Fermer le panneau">×</button>
+    </header>
+    <div id="configurationDrawerBody" class="configuration-drawer-body"></div>
+    <footer id="configurationDrawerActions" class="configuration-drawer-actions"></footer>
+  </aside>
 
   <dialog id="createFileDialog">
     <form id="createFileForm" method="dialog" class="dialog-card">
