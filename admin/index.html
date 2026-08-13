@@ -340,15 +340,8 @@
       </section>
 
       <section id="settings" class="panel">
-        <div class="hero card">
-          <div>
-            <p class="eyebrow">SERVEUR LOCAL</p>
-            <h2>PieceMaker est prêt</h2>
-            <p>État du serveur et configuration locale.</p>
-          </div>
-          <a class="button secondary" href="/taskpane.html">Ouvrir le volet Word</a>
-        </div>
         <div id="settingsDrawerGroup" class="drawer-form-group">
+        <div class="drawer-inline-actions"><a class="button secondary" href="/taskpane.html">Ouvrir le volet Word</a></div>
         <div class="metrics">
           <article class="card metric"><span>Version</span><strong id="version">—</strong></article>
           <article class="card metric"><span>Word connecté</span><strong id="wordStatus">—</strong></article>
@@ -504,13 +497,13 @@
       <section id="telegram" class="panel">
         <div id="telegramDrawerGroup" class="drawer-form-group">
         <form id="telegramForm">
+          <div class="drawer-inline-actions"><button id="refreshTelegram" class="button secondary" type="button">Actualiser les états</button></div>
           <div class="telegram-intro card">
             <div>
               <p class="eyebrow">DEUX BOTS SÉPARÉS</p>
               <h2>Assistant et surveillance Telegram</h2>
               <p>L’Assistant ouvre une session Claude conversationnelle. Le bot de surveillance est déterministe, sans LLM, et utilise obligatoirement un autre token.</p>
             </div>
-            <button id="refreshTelegram" class="button secondary" type="button">Actualiser les états</button>
           </div>
 
           <div class="telegram-grid">
