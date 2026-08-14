@@ -663,20 +663,23 @@
       </header>
 
       <div class="plugin-dialog-tabs" role="tablist">
-        <button id="pluginTabButtonPiecemaker" class="plugin-dialog-tab active" type="button" role="tab" aria-selected="true" aria-controls="pluginTabPiecemaker" data-plugin-tab="piecemaker">Plugin PieceMaker</button>
-        <button id="pluginTabButtonMarketplace" class="plugin-dialog-tab" type="button" role="tab" aria-selected="false" aria-controls="pluginTabMarketplace" data-plugin-tab="marketplace">Marketplace officiel</button>
+        <button id="pluginTabButtonLegal" class="plugin-dialog-tab active" type="button" role="tab" aria-selected="true" aria-controls="pluginTabLegal" data-plugin-tab="legal">Plugin legal Claude</button>
+        <button id="pluginTabButtonOfficial" class="plugin-dialog-tab" type="button" role="tab" aria-selected="false" aria-controls="pluginTabOfficial" data-plugin-tab="official">Marketplace officiel</button>
       </div>
 
-      <div id="pluginTabPiecemaker" class="plugin-dialog-panel" role="tabpanel">
-        <p class="hint">Cochez les skills et agents du plugin PieceMaker à rendre disponibles dans Claude Code. Un composant déjà enregistré est coché ; le décocher puis cliquer sur « Ajouter » le retire de ~/.claude. Un fichier personnel homonyme (« Conflit ») n’est jamais modifié.</p>
-        <div id="pluginComponentsList" class="plugin-component-list" role="tree" aria-label="Skills et agents du plugin PieceMaker">Chargement…</div>
+      <div id="pluginTabLegal" class="plugin-dialog-panel" role="tabpanel">
+        <p class="hint">Plugins juridiques du marketplace <strong>claude-for-legal</strong> d’Anthropic (commercial, contentieux, propriété intellectuelle, conformité…). Cochez ceux à installer et activer dans Claude Code ; décocher un plugin déjà actif le désactive (jamais désinstallé). La recherche filtre localement le catalogue.</p>
+        <p id="legalStatus" class="muted">Chargement…</p>
+        <button id="registerLegalMarketplace" class="button ghost compact" type="button" hidden>Découvrir le plugin legal Claude</button>
+        <input id="legalSearch" type="search" class="marketplace-search" placeholder="Rechercher un plugin legal (nom, description)…" aria-label="Rechercher un plugin legal">
+        <div id="legalList" class="plugin-component-list" role="tree" aria-label="Plugins juridiques claude-for-legal">Chargement…</div>
         <div class="actions">
-          <button id="applyPluginComponents" class="button primary" type="button">Ajouter</button>
+          <button id="applyLegalComponents" class="button primary" type="button">Installer la sélection</button>
         </div>
       </div>
 
-      <div id="pluginTabMarketplace" class="plugin-dialog-panel" hidden role="tabpanel">
-        <p class="hint">Plugins-connecteurs des marketplaces Claude Code déjà enregistrées sur ce poste (hors PieceMaker). Claude Code n’expose pas de recherche distante : la recherche ci-dessous filtre localement ce que la CLI a déjà listé. Décocher un connecteur déjà actif le désactive (jamais désinstallé).</p>
+      <div id="pluginTabOfficial" class="plugin-dialog-panel" hidden role="tabpanel">
+        <p class="hint">Plugins-connecteurs du marketplace officiel <strong>claude-plugins-official</strong> d’Anthropic. Claude Code n’expose pas de recherche distante : la recherche ci-dessous filtre localement ce que la CLI a déjà listé. Décocher un connecteur déjà actif le désactive (jamais désinstallé).</p>
         <p id="marketplaceStatus" class="muted">Chargement…</p>
         <button id="registerOfficialMarketplace" class="button ghost compact" type="button" hidden>Découvrir le marketplace officiel Claude Code</button>
         <input id="marketplaceSearch" type="search" class="marketplace-search" placeholder="Rechercher un connecteur (nom, description)…" aria-label="Rechercher un connecteur">

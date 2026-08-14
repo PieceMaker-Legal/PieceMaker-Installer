@@ -525,6 +525,25 @@ async function ensureClaudePluginActive({
 // -----------------------------------------------------------------------
 const OFFICIAL_MARKETPLACE_NAME = 'claude-plugins-official';
 const OFFICIAL_MARKETPLACE_SLUG = 'anthropics/claude-plugins-official';
+// Marketplace « Claude for Legal » d'Anthropic (dépôt anthropics/claude-for-legal),
+// suite de plugins juridiques par domaine (commercial-legal, litigation-legal,
+// ip-legal…). C'est le catalogue de l'onglet « Plugin legal Claude » du pop-up —
+// distinct du marketplace généraliste claude-plugins-official (onglet
+// « Marketplace officiel »). Même mécanique CLI que l'officiel : add / list /
+// install / enable / disable, scoping par nom de marketplace.
+const LEGAL_MARKETPLACE_NAME = 'claude-for-legal';
+const LEGAL_MARKETPLACE_SLUG = 'anthropics/claude-for-legal';
+
+// Les deux catalogues énumérables depuis le pop-up, indexés par le `scope`
+// que le frontend passe (onglet legal vs officiel). Tout scope inconnu retombe
+// sur l'officiel — le comportement historique.
+const MARKETPLACE_SCOPES = {
+  legal: { name: LEGAL_MARKETPLACE_NAME, slug: LEGAL_MARKETPLACE_SLUG },
+  official: { name: OFFICIAL_MARKETPLACE_NAME, slug: OFFICIAL_MARKETPLACE_SLUG },
+};
+function marketplaceForScope(scope) {
+  return MARKETPLACE_SCOPES[scope] || MARKETPLACE_SCOPES.official;
+}
 
 /** Marketplaces Claude Code enregistrées sur ce poste, hors la nôtre. */
 function listRegisteredMarketplaces(runCommand = captureCommand) {
@@ -553,14 +572,24 @@ function listRegisteredMarketplaces(runCommand = captureCommand) {
  * commentaire au-dessus de OFFICIAL_MARKETPLACE_NAME. `runCommand`
  * injectable pour les tests.
  */
-function listMarketplaceConnectors(runCommand = captureCommand) {
+function listMarketplaceConnectors(runCommand = captureCommand, options = {}) {
+  // `marketplaceName` restreint le catalogue à un seul marketplace (onglet
+  // legal ↔ claude-for-legal, onglet officiel ↔ claude-plugins-official) ;
+  // absent, on garde le comportement historique (tous les marketplaces hors
+  // piecemaker). Un plugin d'un autre marketplace n'apparaît alors jamais dans
+  // l'onglet, et `applyMarketplaceSelection` n'y touche pas.
+  const scopeName = options.marketplaceName || null;
+  const inScope = (marketplace) => !scopeName || marketplace === scopeName;
   const marketplaces = listRegisteredMarketplaces(runCommand);
-  const officialRegistered = marketplaces.some((entry) => entry.name === OFFICIAL_MARKETPLACE_NAME);
+  // `registered` : le marketplace de l'onglet est-il déjà déclaré sur ce poste ?
+  // (scopé sur son nom, sinon sur l'officiel — comme avant.)
+  const registered = marketplaces.some((entry) => entry.name === (scopeName || OFFICIAL_MARKETPLACE_NAME));
   const result = runCommand('claude', ['plugin', 'list', '--available', '--json'], 8000);
   if (!result.ok) {
     return {
       marketplaces,
-      officialRegistered,
+      officialRegistered: registered,
+      registered,
       plugins: [],
       reason: result.output || 'Échec de l’appel « claude plugin list --available --json ».',
     };
@@ -573,6 +602,7 @@ function listMarketplaceConnectors(runCommand = captureCommand) {
   const seen = new Set();
   for (const entry of available) {
     if (!entry?.pluginId || entry.marketplaceName === CLAUDE_MARKETPLACE_NAME || seen.has(entry.pluginId)) continue;
+    if (!inScope(entry.marketplaceName)) continue;
     seen.add(entry.pluginId);
     plugins.push({
       id: entry.pluginId,
@@ -589,8 +619,9 @@ function listMarketplaceConnectors(runCommand = captureCommand) {
   // une description vide (limite de la CLI, pas une omission de notre part).
   for (const entry of installed) {
     if (!entry?.id || entry.id.endsWith(`@${CLAUDE_MARKETPLACE_NAME}`) || seen.has(entry.id)) continue;
-    seen.add(entry.id);
     const [name, marketplace] = entry.id.split('@');
+    if (!inScope(marketplace)) continue;
+    seen.add(entry.id);
     plugins.push({
       id: entry.id,
       name,
@@ -602,22 +633,24 @@ function listMarketplaceConnectors(runCommand = captureCommand) {
     });
   }
 
-  return { marketplaces, officialRegistered, plugins };
+  return { marketplaces, officialRegistered: registered, registered, plugins };
 }
 
 /**
- * Enregistre (ou rafraîchit s'il l'est déjà) le marketplace officiel
- * Anthropic — bouton « Découvrir le marketplace officiel » de l'onglet
- * Marketplace, pour un poste qui n'a encore que le marketplace piecemaker.
+ * Enregistre (ou rafraîchit s'il l'est déjà) un marketplace Anthropic —
+ * bouton « Découvrir le marketplace… » des onglets du pop-up. `marketplace`
+ * ({ name, slug }) désigne le catalogue voulu : par défaut le marketplace
+ * officiel généraliste, ou celui du scope (legal → claude-for-legal), pour un
+ * poste qui n'a encore que le marketplace piecemaker.
  */
-function registerOfficialMarketplace(runCommand = captureCommand) {
+function registerOfficialMarketplace(runCommand = captureCommand, marketplace = MARKETPLACE_SCOPES.official) {
   const alreadyRegistered = listRegisteredMarketplaces(runCommand)
-    .some((entry) => entry.name === OFFICIAL_MARKETPLACE_NAME);
+    .some((entry) => entry.name === marketplace.name);
   const action = alreadyRegistered
-    ? runCommand('claude', ['plugin', 'marketplace', 'update', OFFICIAL_MARKETPLACE_NAME], 8000)
-    : runCommand('claude', ['plugin', 'marketplace', 'add', OFFICIAL_MARKETPLACE_SLUG], 15000);
+    ? runCommand('claude', ['plugin', 'marketplace', 'update', marketplace.name], 8000)
+    : runCommand('claude', ['plugin', 'marketplace', 'add', marketplace.slug], 15000);
   if (!action.ok) {
-    return { ok: false, alreadyRegistered, reason: action.output || 'Échec de l’enregistrement du marketplace officiel.' };
+    return { ok: false, alreadyRegistered, reason: action.output || `Échec de l’enregistrement du marketplace « ${marketplace.name} ».` };
   }
   return { ok: true, alreadyRegistered };
 }
@@ -633,9 +666,12 @@ function registerOfficialMarketplace(runCommand = captureCommand) {
  * connecteur déjà dans l'état voulu n'appelle aucune commande. Chaque appel
  * est best-effort — un échec individuel n'empêche pas les suivants.
  */
-function applyMarketplaceSelection(selection, runCommand = captureCommand) {
+function applyMarketplaceSelection(selection, runCommand = captureCommand, options = {}) {
   const wanted = new Set((Array.isArray(selection) ? selection : []).map(String));
-  const { plugins } = listMarketplaceConnectors(runCommand);
+  // Scopé au marketplace de l'onglet : décocher un plugin ne peut jamais
+  // désactiver un connecteur d'un autre marketplace (l'univers considéré est
+  // exactement celui listé dans l'onglet).
+  const { plugins } = listMarketplaceConnectors(runCommand, options);
   const results = plugins.map((plugin) => {
     const shouldBeActive = wanted.has(plugin.id);
     const isActive = plugin.installed && plugin.enabled;
@@ -1631,23 +1667,27 @@ function createAdminRouter({
     }
   });
 
-  // Onglet « Marketplace officiel » du même pop-up : liste les plugins-
-  // connecteurs des marketplaces Claude Code déjà enregistrées (hors
-  // piecemaker) — voir le commentaire de listMarketplaceConnectors pour ce
-  // que la CLI expose réellement (aucune recherche distante).
+  // Onglets marketplace du pop-up : liste les plugins-connecteurs d'un
+  // marketplace Anthropic. `scope=legal` cible claude-for-legal (onglet
+  // « Plugin legal Claude »), `scope=official` (défaut) claude-plugins-official
+  // (onglet « Marketplace officiel »). Voir le commentaire de
+  // listMarketplaceConnectors pour ce que la CLI expose (aucune recherche
+  // distante).
   router.get('/plugin/marketplace', (req, res) => {
     try {
-      res.json(listMarketplaceConnectors());
+      const marketplace = marketplaceForScope(String(req.query?.scope || 'official'));
+      res.json({ scope: req.query?.scope || 'official', marketplaceName: marketplace.name, ...listMarketplaceConnectors(captureCommand, { marketplaceName: marketplace.name }) });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  // Enregistre (ou rafraîchit) le marketplace officiel Anthropic quand le
-  // poste ne l'a pas encore — bouton dédié dans l'onglet Marketplace.
+  // Enregistre (ou rafraîchit) le marketplace du scope quand le poste ne
+  // l'a pas encore — bouton « Découvrir… » dédié dans chaque onglet.
   router.post('/plugin/marketplace/register', (req, res) => {
     try {
-      const result = registerOfficialMarketplace();
+      const marketplace = marketplaceForScope(String(req.body?.scope || 'official'));
+      const result = registerOfficialMarketplace(captureCommand, marketplace);
       res.json({ ok: result.ok, ...result });
     } catch (error) {
       res.status(400).json({ error: error.message });
@@ -1655,11 +1695,13 @@ function createAdminRouter({
   });
 
   // Installe/active/désactive les connecteurs cochés — `plugins` : ids
-  // `nom@marketplace` tels que renvoyés par GET /plugin/marketplace.
+  // `nom@marketplace` tels que renvoyés par GET /plugin/marketplace ; `scope`
+  // borne l'action au seul marketplace de l'onglet.
   router.post('/plugin/marketplace/install', (req, res) => {
     try {
       const selection = Array.isArray(req.body?.plugins) ? req.body.plugins : [];
-      res.json({ ok: true, ...applyMarketplaceSelection(selection) });
+      const marketplace = marketplaceForScope(String(req.body?.scope || 'official'));
+      res.json({ ok: true, ...applyMarketplaceSelection(selection, captureCommand, { marketplaceName: marketplace.name }) });
     } catch (error) {
       res.status(400).json({ error: error.message });
     }

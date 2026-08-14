@@ -535,3 +535,96 @@ test('registerOfficialMarketplace ajoute le marketplace absent, ou le met à jou
   assert.equal(already.alreadyRegistered, true);
   assert.deepEqual(updateCalls[0], ['plugin', 'marketplace', 'update', 'claude-plugins-official']);
 });
+
+// ---------------------------------------------------------------------------
+// Scoping par marketplace : l'onglet « Plugin legal Claude » (scope legal) ne
+// voit que les plugins de claude-for-legal, l'onglet « Marketplace officiel »
+// (scope official) que ceux de claude-plugins-official. Fixture partagée avec
+// les deux marketplaces Anthropic enregistrés + un plugin legal.
+// ---------------------------------------------------------------------------
+const FAKE_MARKETPLACES_BOTH = [
+  ...FAKE_MARKETPLACES,
+  { name: 'claude-for-legal', source: 'github', repo: 'anthropics/claude-for-legal' },
+];
+const FAKE_AVAILABLE_BOTH = {
+  installed: FAKE_AVAILABLE.installed,
+  available: [
+    ...FAKE_AVAILABLE.available,
+    {
+      pluginId: 'litigation-legal@claude-for-legal',
+      name: 'litigation-legal',
+      description: 'Manages litigation portfolios, claim charts, chronologies.',
+      marketplaceName: 'claude-for-legal',
+      installCount: 42,
+    },
+  ],
+};
+function fakeScopedRunCommand(overrides = {}) {
+  return (command, args) => {
+    const key = args.join(' ');
+    if (overrides[key]) return overrides[key]();
+    if (args.includes('marketplace') && args.includes('list')) return { ok: true, output: JSON.stringify(FAKE_MARKETPLACES_BOTH) };
+    if (args.includes('list') && args.includes('--available')) return { ok: true, output: JSON.stringify(FAKE_AVAILABLE_BOTH) };
+    return { ok: false, output: `commande inattendue en test : ${key}` };
+  };
+}
+
+test('listMarketplaceConnectors scopé sur claude-for-legal ne renvoie que les plugins legal', () => {
+  const state = listMarketplaceConnectors(fakeScopedRunCommand(), { marketplaceName: 'claude-for-legal' });
+  assert.equal(state.registered, true);
+  const ids = state.plugins.map((p) => p.id).sort();
+  assert.deepEqual(ids, ['litigation-legal@claude-for-legal']);
+  // Aucun plugin de l'officiel ne fuit dans l'onglet legal.
+  assert.ok(!ids.some((id) => id.endsWith('@claude-plugins-official')));
+});
+
+test('listMarketplaceConnectors scopé sur l’officiel exclut les plugins legal', () => {
+  const state = listMarketplaceConnectors(fakeScopedRunCommand(), { marketplaceName: 'claude-plugins-official' });
+  const ids = state.plugins.map((p) => p.id);
+  assert.ok(ids.every((id) => id.endsWith('@claude-plugins-official')));
+  assert.ok(!ids.includes('litigation-legal@claude-for-legal'));
+});
+
+test('listMarketplaceConnectors scopé signale registered:false quand le marketplace n’est pas déclaré', () => {
+  // Poste n'ayant que le marketplace officiel : le scope legal doit être vu
+  // comme non enregistré (bouton « Découvrir » proposé) et son catalogue vide.
+  const runCommand = (command, args) => {
+    if (args.includes('marketplace') && args.includes('list')) return { ok: true, output: JSON.stringify(FAKE_MARKETPLACES) };
+    if (args.includes('list') && args.includes('--available')) return { ok: true, output: JSON.stringify(FAKE_AVAILABLE) };
+    return { ok: false, output: 'inattendu' };
+  };
+  const state = listMarketplaceConnectors(runCommand, { marketplaceName: 'claude-for-legal' });
+  assert.equal(state.registered, false);
+  assert.deepEqual(state.plugins, []);
+});
+
+test('registerOfficialMarketplace enregistre le marketplace legal quand on lui passe son descripteur', () => {
+  const addCalls = [];
+  const runCommand = (command, args) => {
+    if (args.includes('marketplace') && args.includes('list')) return { ok: true, output: JSON.stringify(FAKE_MARKETPLACES) };
+    if (args.includes('marketplace') && args.includes('add')) { addCalls.push(args); return { ok: true, output: 'ok' }; }
+    return { ok: false, output: 'inattendu' };
+  };
+  const result = registerOfficialMarketplace(runCommand, { name: 'claude-for-legal', slug: 'anthropics/claude-for-legal' });
+  assert.equal(result.ok, true);
+  assert.equal(result.alreadyRegistered, false);
+  assert.deepEqual(addCalls[0], ['plugin', 'marketplace', 'add', 'anthropics/claude-for-legal']);
+});
+
+test('applyMarketplaceSelection scopé sur legal ne touche pas les plugins de l’officiel', () => {
+  const calls = [];
+  const runCommand = fakeScopedRunCommand({
+    'plugin install litigation-legal@claude-for-legal -y': () => { calls.push('install-legal'); return { ok: true, output: 'ok' }; },
+    'plugin disable telegram@claude-plugins-official': () => { calls.push('disable-official'); return { ok: true, output: 'ok' }; },
+  });
+  // On coche uniquement le plugin legal. telegram (officiel, actif) est absent
+  // de la sélection mais ne doit PAS être désactivé : il est hors scope.
+  const result = applyMarketplaceSelection(
+    ['litigation-legal@claude-for-legal'],
+    runCommand,
+    { marketplaceName: 'claude-for-legal' },
+  );
+  assert.equal(result.installed, 1);
+  assert.deepEqual(calls, ['install-legal']);
+  assert.ok(!calls.includes('disable-official'));
+});

@@ -1375,224 +1375,186 @@ function buildComponentTree(groups, selected, onSelectionChange) {
   return fragment;
 }
 
-let pluginComponentsData = null;
-let pluginSelectedComponents = new Set();
-
-const PLUGIN_COMPONENT_BADGES = {
-  linked: { text: 'Actif', className: 'ok' },
-  copied: { text: 'Actif', className: 'ok' },
-  stale: { text: 'À réenregistrer', className: 'warn' },
-  conflict: { text: 'Conflit', className: 'warn' },
-};
-
-function pluginComponentTreeGroups(components) {
-  const toItems = (kind) => components.filter((component) => component.kind === kind).map((component) => ({
-    id: component.path,
-    name: component.name,
-    description: component.description,
-    disabled: component.state === 'conflict',
-    disabledTitle: component.note,
-    hint: 'Enregistrer (ou retirer) ce composant auprès de Claude Code',
-    badge: PLUGIN_COMPONENT_BADGES[component.state] || null,
-    badgeTitle: component.note,
-  }));
-  return [
-    { label: 'Skills', items: toItems('skill') },
-    { label: 'Agents', items: toItems('agent') },
-  ];
-}
-
-function renderPluginComponents() {
-  const container = byId('pluginComponentsList');
-  container.textContent = '';
-  const components = pluginComponentsData?.components || [];
-  if (!components.length) {
-    container.append(createHistoryEmpty('Aucun composant', 'Le plugin PieceMaker ne contient aucun skill ni agent.'));
-    return;
-  }
-  container.append(buildComponentTree(pluginComponentTreeGroups(components), pluginSelectedComponents, () => {}));
-}
-
-let marketplaceData = null;
-let marketplaceSelectedComponents = new Set();
-let marketplaceSearchQuery = '';
-
 const MARKETPLACE_BADGES = {
   active: { text: 'Actif', className: 'ok' },
   installed: { text: 'Installé · désactivé', className: 'warn' },
 };
 
-function marketplaceTreeGroups() {
-  const plugins = marketplaceData?.plugins || [];
-  const query = marketplaceSearchQuery.trim().toLowerCase();
-  const filtered = query
-    ? plugins.filter((plugin) => plugin.name.toLowerCase().includes(query) || (plugin.description || '').toLowerCase().includes(query))
-    : plugins;
-  const byMarketplace = new Map();
-  for (const plugin of filtered) {
-    const key = plugin.marketplace || 'Autre';
-    if (!byMarketplace.has(key)) byMarketplace.set(key, []);
-    byMarketplace.get(key).push(plugin);
-  }
-  return Array.from(byMarketplace.entries()).map(([marketplaceName, items]) => ({
-    label: marketplaceName,
-    items: items
-      .slice()
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((plugin) => ({
-        id: plugin.id,
-        name: plugin.name,
-        description: plugin.description || (plugin.installCount ? `${plugin.installCount} installation(s)` : ''),
-        disabled: false,
-        hint: 'Installer/activer (ou désactiver) ce connecteur',
-        badge: plugin.installed ? (plugin.enabled ? MARKETPLACE_BADGES.active : MARKETPLACE_BADGES.installed) : null,
-      })),
-  }));
-}
+// Contrôleur générique d'un onglet marketplace du pop-up. Deux instances (voir
+// plus bas) : « legal » ↔ marketplace anthropics/claude-for-legal (plugins
+// juridiques par domaine), « official » ↔ anthropics/claude-plugins-official
+// (marketplace généraliste). Chaque instance porte son propre état et ses
+// propres éléments DOM, donc les deux onglets sont indépendants. Coché =
+// connecteur actif (installé + activé) ; décocher désactive (jamais désinstallé,
+// choix réversible côté serveur). La recherche filtre localement — Claude Code
+// n'expose aucune recherche distante. `scope` est transmis au serveur pour
+// borner l'énumération et l'installation au seul marketplace de l'onglet.
+function createMarketplaceController({ scope, ids, labels }) {
+  let data = null;
+  let selected = new Set();
+  let searchQuery = '';
+  const msg = () => byId('pluginComponentsMessage');
 
-function renderMarketplaceComponents() {
-  const container = byId('marketplaceList');
-  container.textContent = '';
-  const groups = marketplaceTreeGroups();
-  if (!groups.length) {
-    container.append(createHistoryEmpty(
-      marketplaceSearchQuery ? 'Aucun résultat' : 'Aucun connecteur disponible',
-      marketplaceSearchQuery ? 'Essayez un autre terme.' : 'Aucun marketplace officiel enregistré, ou son catalogue est vide.',
-    ));
-    return;
-  }
-  container.append(buildComponentTree(groups, marketplaceSelectedComponents, () => {}));
-}
-
-async function loadMarketplaceComponents() {
-  byId('marketplaceList').textContent = 'Chargement…';
-  byId('marketplaceStatus').textContent = 'Chargement…';
-  byId('registerOfficialMarketplace').hidden = true;
-  try {
-    const data = await api('/api/admin/plugin/marketplace');
-    marketplaceData = data;
-    // Idempotent, même sémantique que l'onglet Plugin PieceMaker : coché =
-    // déjà actif (installé et activé) à la (ré)ouverture.
-    marketplaceSelectedComponents = new Set(data.plugins.filter((plugin) => plugin.installed && plugin.enabled).map((plugin) => plugin.id));
-    const names = data.marketplaces.map((entry) => entry.name).join(', ');
-    byId('marketplaceStatus').textContent = data.marketplaces.length
-      ? `Marketplace(s) enregistrée(s) : ${names}.${data.reason ? ` ${data.reason}` : ''}`
-      : (data.reason || 'Aucun marketplace enregistré hors PieceMaker.');
-    byId('registerOfficialMarketplace').hidden = data.officialRegistered;
-    renderMarketplaceComponents();
-  } catch (error) {
-    byId('marketplaceList').textContent = '';
-    setMessage(byId('pluginComponentsMessage'), error.message, 'error');
-  }
-}
-
-async function registerOfficialMarketplaceClick() {
-  const button = byId('registerOfficialMarketplace');
-  button.disabled = true;
-  setMessage(byId('pluginComponentsMessage'), 'Enregistrement du marketplace officiel…');
-  try {
-    const result = await api('/api/admin/plugin/marketplace/register', { method: 'POST', body: '{}' });
-    if (result.ok) {
-      setMessage(byId('pluginComponentsMessage'), 'Marketplace officiel enregistré.', 'success');
-      await loadMarketplaceComponents();
-    } else {
-      setMessage(byId('pluginComponentsMessage'), result.reason || 'Échec de l’enregistrement du marketplace officiel.', 'error');
+  function treeGroups() {
+    const plugins = data?.plugins || [];
+    const query = searchQuery.trim().toLowerCase();
+    const filtered = query
+      ? plugins.filter((plugin) => plugin.name.toLowerCase().includes(query) || (plugin.description || '').toLowerCase().includes(query))
+      : plugins;
+    const byMarketplace = new Map();
+    for (const plugin of filtered) {
+      const key = plugin.marketplace || labels.marketplaceName;
+      if (!byMarketplace.has(key)) byMarketplace.set(key, []);
+      byMarketplace.get(key).push(plugin);
     }
-  } catch (error) {
-    setMessage(byId('pluginComponentsMessage'), error.message, 'error');
-  } finally {
-    button.disabled = false;
+    return Array.from(byMarketplace.entries()).map(([marketplaceName, items]) => ({
+      label: marketplaceName,
+      items: items
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((plugin) => ({
+          id: plugin.id,
+          name: plugin.name,
+          description: plugin.description || (plugin.installCount ? `${plugin.installCount} installation(s)` : ''),
+          disabled: false,
+          hint: 'Installer/activer (ou désactiver) ce connecteur',
+          badge: plugin.installed ? (plugin.enabled ? MARKETPLACE_BADGES.active : MARKETPLACE_BADGES.installed) : null,
+        })),
+    }));
   }
+
+  function render() {
+    const container = byId(ids.list);
+    container.textContent = '';
+    const groups = treeGroups();
+    if (!groups.length) {
+      container.append(createHistoryEmpty(
+        searchQuery ? 'Aucun résultat' : 'Aucun connecteur disponible',
+        searchQuery ? 'Essayez un autre terme.' : labels.emptyHint,
+      ));
+      return;
+    }
+    container.append(buildComponentTree(groups, selected, () => {}));
+  }
+
+  async function load() {
+    byId(ids.list).textContent = 'Chargement…';
+    byId(ids.status).textContent = 'Chargement…';
+    byId(ids.registerBtn).hidden = true;
+    try {
+      data = await api(`/api/admin/plugin/marketplace?scope=${scope}`);
+      // Idempotent : ré-ouvrir reflète l'état réel — coché = déjà actif
+      // (installé et activé) au chargement.
+      selected = new Set(data.plugins.filter((plugin) => plugin.installed && plugin.enabled).map((plugin) => plugin.id));
+      byId(ids.status).textContent = data.registered
+        ? `Marketplace « ${data.marketplaceName} » enregistré.${data.reason ? ` ${data.reason}` : ''}`
+        : labels.notRegistered;
+      byId(ids.registerBtn).hidden = data.registered;
+      render();
+    } catch (error) {
+      byId(ids.list).textContent = '';
+      setMessage(msg(), error.message, 'error');
+    }
+  }
+
+  async function registerMarketplace() {
+    const button = byId(ids.registerBtn);
+    button.disabled = true;
+    setMessage(msg(), `Enregistrement du marketplace « ${labels.marketplaceName} »…`);
+    try {
+      const result = await api('/api/admin/plugin/marketplace/register', { method: 'POST', body: JSON.stringify({ scope }) });
+      if (result.ok) {
+        setMessage(msg(), `Marketplace « ${labels.marketplaceName} » enregistré.`, 'success');
+        await load();
+      } else {
+        setMessage(msg(), result.reason || 'Échec de l’enregistrement du marketplace.', 'error');
+      }
+    } catch (error) {
+      setMessage(msg(), error.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function applySelection() {
+    const button = byId(ids.applyBtn);
+    button.disabled = true;
+    setMessage(msg(), 'Installation/activation en cours (peut prendre quelques secondes)…');
+    try {
+      const result = await api('/api/admin/plugin/marketplace/install', {
+        method: 'POST',
+        body: JSON.stringify({ scope, plugins: Array.from(selected) }),
+      });
+      const failed = result.failed?.length ? ` — ${result.failed.length} échec(s)` : '';
+      setMessage(
+        msg(),
+        `${result.installed} installé(s), ${result.enabled} activé(s), ${result.disabled} désactivé(s)${failed}.`,
+        failed ? 'error' : 'success',
+      );
+      await load();
+      if (!failed) toast('Plugins Claude Code mis à jour');
+    } catch (error) {
+      setMessage(msg(), error.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  return {
+    reset() {
+      data = null;
+      selected = new Set();
+      searchQuery = '';
+      const search = byId(ids.search);
+      if (search) search.value = '';
+    },
+    ensureLoaded() { if (!data) void load(); },
+    setSearch(value) { searchQuery = value; render(); },
+    registerMarketplace,
+    applySelection,
+  };
 }
+
+const legalMarketplace = createMarketplaceController({
+  scope: 'legal',
+  ids: { list: 'legalList', status: 'legalStatus', registerBtn: 'registerLegalMarketplace', search: 'legalSearch', applyBtn: 'applyLegalComponents' },
+  labels: {
+    marketplaceName: 'claude-for-legal',
+    notRegistered: 'Le plugin legal Claude n’est pas encore enregistré sur ce poste — cliquez sur « Découvrir le plugin legal Claude » pour récupérer le catalogue.',
+    emptyHint: 'Le marketplace « claude-for-legal » est enregistré mais son catalogue est vide.',
+  },
+});
+
+const officialMarketplace = createMarketplaceController({
+  scope: 'official',
+  ids: { list: 'marketplaceList', status: 'marketplaceStatus', registerBtn: 'registerOfficialMarketplace', search: 'marketplaceSearch', applyBtn: 'applyMarketplaceComponents' },
+  labels: {
+    marketplaceName: 'claude-plugins-official',
+    notRegistered: 'Le marketplace officiel Claude Code n’est pas encore enregistré — cliquez sur « Découvrir le marketplace officiel ».',
+    emptyHint: 'Le marketplace « claude-plugins-official » est enregistré mais son catalogue est vide.',
+  },
+});
 
 function switchPluginTab(tab) {
-  const isMarketplace = tab === 'marketplace';
-  byId('pluginTabButtonPiecemaker').classList.toggle('active', !isMarketplace);
-  byId('pluginTabButtonPiecemaker').setAttribute('aria-selected', String(!isMarketplace));
-  byId('pluginTabButtonMarketplace').classList.toggle('active', isMarketplace);
-  byId('pluginTabButtonMarketplace').setAttribute('aria-selected', String(isMarketplace));
-  byId('pluginTabPiecemaker').hidden = isMarketplace;
-  byId('pluginTabMarketplace').hidden = !isMarketplace;
+  const isOfficial = tab === 'official';
+  byId('pluginTabButtonLegal').classList.toggle('active', !isOfficial);
+  byId('pluginTabButtonLegal').setAttribute('aria-selected', String(!isOfficial));
+  byId('pluginTabButtonOfficial').classList.toggle('active', isOfficial);
+  byId('pluginTabButtonOfficial').setAttribute('aria-selected', String(isOfficial));
+  byId('pluginTabLegal').hidden = isOfficial;
+  byId('pluginTabOfficial').hidden = !isOfficial;
   setMessage(byId('pluginComponentsMessage'));
-  if (isMarketplace && !marketplaceData) void loadMarketplaceComponents();
+  (isOfficial ? officialMarketplace : legalMarketplace).ensureLoaded();
 }
 
-async function openPluginComponentsDialog() {
+function openPluginComponentsDialog() {
   const dialog = byId('pluginComponentsDialog');
-  marketplaceData = null;
-  marketplaceSelectedComponents = new Set();
-  marketplaceSearchQuery = '';
-  byId('marketplaceSearch').value = '';
-  switchPluginTab('piecemaker');
+  legalMarketplace.reset();
+  officialMarketplace.reset();
+  byId('pluginDialogStatus').textContent = 'Installez les plugins juridiques Claude ou parcourez le marketplace officiel.';
   setMessage(byId('pluginComponentsMessage'));
-  byId('pluginComponentsList').textContent = 'Chargement…';
-  byId('pluginDialogStatus').textContent = 'Chargement de l’état du plugin…';
+  switchPluginTab('legal');
   dialog.showModal();
-  try {
-    const data = await api('/api/admin/plugin/components');
-    pluginComponentsData = data;
-    // Idempotent : ré-ouvrir le pop-up reflète l’état réel — coché = déjà
-    // enregistré (y compris « stale », un enregistrement PieceMaker périmé
-    // repris silencieusement au prochain « Ajouter »).
-    pluginSelectedComponents = new Set(data.components.filter((component) => component.registered).map((component) => component.path));
-    byId('pluginDialogStatus').textContent = data.plugin.installed
-      ? `Plugin installé${data.plugin.version ? ` · v${data.plugin.version}` : ''}.`
-      : 'Plugin non installé — « Ajouter » l’installera avant d’enregistrer la sélection.';
-    renderPluginComponents();
-  } catch (error) {
-    byId('pluginComponentsList').textContent = '';
-    setMessage(byId('pluginComponentsMessage'), error.message, 'error');
-  }
-}
-
-async function applyPluginComponents() {
-  const button = byId('applyPluginComponents');
-  button.disabled = true;
-  setMessage(byId('pluginComponentsMessage'), 'Installation du plugin et enregistrement en cours…');
-  try {
-    const result = await api('/api/admin/plugin/install', {
-      method: 'POST',
-      body: JSON.stringify({ components: Array.from(pluginSelectedComponents) }),
-    });
-    const conflicts = result.conflicts?.length ? ` — ${result.conflicts.length} conflit(s) non modifié(s)` : '';
-    const pluginFailed = result.plugin?.ok === false;
-    const pluginNote = pluginFailed ? ` (plugin Claude Code : ${result.plugin.reason || 'échec'})` : '';
-    setMessage(
-      byId('pluginComponentsMessage'),
-      `${result.registered} composant(s) actif(s)${conflicts}${pluginNote}.`,
-      conflicts || pluginFailed ? 'error' : 'success',
-    );
-    await loadFiles({ selectPath: selectedFile?.path || null });
-    if (!conflicts && !pluginFailed) toast('Plugin Claude Code mis à jour');
-  } catch (error) {
-    setMessage(byId('pluginComponentsMessage'), error.message, 'error');
-  } finally {
-    button.disabled = false;
-  }
-}
-
-async function applyMarketplaceComponents() {
-  const button = byId('applyMarketplaceComponents');
-  button.disabled = true;
-  setMessage(byId('pluginComponentsMessage'), 'Installation/activation en cours (peut prendre quelques secondes)…');
-  try {
-    const result = await api('/api/admin/plugin/marketplace/install', {
-      method: 'POST',
-      body: JSON.stringify({ plugins: Array.from(marketplaceSelectedComponents) }),
-    });
-    const failed = result.failed?.length ? ` — ${result.failed.length} échec(s)` : '';
-    setMessage(
-      byId('pluginComponentsMessage'),
-      `${result.installed} installé(s), ${result.enabled} activé(s), ${result.disabled} désactivé(s)${failed}.`,
-      failed ? 'error' : 'success',
-    );
-    await loadMarketplaceComponents();
-    if (!failed) toast('Connecteurs marketplace mis à jour');
-  } catch (error) {
-    setMessage(byId('pluginComponentsMessage'), error.message, 'error');
-  } finally {
-    button.disabled = false;
-  }
 }
 
 function fileGroupLabel(kind) {
@@ -3693,16 +3655,15 @@ byId('createFileForm').addEventListener('submit', createFile);
 byId('syncClaudeAssets').addEventListener('click', syncClaudeAssets);
 byId('cancelCreateFile').addEventListener('click', () => byId('createFileDialog').close());
 byId('addClaudePluginBtn').addEventListener('click', openPluginComponentsDialog);
-byId('applyPluginComponents').addEventListener('click', applyPluginComponents);
 byId('cancelPluginComponents').addEventListener('click', () => byId('pluginComponentsDialog').close());
 byId('closePluginComponentsDialog').addEventListener('click', () => byId('pluginComponentsDialog').close());
 document.querySelectorAll('[data-plugin-tab]').forEach((button) => button.addEventListener('click', () => switchPluginTab(button.dataset.pluginTab)));
-byId('registerOfficialMarketplace').addEventListener('click', registerOfficialMarketplaceClick);
-byId('marketplaceSearch').addEventListener('input', (event) => {
-  marketplaceSearchQuery = event.currentTarget.value;
-  renderMarketplaceComponents();
-});
-byId('applyMarketplaceComponents').addEventListener('click', applyMarketplaceComponents);
+byId('registerLegalMarketplace').addEventListener('click', () => legalMarketplace.registerMarketplace());
+byId('legalSearch').addEventListener('input', (event) => legalMarketplace.setSearch(event.currentTarget.value));
+byId('applyLegalComponents').addEventListener('click', () => legalMarketplace.applySelection());
+byId('registerOfficialMarketplace').addEventListener('click', () => officialMarketplace.registerMarketplace());
+byId('marketplaceSearch').addEventListener('input', (event) => officialMarketplace.setSearch(event.currentTarget.value));
+byId('applyMarketplaceComponents').addEventListener('click', () => officialMarketplace.applySelection());
 window.addEventListener('beforeunload', (event) => {
   if (selectedFile && editorTouched) event.preventDefault();
 });
