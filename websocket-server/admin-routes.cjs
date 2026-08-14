@@ -1350,6 +1350,86 @@ async function revealLocalFolder(platform, target, absolutePath) {
     : `Le gestionnaire de fichiers n’a pas pu être ouvert (${lastError?.message || 'commande introuvable'}).`);
 }
 
+// Installation à la demande des moteurs locaux depuis le tiroir de la carte de
+// configuration : un clic sur « Installer » relance l'étape d'installateur
+// correspondante en arrière-plan (non interactif), au lieu d'obliger l'utilisateur
+// à ouvrir un terminal. Chaque composant est mappé sur son étape.
+const INSTALL_STEP_IDS = { gliner: '03-python-gliner', mineru: '04-conversion-md' };
+const installJobs = new Map();
+let activeInstallComponent = null;
+
+// Nettoie une ligne de sortie de l'installateur (codes ANSI, spinner) pour n'en
+// garder qu'un texte de progression lisible ; les lignes JSON de warmup.py
+// portent un champ `message` plus parlant que la ligne brute.
+function cleanInstallProgressLine(raw) {
+  // eslint-disable-next-line no-control-regex
+  const stripped = String(raw).replace(/\u001b\[[0-9;]*[A-Za-z]/g, '').replace(/[\r\t]+/g, ' ').trim();
+  if (!stripped) return '';
+  try {
+    const parsed = JSON.parse(stripped);
+    if (parsed && typeof parsed.message === 'string') return parsed.message.trim();
+  } catch { /* ligne texte ordinaire */ }
+  return stripped;
+}
+
+function startInstallJob(repoRoot, component) {
+  const stepId = INSTALL_STEP_IDS[component];
+  if (!stepId) throw new Error(`Composant non installable : ${component}`);
+  if (activeInstallComponent) {
+    throw Object.assign(new Error(`Une installation est déjà en cours (${activeInstallComponent}).`), { conflict: true });
+  }
+  const installer = path.join(repoRoot, 'installer', 'bin', 'piecemaker.mjs');
+  if (!fs.existsSync(installer)) throw new Error('Installateur PieceMaker introuvable.');
+  const id = crypto.randomUUID();
+  const job = { id, component, state: 'running', progress: 'Démarrage de l’installation…', startedAt: Date.now(), finishedAt: null, error: '' };
+  installJobs.set(id, job);
+  activeInstallComponent = component;
+
+  const child = spawn(process.execPath, [installer, '--step', stepId], {
+    cwd: repoRoot,
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    // PIECEMAKER_YES=1 : accepte les valeurs par défaut (MinerU inclus) sans TTY.
+    env: { ...process.env, PIECEMAKER_YES: '1', NO_COLOR: '1' },
+  });
+  const tailStderr = [];
+  const onLine = (chunk) => {
+    for (const part of String(chunk).split('\n')) {
+      const line = cleanInstallProgressLine(part);
+      if (line) job.progress = line;
+    }
+  };
+  child.stdout.on('data', onLine);
+  child.stderr.on('data', (chunk) => {
+    onLine(chunk);
+    tailStderr.push(String(chunk));
+    while (tailStderr.join('').length > 4000) tailStderr.shift();
+  });
+  child.once('error', (error) => {
+    job.state = 'failed';
+    job.error = error.message;
+    job.finishedAt = Date.now();
+    activeInstallComponent = null;
+  });
+  child.once('close', (code) => {
+    if (job.state === 'running') {
+      job.state = code === 0 ? 'done' : 'failed';
+      if (code !== 0) job.error = cleanInstallProgressLine(tailStderr.join('')) || `L’installateur s’est arrêté avec le code ${code}.`;
+      if (code === 0) job.progress = 'Installation terminée.';
+      job.finishedAt = Date.now();
+    }
+    activeInstallComponent = null;
+    // Purge tardive : garde le job interrogeable un moment après la fin.
+    setTimeout(() => installJobs.delete(id), 5 * 60 * 1000).unref?.();
+  });
+  return job;
+}
+
+function publicInstallJob(job) {
+  if (!job) return null;
+  return { id: job.id, component: job.component, state: job.state, progress: job.progress, error: job.error };
+}
+
 function createAdminRouter({
   repoRoot = path.resolve(__dirname, '..'),
   homeDir = path.join(os.homedir(), '.piecemaker'),
@@ -1420,6 +1500,25 @@ function createAdminRouter({
     } catch (error) {
       res.status(400).json({ error: error.message });
     }
+  });
+
+  // Installe un moteur local absent (GLiNER, MinerU) en relançant son étape
+  // d'installateur en arrière-plan ; le tiroir suit ensuite l'avancement en
+  // interrogeant GET /configuration/install?id=.
+  router.post('/configuration/install', (req, res) => {
+    try {
+      const component = String(req.body?.component || '');
+      const job = startInstallJob(repoRoot, component);
+      res.json({ ok: true, job: publicInstallJob(job) });
+    } catch (error) {
+      res.status(error.conflict ? 409 : 400).json({ error: error.message });
+    }
+  });
+
+  router.get('/configuration/install', (req, res) => {
+    const job = installJobs.get(String(req.query?.id || ''));
+    if (!job) return res.status(404).json({ error: 'Installation inconnue ou expirée.' });
+    res.json({ ok: true, job: publicInstallJob(job) });
   });
 
   router.get('/settings', (req, res) => {

@@ -792,16 +792,18 @@ function openConfigurationDrawer(kind, reference = '', origin = null) {
       addDrawerAction('Voir le plugin', 'files', { primary: true });
     } else if (kind === 'gliner') {
       appendDrawerDetails(body, [
-        ['Moteur', component.engine || '—'],
+        ['Moteur', component.installed ? (component.engine || '—') : 'Non installé'],
         ['Accélération', component.coreml ? 'GPU CoreML' : 'CPU (torch)'],
         ['Réseau', 'Aucun — 100 % local'],
       ]);
-      mountDrawerForm('institutionalTermsCard', loadInstitutionalTerms);
+      if (component.installed) mountDrawerForm('institutionalTermsCard', loadInstitutionalTerms);
+      else appendInstallAction(body, 'gliner');
     } else if (kind === 'mineru') {
       appendDrawerDetails(body, [
         ['Rôle', 'OCR PDF scannés / images'],
         ['Statut', component.installed ? 'Installé' : 'Optionnel · non installé'],
       ]);
+      if (!component.installed) appendInstallAction(body, 'mineru');
     } else if (kind === 'ollama') {
       appendDrawerDetails(body, [
         ['Version', component.version ? `v${component.version}` : 'Indéterminée'],
@@ -846,11 +848,84 @@ function openConfigurationDrawer(kind, reference = '', origin = null) {
 }
 
 function closeConfigurationDrawer() {
+  if (installPollTimer) { clearTimeout(installPollTimer); installPollTimer = null; }
   restoreDrawerForm();
   byId('configurationDrawerBackdrop').hidden = true;
   byId('configurationDrawer').hidden = true;
   configurationDrawerOrigin?.focus?.();
   configurationDrawerOrigin = null;
+}
+
+// Bloc « Installer » d'un moteur local absent (GLiNER / MinerU) : lance l'étape
+// d'installateur côté serveur puis suit sa progression sans quitter le tiroir.
+let installPollTimer = null;
+
+const INSTALL_HINTS = {
+  gliner: 'Le modèle d’anonymisation (~400 Mo) sera téléchargé. L’installation continue même si vous fermez ce panneau.',
+  mineru: 'MinerU est volumineux (plusieurs centaines de Mo). L’installation continue même si vous fermez ce panneau.',
+};
+
+function appendInstallAction(body, kind) {
+  const section = makeElement('section', 'drawer-section drawer-install');
+  section.append(makeElement('p', 'drawer-install-note', INSTALL_HINTS[kind] || ''));
+  const button = makeElement('button', 'button primary', 'Installer');
+  button.type = 'button';
+  const progress = makeElement('p', 'drawer-install-progress');
+  progress.hidden = true;
+  button.addEventListener('click', () => startComponentInstall(kind, button, progress));
+  section.append(button, progress);
+  body.append(section);
+}
+
+async function startComponentInstall(kind, button, progress) {
+  if (button.disabled) return;
+  button.disabled = true;
+  button.textContent = 'Installation…';
+  progress.hidden = false;
+  progress.className = 'drawer-install-progress running';
+  progress.textContent = 'Démarrage…';
+  try {
+    const { job } = await api('/api/admin/configuration/install', {
+      method: 'POST',
+      body: JSON.stringify({ component: kind }),
+    });
+    pollComponentInstall(job.id, kind, button, progress);
+  } catch (error) {
+    progress.className = 'drawer-install-progress error';
+    progress.textContent = error.message;
+    button.disabled = false;
+    button.textContent = 'Réessayer';
+    toast(error.message);
+  }
+}
+
+function pollComponentInstall(id, kind, button, progress) {
+  const tick = async () => {
+    try {
+      const { job } = await api(`/api/admin/configuration/install?id=${encodeURIComponent(id)}`);
+      progress.textContent = job.progress || 'Installation en cours…';
+      if (job.state === 'running') { installPollTimer = setTimeout(tick, 2500); return; }
+      if (job.state === 'done') {
+        progress.className = 'drawer-install-progress ok';
+        progress.textContent = 'Installé.';
+        toast(`${DRAWER_TITLES[kind] || kind} · installé.`);
+        await loadConfiguration({ quiet: true });
+        closeConfigurationDrawer();
+      } else {
+        progress.className = 'drawer-install-progress error';
+        progress.textContent = job.error || 'Échec de l’installation.';
+        button.disabled = false;
+        button.textContent = 'Réessayer';
+        toast(job.error || 'Échec de l’installation.');
+      }
+    } catch (error) {
+      progress.className = 'drawer-install-progress error';
+      progress.textContent = error.message;
+      button.disabled = false;
+      button.textContent = 'Réessayer';
+    }
+  };
+  tick();
 }
 
 // ── Entités institutionnelles à ne jamais anonymiser ─────────────────────────

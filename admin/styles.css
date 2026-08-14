@@ -746,6 +746,15 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .drawer-hook-line { display: flex; align-items: center; gap: 8px; }
 .drawer-hook-note { color: var(--muted); font-size: .72rem; }
 
+/* Bloc « Installer » d'un moteur local absent, dans le tiroir de configuration. */
+.drawer-install { display: grid; gap: 11px; }
+.drawer-install .button { justify-self: start; }
+.drawer-install-note { margin: 0; color: var(--muted); font-size: .78rem; line-height: 1.55; }
+.drawer-install-progress { margin: 0; border-radius: 9px; padding: 9px 11px; background: #f5f8f7; color: var(--muted); font-size: .76rem; line-height: 1.5; word-break: break-word; }
+.drawer-install-progress.running { color: #173d38; }
+.drawer-install-progress.ok { background: #e7f4ec; color: #1b6b3f; }
+.drawer-install-progress.error { background: #fdecec; color: #b3261e; }
+
 @media (max-width: 720px) {
   .cfg-access-row, .cfg-engines-row { grid-template-columns: 1fr; }
   .cfg-client-row .configuration-node { width: 100%; }
