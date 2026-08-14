@@ -10,6 +10,7 @@ const {
   registerClaudeAsset,
   repositoryAssets,
   syncClaudeAssets,
+  unregisterClaudeAsset,
 } = require('../websocket-server/claude-assets.cjs');
 
 function fixture() {
@@ -149,4 +150,57 @@ test('les liens orphelins du dépôt sont nettoyés, pas les fichiers personnels
   ].sort());
   assert.equal(fs.existsSync(personal), true);
   assert.deepEqual(repositoryAssets(data.repo), ['piecemaker-plugin/skills/tamponnage/SKILL.md']);
+});
+
+test('unregisterClaudeAsset retire un lien/copie PieceMaker mais jamais un fichier personnel', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const relative = 'piecemaker-plugin/agents/analyste-piece.md';
+  const target = path.join(data.userHome, '.claude', 'agents', 'analyste-piece.md');
+
+  // Rien à faire sur un composant jamais enregistré — idempotent.
+  assert.deepEqual(unregisterClaudeAsset(data.repo, data.userHome, relative), {
+    kind: 'agent', slug: 'analyste-piece', target, state: 'missing',
+  });
+
+  registerClaudeAsset(data.repo, data.userHome, relative);
+  assert.equal(claudeAssetStatus(data.repo, data.userHome, relative).state, 'linked');
+  const result = unregisterClaudeAsset(data.repo, data.userHome, relative);
+  assert.equal(result.state, 'missing');
+  assert.equal(result.removed, true);
+  assert.equal(fs.existsSync(target), false);
+  // Rappelable sans effet une fois retiré.
+  assert.equal(unregisterClaudeAsset(data.repo, data.userHome, relative).state, 'missing');
+
+  // Un fichier personnel homonyme (conflit) n'est jamais touché.
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, '# agent personnel\n');
+  assert.equal(claudeAssetStatus(data.repo, data.userHome, relative).state, 'conflict');
+  const untouched = unregisterClaudeAsset(data.repo, data.userHome, relative);
+  assert.equal(untouched.state, 'conflict');
+  assert.equal(fs.readFileSync(target, 'utf8'), '# agent personnel\n');
+
+  assert.equal(unregisterClaudeAsset(data.repo, data.userHome, 'CLAUDE.md'), null);
+});
+
+test('unregisterClaudeAsset retire aussi une copie (repli sans lien symbolique) et son reçu', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const relative = 'piecemaker-plugin/skills/tamponnage/SKILL.md';
+  const target = path.join(data.userHome, '.claude', 'skills', 'tamponnage');
+
+  const symlinkSync = fs.symlinkSync;
+  fs.symlinkSync = () => { throw new Error('EPERM'); };
+  try {
+    assert.equal(registerClaudeAsset(data.repo, data.userHome, relative).state, 'copied');
+  } finally {
+    fs.symlinkSync = symlinkSync;
+  }
+  assert.equal(fs.existsSync(target), true);
+
+  const result = unregisterClaudeAsset(data.repo, data.userHome, relative);
+  assert.equal(result.state, 'missing');
+  assert.equal(fs.existsSync(target), false);
+  const receipt = JSON.parse(fs.readFileSync(path.join(data.userHome, '.claude', '.piecemaker-assets.json'), 'utf8'));
+  assert.equal(Object.hasOwn(receipt.copies, 'skill:tamponnage'), false);
 });

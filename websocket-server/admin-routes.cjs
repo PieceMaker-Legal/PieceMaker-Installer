@@ -503,6 +503,166 @@ async function ensureClaudePluginActive({
   return { ok: true, action: 'installed', installed: true, marketplaceSource };
 }
 
+// -----------------------------------------------------------------------
+// Marketplace officiel Claude Code — onglet « Marketplace officiel » du
+// même pop-up. Constat d'investigation (voir docs/plugin-marketplace, sinon
+// le rapport de cette fonctionnalité) : la CLI `claude` n'expose AUCUNE
+// recherche distante — `claude plugin --help` n'a pas de sous-commande
+// `search`, et ni `plugin list` ni `plugin marketplace list` n'acceptent de
+// requête. Le seul catalogue énumérable programmatiquement est
+// `claude plugin list --available --json`, qui renvoie les plugins NON
+// installés des marketplaces déjà enregistrées localement (nom,
+// description, marketplace, popularité `installCount`) à côté de la liste
+// des plugins installés (`claude plugin list --json`, avec leur état
+// enabled/disabled). Rien n'est donc inventé ici : la recherche du pop-up
+// filtre côté client cette même liste (voir admin/app.js). Le seul
+// marketplace enregistrable en un clic depuis ce pop-up est le marketplace
+// premier-parti d'Anthropic (`claude-plugins-official`, dépôt
+// anthropics/claude-plugins-official) — le même nom déjà utilisé comme
+// référence dans installer/steps/09-claude-assets.mjs pour notre propre
+// marketplace. Tout autre marketplace se déclare via
+// `claude plugin marketplace add` en dehors de ce pop-up.
+// -----------------------------------------------------------------------
+const OFFICIAL_MARKETPLACE_NAME = 'claude-plugins-official';
+const OFFICIAL_MARKETPLACE_SLUG = 'anthropics/claude-plugins-official';
+
+/** Marketplaces Claude Code enregistrées sur ce poste, hors la nôtre. */
+function listRegisteredMarketplaces(runCommand = captureCommand) {
+  const result = runCommand('claude', ['plugin', 'marketplace', 'list', '--json']);
+  if (!result.ok) return [];
+  const parsed = parseJsonOutput(result.output);
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((entry) => entry?.name && entry.name !== CLAUDE_MARKETPLACE_NAME)
+    .map((entry) => ({
+      name: entry.name,
+      repo: entry.repo || null,
+      source: entry.source || null,
+      // Heuristique locale, pas un champ renvoyé par la CLI : seul le
+      // marketplace historique publié par Anthropic sous ce dépôt exact est
+      // marqué « officiel » — voir le commentaire ci-dessus.
+      official: entry.source === 'github' && entry.repo === OFFICIAL_MARKETPLACE_SLUG,
+    }));
+}
+
+/**
+ * Plugins-connecteurs des marketplaces déjà enregistrées (hors piecemaker),
+ * fusion de `plugin list --json` (installés, avec enabled/scope) et
+ * `plugin list --available --json` (catalogue non installé, avec
+ * description/popularité) — seule source de données énumérable, voir le
+ * commentaire au-dessus de OFFICIAL_MARKETPLACE_NAME. `runCommand`
+ * injectable pour les tests.
+ */
+function listMarketplaceConnectors(runCommand = captureCommand) {
+  const marketplaces = listRegisteredMarketplaces(runCommand);
+  const officialRegistered = marketplaces.some((entry) => entry.name === OFFICIAL_MARKETPLACE_NAME);
+  const result = runCommand('claude', ['plugin', 'list', '--available', '--json'], 8000);
+  if (!result.ok) {
+    return {
+      marketplaces,
+      officialRegistered,
+      plugins: [],
+      reason: result.output || 'Échec de l’appel « claude plugin list --available --json ».',
+    };
+  }
+  const parsed = parseJsonOutput(result.output) || {};
+  const installed = Array.isArray(parsed.installed) ? parsed.installed : [];
+  const available = Array.isArray(parsed.available) ? parsed.available : [];
+
+  const plugins = [];
+  const seen = new Set();
+  for (const entry of available) {
+    if (!entry?.pluginId || entry.marketplaceName === CLAUDE_MARKETPLACE_NAME || seen.has(entry.pluginId)) continue;
+    seen.add(entry.pluginId);
+    plugins.push({
+      id: entry.pluginId,
+      name: entry.name || entry.pluginId,
+      description: entry.description || '',
+      marketplace: entry.marketplaceName || '',
+      installCount: Number.isFinite(entry.installCount) ? entry.installCount : null,
+      installed: false,
+      enabled: false,
+    });
+  }
+  // `plugin list --json` ne fournit pas de description — seul le catalogue
+  // « available » en a une. Un plugin déjà installé apparaît donc ici avec
+  // une description vide (limite de la CLI, pas une omission de notre part).
+  for (const entry of installed) {
+    if (!entry?.id || entry.id.endsWith(`@${CLAUDE_MARKETPLACE_NAME}`) || seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    const [name, marketplace] = entry.id.split('@');
+    plugins.push({
+      id: entry.id,
+      name,
+      description: '',
+      marketplace: marketplace || '',
+      installCount: null,
+      installed: true,
+      enabled: Boolean(entry.enabled),
+    });
+  }
+
+  return { marketplaces, officialRegistered, plugins };
+}
+
+/**
+ * Enregistre (ou rafraîchit s'il l'est déjà) le marketplace officiel
+ * Anthropic — bouton « Découvrir le marketplace officiel » de l'onglet
+ * Marketplace, pour un poste qui n'a encore que le marketplace piecemaker.
+ */
+function registerOfficialMarketplace(runCommand = captureCommand) {
+  const alreadyRegistered = listRegisteredMarketplaces(runCommand)
+    .some((entry) => entry.name === OFFICIAL_MARKETPLACE_NAME);
+  const action = alreadyRegistered
+    ? runCommand('claude', ['plugin', 'marketplace', 'update', OFFICIAL_MARKETPLACE_NAME], 8000)
+    : runCommand('claude', ['plugin', 'marketplace', 'add', OFFICIAL_MARKETPLACE_SLUG], 15000);
+  if (!action.ok) {
+    return { ok: false, alreadyRegistered, reason: action.output || 'Échec de l’enregistrement du marketplace officiel.' };
+  }
+  return { ok: true, alreadyRegistered };
+}
+
+/**
+ * Applique une sélection de connecteurs marketplace « voulus actifs » —
+ * même sémantique que `applyPluginComponentSelection` (coché = actif),
+ * étendue à trois actions CLI selon l'état courant : `install` (jamais
+ * installé), `enable` (installé mais désactivé), `disable` (actif et
+ * décoché). Jamais `uninstall` : décocher désactive, ne supprime rien —
+ * choix délibéré, réversible, cohérent avec le reste de PieceMaker qui ne
+ * retire jamais un composant tiers de façon destructive. Idempotent : un
+ * connecteur déjà dans l'état voulu n'appelle aucune commande. Chaque appel
+ * est best-effort — un échec individuel n'empêche pas les suivants.
+ */
+function applyMarketplaceSelection(selection, runCommand = captureCommand) {
+  const wanted = new Set((Array.isArray(selection) ? selection : []).map(String));
+  const { plugins } = listMarketplaceConnectors(runCommand);
+  const results = plugins.map((plugin) => {
+    const shouldBeActive = wanted.has(plugin.id);
+    const isActive = plugin.installed && plugin.enabled;
+    if (shouldBeActive === isActive) return { id: plugin.id, action: 'none', ok: true };
+    if (shouldBeActive) {
+      const command = plugin.installed
+        ? runCommand('claude', ['plugin', 'enable', plugin.id], 5000)
+        : runCommand('claude', ['plugin', 'install', plugin.id, '-y'], 20000);
+      return {
+        id: plugin.id,
+        action: plugin.installed ? 'enable' : 'install',
+        ok: command.ok,
+        reason: command.ok ? '' : command.output || 'Échec de la commande claude.',
+      };
+    }
+    const command = runCommand('claude', ['plugin', 'disable', plugin.id], 5000);
+    return { id: plugin.id, action: 'disable', ok: command.ok, reason: command.ok ? '' : command.output || 'Échec de la commande claude.' };
+  });
+  return {
+    results,
+    installed: results.filter((entry) => entry.action === 'install' && entry.ok).length,
+    enabled: results.filter((entry) => entry.action === 'enable' && entry.ok).length,
+    disabled: results.filter((entry) => entry.action === 'disable' && entry.ok).length,
+    failed: results.filter((entry) => !entry.ok),
+  };
+}
+
 async function fetchWithTimeout(fetchImpl, url, options = {}, timeout = 3000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
@@ -1372,6 +1532,40 @@ function createAdminRouter({
     }
   });
 
+  // Onglet « Marketplace officiel » du même pop-up : liste les plugins-
+  // connecteurs des marketplaces Claude Code déjà enregistrées (hors
+  // piecemaker) — voir le commentaire de listMarketplaceConnectors pour ce
+  // que la CLI expose réellement (aucune recherche distante).
+  router.get('/plugin/marketplace', (req, res) => {
+    try {
+      res.json(listMarketplaceConnectors());
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Enregistre (ou rafraîchit) le marketplace officiel Anthropic quand le
+  // poste ne l'a pas encore — bouton dédié dans l'onglet Marketplace.
+  router.post('/plugin/marketplace/register', (req, res) => {
+    try {
+      const result = registerOfficialMarketplace();
+      res.json({ ok: result.ok, ...result });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Installe/active/désactive les connecteurs cochés — `plugins` : ids
+  // `nom@marketplace` tels que renvoyés par GET /plugin/marketplace.
+  router.post('/plugin/marketplace/install', (req, res) => {
+    try {
+      const selection = Array.isArray(req.body?.plugins) ? req.body.plugins : [];
+      res.json({ ok: true, ...applyMarketplaceSelection(selection) });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   router.get('/file', (req, res) => {
     try {
       res.json(readManagedFile(repoRoot, req.query.path, homeDir));
@@ -1822,6 +2016,7 @@ function createAdminRouter({
 }
 
 module.exports = {
+  applyMarketplaceSelection,
   applyPluginComponentSelection,
   checkOllamaModelUpdate,
   configurationOverview,
@@ -1834,12 +2029,15 @@ module.exports = {
   isLocalOrigin,
   listDossiers,
   listManagedFiles,
+  listMarketplaceConnectors,
   listPluginComponents,
+  listRegisteredMarketplaces,
   managedFileKind,
   normalizeAgentModel,
   normalizeAgentTools,
   readManagedFile,
   registerLegalCase,
+  registerOfficialMarketplace,
   revealCommands,
   saveManagedFile,
   selectLocalFolder,

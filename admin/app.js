@@ -1192,6 +1192,334 @@ async function syncClaudeAssets() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Pop-up « Ajouter le plugin legal Claude » (bouton de l'onglet Skills et
+// agents). Deux onglets :
+//  - « Plugin PieceMaker » : installe/rafraîchit le plugin puis enregistre
+//    auprès de Claude Code les skills et agents cochés (arborescence
+//    repliable — voir GET/POST /api/admin/plugin/{components,install}).
+//  - « Marketplace officiel » : parcourt/recherche les plugins-connecteurs
+//    des marketplaces Claude Code déjà enregistrées sur ce poste (hors
+//    PieceMaker) et installe/active/désactive la sélection — voir
+//    GET /api/admin/plugin/marketplace et POST .../marketplace/{register,install}.
+//    Claude Code n'expose aucune recherche distante (pas de sous-commande
+//    `claude plugin search`) : la recherche ci-dessous filtre côté client la
+//    liste déjà renvoyée par le serveur, elle-même déjà limitée à ce que la
+//    CLI a listé localement — voir le commentaire de listMarketplaceConnectors
+//    dans admin-routes.cjs pour le détail de cette limite.
+// ---------------------------------------------------------------------------
+
+/**
+ * Arborescence repliable générique (native <details>/<summary>, sans
+ * dépendance externe) : une racine par groupe (kind, ou marketplace),
+ * feuilles cochables en dessous. La case du groupe est tri-state — cochée si
+ * tous ses éléments sélectionnables le sont, indéterminée si certains
+ * seulement, décochée sinon — et bascule tous ses éléments d'un coup. Les
+ * lignes réutilisent .original-row/.original-body/.original-badges (mêmes
+ * styles que la liste des pièces). Construit une fois par rafraîchissement
+ * de données ; les cases individuelles mettent seulement à jour leurs
+ * propres éléments DOM, donc l'état replié/déplié de chaque groupe survit
+ * aux clics sur les cases (pas de reconstruction du DOM à chaque coche).
+ * `groups` : [{ label, items: [{ id, name, description, disabled,
+ * disabledTitle, hint, badge: {text, className}|null, badgeTitle }] }].
+ * `selected` : Set mutée en place. `onSelectionChange` : rappelé après
+ * chaque coche (groupe ou feuille).
+ */
+function buildComponentTree(groups, selected, onSelectionChange) {
+  const fragment = document.createDocumentFragment();
+  for (const group of groups) {
+    if (!group.items.length) continue;
+    const details = document.createElement('details');
+    details.className = 'plugin-tree-node';
+    details.open = true;
+    const summary = document.createElement('summary');
+    summary.className = 'plugin-tree-summary';
+    const groupCheckbox = document.createElement('input');
+    groupCheckbox.type = 'checkbox';
+    groupCheckbox.setAttribute('aria-label', `Tout sélectionner : ${group.label}`);
+    summary.append(groupCheckbox, makeElement('span', '', group.label), makeElement('span', 'count-badge', String(group.items.length)));
+    details.append(summary);
+
+    const children = makeElement('div', 'plugin-tree-children');
+    const itemRows = [];
+    const refreshGroupCheckbox = () => {
+      const selectable = group.items.filter((item) => !item.disabled);
+      const checkedCount = selectable.filter((item) => selected.has(item.id)).length;
+      groupCheckbox.disabled = selectable.length === 0;
+      groupCheckbox.checked = selectable.length > 0 && checkedCount === selectable.length;
+      groupCheckbox.indeterminate = checkedCount > 0 && checkedCount < selectable.length;
+    };
+
+    for (const item of group.items) {
+      const selectable = !item.disabled;
+      const row = document.createElement('label');
+      row.className = `original-row${selected.has(item.id) ? ' selected' : ''}`;
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = selected.has(item.id);
+      checkbox.disabled = !selectable;
+      checkbox.title = selectable ? (item.hint || '') : (item.disabledTitle || 'Non modifiable ici.');
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) selected.add(item.id);
+        else selected.delete(item.id);
+        row.classList.toggle('selected', checkbox.checked);
+        refreshGroupCheckbox();
+        onSelectionChange();
+      });
+      itemRows.push({ item, checkbox, row });
+      const body = makeElement('span', 'original-body');
+      body.append(makeElement('strong', '', item.name), makeElement('span', '', item.description || item.id));
+      const badges = makeElement('span', 'original-badges');
+      if (item.badge) {
+        const span = makeElement('span', `asset-badge ${item.badge.className || ''}`.trim(), item.badge.text);
+        if (item.badgeTitle) span.title = item.badgeTitle;
+        badges.append(span);
+      }
+      row.append(checkbox, body, badges);
+      children.append(row);
+    }
+
+    // La case du groupe est dans <summary> : sans stopPropagation, la cocher
+    // rouvrirait/refermerait aussi le <details> (comportement natif du clic).
+    groupCheckbox.addEventListener('click', (event) => event.stopPropagation());
+    groupCheckbox.addEventListener('change', () => {
+      for (const { item, checkbox, row } of itemRows) {
+        if (item.disabled) continue;
+        checkbox.checked = groupCheckbox.checked;
+        if (groupCheckbox.checked) selected.add(item.id);
+        else selected.delete(item.id);
+        row.classList.toggle('selected', checkbox.checked);
+      }
+      onSelectionChange();
+    });
+    refreshGroupCheckbox();
+
+    details.append(children);
+    fragment.append(details);
+  }
+  return fragment;
+}
+
+let pluginComponentsData = null;
+let pluginSelectedComponents = new Set();
+
+const PLUGIN_COMPONENT_BADGES = {
+  linked: { text: 'Actif', className: 'ok' },
+  copied: { text: 'Actif', className: 'ok' },
+  stale: { text: 'À réenregistrer', className: 'warn' },
+  conflict: { text: 'Conflit', className: 'warn' },
+};
+
+function pluginComponentTreeGroups(components) {
+  const toItems = (kind) => components.filter((component) => component.kind === kind).map((component) => ({
+    id: component.path,
+    name: component.name,
+    description: component.description,
+    disabled: component.state === 'conflict',
+    disabledTitle: component.note,
+    hint: 'Enregistrer (ou retirer) ce composant auprès de Claude Code',
+    badge: PLUGIN_COMPONENT_BADGES[component.state] || null,
+    badgeTitle: component.note,
+  }));
+  return [
+    { label: 'Skills', items: toItems('skill') },
+    { label: 'Agents', items: toItems('agent') },
+  ];
+}
+
+function renderPluginComponents() {
+  const container = byId('pluginComponentsList');
+  container.textContent = '';
+  const components = pluginComponentsData?.components || [];
+  if (!components.length) {
+    container.append(createHistoryEmpty('Aucun composant', 'Le plugin PieceMaker ne contient aucun skill ni agent.'));
+    return;
+  }
+  container.append(buildComponentTree(pluginComponentTreeGroups(components), pluginSelectedComponents, () => {}));
+}
+
+let marketplaceData = null;
+let marketplaceSelectedComponents = new Set();
+let marketplaceSearchQuery = '';
+
+const MARKETPLACE_BADGES = {
+  active: { text: 'Actif', className: 'ok' },
+  installed: { text: 'Installé · désactivé', className: 'warn' },
+};
+
+function marketplaceTreeGroups() {
+  const plugins = marketplaceData?.plugins || [];
+  const query = marketplaceSearchQuery.trim().toLowerCase();
+  const filtered = query
+    ? plugins.filter((plugin) => plugin.name.toLowerCase().includes(query) || (plugin.description || '').toLowerCase().includes(query))
+    : plugins;
+  const byMarketplace = new Map();
+  for (const plugin of filtered) {
+    const key = plugin.marketplace || 'Autre';
+    if (!byMarketplace.has(key)) byMarketplace.set(key, []);
+    byMarketplace.get(key).push(plugin);
+  }
+  return Array.from(byMarketplace.entries()).map(([marketplaceName, items]) => ({
+    label: marketplaceName,
+    items: items
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((plugin) => ({
+        id: plugin.id,
+        name: plugin.name,
+        description: plugin.description || (plugin.installCount ? `${plugin.installCount} installation(s)` : ''),
+        disabled: false,
+        hint: 'Installer/activer (ou désactiver) ce connecteur',
+        badge: plugin.installed ? (plugin.enabled ? MARKETPLACE_BADGES.active : MARKETPLACE_BADGES.installed) : null,
+      })),
+  }));
+}
+
+function renderMarketplaceComponents() {
+  const container = byId('marketplaceList');
+  container.textContent = '';
+  const groups = marketplaceTreeGroups();
+  if (!groups.length) {
+    container.append(createHistoryEmpty(
+      marketplaceSearchQuery ? 'Aucun résultat' : 'Aucun connecteur disponible',
+      marketplaceSearchQuery ? 'Essayez un autre terme.' : 'Aucun marketplace officiel enregistré, ou son catalogue est vide.',
+    ));
+    return;
+  }
+  container.append(buildComponentTree(groups, marketplaceSelectedComponents, () => {}));
+}
+
+async function loadMarketplaceComponents() {
+  byId('marketplaceList').textContent = 'Chargement…';
+  byId('marketplaceStatus').textContent = 'Chargement…';
+  byId('registerOfficialMarketplace').hidden = true;
+  try {
+    const data = await api('/api/admin/plugin/marketplace');
+    marketplaceData = data;
+    // Idempotent, même sémantique que l'onglet Plugin PieceMaker : coché =
+    // déjà actif (installé et activé) à la (ré)ouverture.
+    marketplaceSelectedComponents = new Set(data.plugins.filter((plugin) => plugin.installed && plugin.enabled).map((plugin) => plugin.id));
+    const names = data.marketplaces.map((entry) => entry.name).join(', ');
+    byId('marketplaceStatus').textContent = data.marketplaces.length
+      ? `Marketplace(s) enregistrée(s) : ${names}.${data.reason ? ` ${data.reason}` : ''}`
+      : (data.reason || 'Aucun marketplace enregistré hors PieceMaker.');
+    byId('registerOfficialMarketplace').hidden = data.officialRegistered;
+    renderMarketplaceComponents();
+  } catch (error) {
+    byId('marketplaceList').textContent = '';
+    setMessage(byId('pluginComponentsMessage'), error.message, 'error');
+  }
+}
+
+async function registerOfficialMarketplaceClick() {
+  const button = byId('registerOfficialMarketplace');
+  button.disabled = true;
+  setMessage(byId('pluginComponentsMessage'), 'Enregistrement du marketplace officiel…');
+  try {
+    const result = await api('/api/admin/plugin/marketplace/register', { method: 'POST', body: '{}' });
+    if (result.ok) {
+      setMessage(byId('pluginComponentsMessage'), 'Marketplace officiel enregistré.', 'success');
+      await loadMarketplaceComponents();
+    } else {
+      setMessage(byId('pluginComponentsMessage'), result.reason || 'Échec de l’enregistrement du marketplace officiel.', 'error');
+    }
+  } catch (error) {
+    setMessage(byId('pluginComponentsMessage'), error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function switchPluginTab(tab) {
+  const isMarketplace = tab === 'marketplace';
+  byId('pluginTabButtonPiecemaker').classList.toggle('active', !isMarketplace);
+  byId('pluginTabButtonPiecemaker').setAttribute('aria-selected', String(!isMarketplace));
+  byId('pluginTabButtonMarketplace').classList.toggle('active', isMarketplace);
+  byId('pluginTabButtonMarketplace').setAttribute('aria-selected', String(isMarketplace));
+  byId('pluginTabPiecemaker').hidden = isMarketplace;
+  byId('pluginTabMarketplace').hidden = !isMarketplace;
+  setMessage(byId('pluginComponentsMessage'));
+  if (isMarketplace && !marketplaceData) void loadMarketplaceComponents();
+}
+
+async function openPluginComponentsDialog() {
+  const dialog = byId('pluginComponentsDialog');
+  marketplaceData = null;
+  marketplaceSelectedComponents = new Set();
+  marketplaceSearchQuery = '';
+  byId('marketplaceSearch').value = '';
+  switchPluginTab('piecemaker');
+  setMessage(byId('pluginComponentsMessage'));
+  byId('pluginComponentsList').textContent = 'Chargement…';
+  byId('pluginDialogStatus').textContent = 'Chargement de l’état du plugin…';
+  dialog.showModal();
+  try {
+    const data = await api('/api/admin/plugin/components');
+    pluginComponentsData = data;
+    // Idempotent : ré-ouvrir le pop-up reflète l’état réel — coché = déjà
+    // enregistré (y compris « stale », un enregistrement PieceMaker périmé
+    // repris silencieusement au prochain « Ajouter »).
+    pluginSelectedComponents = new Set(data.components.filter((component) => component.registered).map((component) => component.path));
+    byId('pluginDialogStatus').textContent = data.plugin.installed
+      ? `Plugin installé${data.plugin.version ? ` · v${data.plugin.version}` : ''}.`
+      : 'Plugin non installé — « Ajouter » l’installera avant d’enregistrer la sélection.';
+    renderPluginComponents();
+  } catch (error) {
+    byId('pluginComponentsList').textContent = '';
+    setMessage(byId('pluginComponentsMessage'), error.message, 'error');
+  }
+}
+
+async function applyPluginComponents() {
+  const button = byId('applyPluginComponents');
+  button.disabled = true;
+  setMessage(byId('pluginComponentsMessage'), 'Installation du plugin et enregistrement en cours…');
+  try {
+    const result = await api('/api/admin/plugin/install', {
+      method: 'POST',
+      body: JSON.stringify({ components: Array.from(pluginSelectedComponents) }),
+    });
+    const conflicts = result.conflicts?.length ? ` — ${result.conflicts.length} conflit(s) non modifié(s)` : '';
+    const pluginFailed = result.plugin?.ok === false;
+    const pluginNote = pluginFailed ? ` (plugin Claude Code : ${result.plugin.reason || 'échec'})` : '';
+    setMessage(
+      byId('pluginComponentsMessage'),
+      `${result.registered} composant(s) actif(s)${conflicts}${pluginNote}.`,
+      conflicts || pluginFailed ? 'error' : 'success',
+    );
+    await loadFiles({ selectPath: selectedFile?.path || null });
+    if (!conflicts && !pluginFailed) toast('Plugin Claude Code mis à jour');
+  } catch (error) {
+    setMessage(byId('pluginComponentsMessage'), error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function applyMarketplaceComponents() {
+  const button = byId('applyMarketplaceComponents');
+  button.disabled = true;
+  setMessage(byId('pluginComponentsMessage'), 'Installation/activation en cours (peut prendre quelques secondes)…');
+  try {
+    const result = await api('/api/admin/plugin/marketplace/install', {
+      method: 'POST',
+      body: JSON.stringify({ plugins: Array.from(marketplaceSelectedComponents) }),
+    });
+    const failed = result.failed?.length ? ` — ${result.failed.length} échec(s)` : '';
+    setMessage(
+      byId('pluginComponentsMessage'),
+      `${result.installed} installé(s), ${result.enabled} activé(s), ${result.disabled} désactivé(s)${failed}.`,
+      failed ? 'error' : 'success',
+    );
+    await loadMarketplaceComponents();
+    if (!failed) toast('Connecteurs marketplace mis à jour');
+  } catch (error) {
+    setMessage(byId('pluginComponentsMessage'), error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function fileGroupLabel(kind) {
   return { instructions: 'Instructions', skill: 'Skills', agent: 'Agents' }[kind] || kind;
 }
@@ -3289,6 +3617,17 @@ document.querySelectorAll('[data-create-kind]').forEach((button) => button.addEv
 byId('createFileForm').addEventListener('submit', createFile);
 byId('syncClaudeAssets').addEventListener('click', syncClaudeAssets);
 byId('cancelCreateFile').addEventListener('click', () => byId('createFileDialog').close());
+byId('addClaudePluginBtn').addEventListener('click', openPluginComponentsDialog);
+byId('applyPluginComponents').addEventListener('click', applyPluginComponents);
+byId('cancelPluginComponents').addEventListener('click', () => byId('pluginComponentsDialog').close());
+byId('closePluginComponentsDialog').addEventListener('click', () => byId('pluginComponentsDialog').close());
+document.querySelectorAll('[data-plugin-tab]').forEach((button) => button.addEventListener('click', () => switchPluginTab(button.dataset.pluginTab)));
+byId('registerOfficialMarketplace').addEventListener('click', registerOfficialMarketplaceClick);
+byId('marketplaceSearch').addEventListener('input', (event) => {
+  marketplaceSearchQuery = event.currentTarget.value;
+  renderMarketplaceComponents();
+});
+byId('applyMarketplaceComponents').addEventListener('click', applyMarketplaceComponents);
 window.addEventListener('beforeunload', (event) => {
   if (selectedFile && editorTouched) event.preventDefault();
 });
