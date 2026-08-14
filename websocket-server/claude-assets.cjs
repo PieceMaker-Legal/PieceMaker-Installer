@@ -231,6 +231,43 @@ function registerClaudeAsset(repoRoot, userHome, relativePath) {
   }
 }
 
+/**
+ * Inverse de `registerClaudeAsset` : retire le lien/copie que PieceMaker a
+ * déposé pour un skill ou un agent, pour honorer un décochage explicite dans
+ * le pop-up « Ajouter le plugin legal Claude » (onglet Skills et agents). Ne
+ * touche jamais un fichier personnel — seul un état reconnu comme nôtre par
+ * `claudeAssetStatus` (`linked`, `copied`, `stale`) est retiré ; `conflict`
+ * (fichier personnel homonyme) et `missing` (déjà absent) sont laissés tels
+ * quels. Idempotent : rappelable sans effet sur un composant déjà retiré.
+ */
+function unregisterClaudeAsset(repoRoot, userHome, relativePath) {
+  const asset = claudeAssetOf(repoRoot, userHome, relativePath);
+  if (!asset) return null;
+  const current = claudeAssetStatus(repoRoot, userHome, relativePath);
+  const base = { kind: asset.kind, slug: asset.slug, target: asset.target };
+  if (current.state === 'missing' || current.state === 'conflict') return { ...base, state: current.state };
+
+  try {
+    if (linkTarget(asset.target) || fs.existsSync(asset.target)) {
+      fs.rmSync(asset.target, { recursive: true, force: true });
+    }
+  } catch {
+    return { ...base, state: current.state, note: 'Le retrait a échoué — vérifiez les permissions sur ~/.claude.' };
+  }
+
+  const copies = readReceipt(userHome);
+  const key = `${asset.kind}:${asset.slug}`;
+  if (Object.hasOwn(copies, key)) {
+    delete copies[key];
+    try {
+      fs.writeFileSync(receiptFile(userHome), `${JSON.stringify({ version: 1, copies }, null, 2)}\n`);
+    } catch {
+      // Le reçu est un confort, pas une dépendance.
+    }
+  }
+  return { ...base, state: 'missing', removed: true };
+}
+
 /** Liste les assets du dépôt, indépendamment de leur enregistrement. */
 function repositoryAssets(repoRoot) {
   const paths = [];
@@ -301,4 +338,5 @@ module.exports = {
   registerClaudeAsset,
   repositoryAssets,
   syncClaudeAssets,
+  unregisterClaudeAsset,
 };

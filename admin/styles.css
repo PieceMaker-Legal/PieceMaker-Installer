@@ -158,6 +158,28 @@ dialog { width: min(560px, calc(100% - 24px)); border: 0; border-radius: 16px; p
 dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .dialog-card { display: grid; gap: 16px; padding: 26px; }
 .dialog-card textarea { min-height: 100px; padding: 10px; resize: vertical; }
+.plugin-dialog { width: min(620px, calc(100% - 24px)); max-height: min(84vh, 720px); overflow: auto; }
+.plugin-component-list { min-height: 40px; max-height: 360px; overflow: auto; border: 1px solid #e3e6e9; border-radius: 10px; background: #fff; }
+.plugin-component-list .original-row { grid-template-columns: 15px minmax(0, 1fr) auto; }
+.plugin-dialog-tabs { display: flex; gap: 4px; border-bottom: 1px solid #e3e6e9; }
+.plugin-dialog-tab { border: 0; border-bottom: 2px solid transparent; background: transparent; padding: 8px 4px; color: var(--muted); font-size: .82rem; font-weight: 700; cursor: pointer; }
+.plugin-dialog-tab.active { border-bottom-color: var(--brand-dark, #173d38); color: #24292f; }
+.plugin-dialog-panel { display: grid; gap: 12px; }
+.marketplace-search { border: 1px solid #d8dee4; border-radius: 8px; padding: 8px 10px; font-size: .82rem; }
+/* Arborescence Skills/Agents (et connecteurs marketplace) : <details>/<summary>
+   natifs, repliables, sans dépendance externe. Les lignes réutilisent
+   .original-row/.original-body/.original-badges (mêmes styles que la liste
+   des pièces). */
+.plugin-tree-node { border-top: 1px solid #d8dee4; }
+.plugin-tree-node:first-child { border-top: 0; }
+.plugin-tree-summary { display: flex; align-items: center; gap: 8px; list-style: none; cursor: pointer; padding: 7px 12px; background: #eef0f2; color: #57606a; font-size: .64rem; font-weight: 800; letter-spacing: .035em; text-transform: uppercase; }
+.plugin-tree-summary::-webkit-details-marker { display: none; }
+.plugin-tree-summary::marker { content: ''; }
+.plugin-tree-summary::before { content: '▸'; flex: none; font-size: .7rem; transition: transform .15s ease; }
+.plugin-tree-node[open] > .plugin-tree-summary::before { transform: rotate(90deg); }
+.plugin-tree-summary input[type="checkbox"] { cursor: pointer; }
+.plugin-tree-summary .count-badge { margin-left: auto; background: #d5d9de; }
+.plugin-tree-children { display: flex; flex-direction: column; }
 #toast { position: fixed; right: 22px; bottom: 22px; max-width: 380px; border-radius: 10px; background: #173d38; padding: 12px 16px; color: white; opacity: 0; pointer-events: none; transform: translateY(10px); transition: .2s ease; }
 #toast.visible { opacity: 1; transform: translateY(0); }
 

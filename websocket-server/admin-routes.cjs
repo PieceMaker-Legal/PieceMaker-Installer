@@ -2,6 +2,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('node:crypto');
+const { pathToFileURL } = require('node:url');
 const { spawn, spawnSync } = require('child_process');
 const { performance } = require('node:perf_hooks');
 const {
@@ -49,9 +50,12 @@ const {
   writeInstitutionalTerms,
 } = require('../piecemaker-plugin/scripts/lib/institutional-terms.cjs');
 const {
+  claudeAssetOf,
   claudeAssetStatus,
   registerClaudeAsset,
+  repositoryAssets,
   syncClaudeAssets,
+  unregisterClaudeAsset,
 } = require('./claude-assets.cjs');
 const {
   controlDossierBot,
@@ -383,6 +387,282 @@ function installedClaudePlugin() {
   }
 }
 
+// Coordonnées marketplace/plugin — mêmes valeurs que
+// installer/lib/plugin-refresh.mjs (MARKETPLACE_NAME/PLUGIN_NAME) et
+// installer/steps/09-claude-assets.mjs (REPO_SLUG), dupliquées ici en
+// constantes plutôt qu'importées : ce fichier reste CommonJS pur pour tout
+// ce qui ne touche pas explicitement à l'installation du plugin.
+const CLAUDE_MARKETPLACE_NAME = 'piecemaker';
+const CLAUDE_PLUGIN_NAME = 'piecemaker';
+const CLAUDE_PLUGIN_SPEC = `${CLAUDE_PLUGIN_NAME}@${CLAUDE_MARKETPLACE_NAME}`;
+const CLAUDE_MARKETPLACE_SLUG = 'PieceMaker-Legal/PieceMaker-Installer';
+
+function parseJsonOutput(output) {
+  try {
+    return JSON.parse(output);
+  } catch {
+    return null;
+  }
+}
+
+// installer/lib/service.mjs (ESM) is the existing, tested implementation of
+// "refresh an already-installed plugin and verify convergence by content
+// fingerprint" (see its doc comment). It is loaded lazily via dynamic
+// import() — the one interop path that works from this CommonJS file — and
+// cached, since it is pure/side-effect-free at import time.
+let cachedRefreshClaudePlugin = null;
+async function loadRefreshClaudePlugin() {
+  if (!cachedRefreshClaudePlugin) {
+    const modulePath = path.join(__dirname, '..', 'installer', 'lib', 'service.mjs');
+    const mod = await import(pathToFileURL(modulePath).href);
+    cachedRefreshClaudePlugin = mod.refreshClaudePlugin;
+  }
+  return cachedRefreshClaudePlugin;
+}
+
+/**
+ * Installe ou rafraîchit le plugin Claude Code PieceMaker (marketplace +
+ * plugin), pour le bouton « Ajouter le plugin legal Claude » de l'onglet
+ * « Skills et agents ». Deux chemins :
+ *  - Plugin déjà installé : délègue à `refreshClaudePlugin()`
+ *    (installer/lib/service.mjs) — la même vérification de convergence par
+ *    empreinte de contenu que `piecemaker update` utilise déjà pour éviter de
+ *    laisser un cache Claude Code périmé (voir plugin-refresh.mjs). Best
+ *    effort, jamais levée.
+ *  - Jamais installé : reprend la séquence de
+ *    `installer/steps/09-claude-assets.mjs` (marketplace add — GitHub puis
+ *    repli sur la copie locale du dépôt — puis install), sans les invites
+ *    interactives de l'installeur : ce chemin doit pouvoir tourner depuis une
+ *    requête HTTP de l'administration.
+ * `runCommand` et `refreshInstalledPlugin` sont injectables pour les tests,
+ * afin de ne jamais dépendre d'un vrai CLI `claude` en CI.
+ */
+async function ensureClaudePluginActive({
+  repoRoot,
+  userHome = os.homedir(),
+  runCommand = captureCommand,
+  refreshInstalledPlugin = null,
+} = {}) {
+  const listPlugins = () => {
+    const result = runCommand('claude', ['plugin', 'list', '--json']);
+    return result.ok ? parseJsonOutput(result.output) : null;
+  };
+  const isPluginInstalled = (plugins) => Array.isArray(plugins)
+    && plugins.some((entry) => entry?.id === CLAUDE_PLUGIN_SPEC && entry.enabled !== false);
+
+  if (isPluginInstalled(listPlugins())) {
+    const refresh = refreshInstalledPlugin || await loadRefreshClaudePlugin();
+    const result = await refresh({ pluginDir: path.join(repoRoot, 'piecemaker-plugin'), userHome });
+    return { ok: Boolean(result?.ok), action: 'refresh', installed: true, ...result };
+  }
+
+  const marketplaces = runCommand('claude', ['plugin', 'marketplace', 'list', '--json']);
+  const marketplaceList = marketplaces.ok ? parseJsonOutput(marketplaces.output) : null;
+  const marketplaceRegistered = Array.isArray(marketplaceList)
+    && marketplaceList.some((entry) => entry?.name === CLAUDE_MARKETPLACE_NAME);
+
+  let marketplaceSource = 'existing';
+  if (marketplaceRegistered) {
+    const updated = runCommand('claude', ['plugin', 'marketplace', 'update', CLAUDE_MARKETPLACE_NAME]);
+    if (!updated.ok) {
+      return {
+        ok: false,
+        action: 'marketplace-update',
+        installed: false,
+        reason: updated.output || 'Échec de l’actualisation du marketplace « piecemaker ».',
+      };
+    }
+  } else {
+    const fromGitHub = runCommand('claude', ['plugin', 'marketplace', 'add', CLAUDE_MARKETPLACE_SLUG]);
+    if (fromGitHub.ok) {
+      marketplaceSource = 'github';
+    } else {
+      const fromLocal = runCommand('claude', ['plugin', 'marketplace', 'add', repoRoot]);
+      if (!fromLocal.ok) {
+        return {
+          ok: false,
+          action: 'marketplace-add',
+          installed: false,
+          reason: fromLocal.output || 'Échec de l’enregistrement du marketplace (GitHub et copie locale).',
+        };
+      }
+      marketplaceSource = 'local';
+    }
+  }
+
+  const install = runCommand('claude', ['plugin', 'install', CLAUDE_PLUGIN_SPEC]);
+  if (!install.ok) {
+    return {
+      ok: false,
+      action: 'plugin-install',
+      installed: false,
+      reason: install.output || 'Échec de l’installation du plugin — le client « claude » est-il installé ?',
+    };
+  }
+
+  return { ok: true, action: 'installed', installed: true, marketplaceSource };
+}
+
+// -----------------------------------------------------------------------
+// Marketplace officiel Claude Code — onglet « Marketplace officiel » du
+// même pop-up. Constat d'investigation (voir docs/plugin-marketplace, sinon
+// le rapport de cette fonctionnalité) : la CLI `claude` n'expose AUCUNE
+// recherche distante — `claude plugin --help` n'a pas de sous-commande
+// `search`, et ni `plugin list` ni `plugin marketplace list` n'acceptent de
+// requête. Le seul catalogue énumérable programmatiquement est
+// `claude plugin list --available --json`, qui renvoie les plugins NON
+// installés des marketplaces déjà enregistrées localement (nom,
+// description, marketplace, popularité `installCount`) à côté de la liste
+// des plugins installés (`claude plugin list --json`, avec leur état
+// enabled/disabled). Rien n'est donc inventé ici : la recherche du pop-up
+// filtre côté client cette même liste (voir admin/app.js). Le seul
+// marketplace enregistrable en un clic depuis ce pop-up est le marketplace
+// premier-parti d'Anthropic (`claude-plugins-official`, dépôt
+// anthropics/claude-plugins-official) — le même nom déjà utilisé comme
+// référence dans installer/steps/09-claude-assets.mjs pour notre propre
+// marketplace. Tout autre marketplace se déclare via
+// `claude plugin marketplace add` en dehors de ce pop-up.
+// -----------------------------------------------------------------------
+const OFFICIAL_MARKETPLACE_NAME = 'claude-plugins-official';
+const OFFICIAL_MARKETPLACE_SLUG = 'anthropics/claude-plugins-official';
+
+/** Marketplaces Claude Code enregistrées sur ce poste, hors la nôtre. */
+function listRegisteredMarketplaces(runCommand = captureCommand) {
+  const result = runCommand('claude', ['plugin', 'marketplace', 'list', '--json']);
+  if (!result.ok) return [];
+  const parsed = parseJsonOutput(result.output);
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((entry) => entry?.name && entry.name !== CLAUDE_MARKETPLACE_NAME)
+    .map((entry) => ({
+      name: entry.name,
+      repo: entry.repo || null,
+      source: entry.source || null,
+      // Heuristique locale, pas un champ renvoyé par la CLI : seul le
+      // marketplace historique publié par Anthropic sous ce dépôt exact est
+      // marqué « officiel » — voir le commentaire ci-dessus.
+      official: entry.source === 'github' && entry.repo === OFFICIAL_MARKETPLACE_SLUG,
+    }));
+}
+
+/**
+ * Plugins-connecteurs des marketplaces déjà enregistrées (hors piecemaker),
+ * fusion de `plugin list --json` (installés, avec enabled/scope) et
+ * `plugin list --available --json` (catalogue non installé, avec
+ * description/popularité) — seule source de données énumérable, voir le
+ * commentaire au-dessus de OFFICIAL_MARKETPLACE_NAME. `runCommand`
+ * injectable pour les tests.
+ */
+function listMarketplaceConnectors(runCommand = captureCommand) {
+  const marketplaces = listRegisteredMarketplaces(runCommand);
+  const officialRegistered = marketplaces.some((entry) => entry.name === OFFICIAL_MARKETPLACE_NAME);
+  const result = runCommand('claude', ['plugin', 'list', '--available', '--json'], 8000);
+  if (!result.ok) {
+    return {
+      marketplaces,
+      officialRegistered,
+      plugins: [],
+      reason: result.output || 'Échec de l’appel « claude plugin list --available --json ».',
+    };
+  }
+  const parsed = parseJsonOutput(result.output) || {};
+  const installed = Array.isArray(parsed.installed) ? parsed.installed : [];
+  const available = Array.isArray(parsed.available) ? parsed.available : [];
+
+  const plugins = [];
+  const seen = new Set();
+  for (const entry of available) {
+    if (!entry?.pluginId || entry.marketplaceName === CLAUDE_MARKETPLACE_NAME || seen.has(entry.pluginId)) continue;
+    seen.add(entry.pluginId);
+    plugins.push({
+      id: entry.pluginId,
+      name: entry.name || entry.pluginId,
+      description: entry.description || '',
+      marketplace: entry.marketplaceName || '',
+      installCount: Number.isFinite(entry.installCount) ? entry.installCount : null,
+      installed: false,
+      enabled: false,
+    });
+  }
+  // `plugin list --json` ne fournit pas de description — seul le catalogue
+  // « available » en a une. Un plugin déjà installé apparaît donc ici avec
+  // une description vide (limite de la CLI, pas une omission de notre part).
+  for (const entry of installed) {
+    if (!entry?.id || entry.id.endsWith(`@${CLAUDE_MARKETPLACE_NAME}`) || seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    const [name, marketplace] = entry.id.split('@');
+    plugins.push({
+      id: entry.id,
+      name,
+      description: '',
+      marketplace: marketplace || '',
+      installCount: null,
+      installed: true,
+      enabled: Boolean(entry.enabled),
+    });
+  }
+
+  return { marketplaces, officialRegistered, plugins };
+}
+
+/**
+ * Enregistre (ou rafraîchit s'il l'est déjà) le marketplace officiel
+ * Anthropic — bouton « Découvrir le marketplace officiel » de l'onglet
+ * Marketplace, pour un poste qui n'a encore que le marketplace piecemaker.
+ */
+function registerOfficialMarketplace(runCommand = captureCommand) {
+  const alreadyRegistered = listRegisteredMarketplaces(runCommand)
+    .some((entry) => entry.name === OFFICIAL_MARKETPLACE_NAME);
+  const action = alreadyRegistered
+    ? runCommand('claude', ['plugin', 'marketplace', 'update', OFFICIAL_MARKETPLACE_NAME], 8000)
+    : runCommand('claude', ['plugin', 'marketplace', 'add', OFFICIAL_MARKETPLACE_SLUG], 15000);
+  if (!action.ok) {
+    return { ok: false, alreadyRegistered, reason: action.output || 'Échec de l’enregistrement du marketplace officiel.' };
+  }
+  return { ok: true, alreadyRegistered };
+}
+
+/**
+ * Applique une sélection de connecteurs marketplace « voulus actifs » —
+ * même sémantique que `applyPluginComponentSelection` (coché = actif),
+ * étendue à trois actions CLI selon l'état courant : `install` (jamais
+ * installé), `enable` (installé mais désactivé), `disable` (actif et
+ * décoché). Jamais `uninstall` : décocher désactive, ne supprime rien —
+ * choix délibéré, réversible, cohérent avec le reste de PieceMaker qui ne
+ * retire jamais un composant tiers de façon destructive. Idempotent : un
+ * connecteur déjà dans l'état voulu n'appelle aucune commande. Chaque appel
+ * est best-effort — un échec individuel n'empêche pas les suivants.
+ */
+function applyMarketplaceSelection(selection, runCommand = captureCommand) {
+  const wanted = new Set((Array.isArray(selection) ? selection : []).map(String));
+  const { plugins } = listMarketplaceConnectors(runCommand);
+  const results = plugins.map((plugin) => {
+    const shouldBeActive = wanted.has(plugin.id);
+    const isActive = plugin.installed && plugin.enabled;
+    if (shouldBeActive === isActive) return { id: plugin.id, action: 'none', ok: true };
+    if (shouldBeActive) {
+      const command = plugin.installed
+        ? runCommand('claude', ['plugin', 'enable', plugin.id], 5000)
+        : runCommand('claude', ['plugin', 'install', plugin.id, '-y'], 20000);
+      return {
+        id: plugin.id,
+        action: plugin.installed ? 'enable' : 'install',
+        ok: command.ok,
+        reason: command.ok ? '' : command.output || 'Échec de la commande claude.',
+      };
+    }
+    const command = runCommand('claude', ['plugin', 'disable', plugin.id], 5000);
+    return { id: plugin.id, action: 'disable', ok: command.ok, reason: command.ok ? '' : command.output || 'Échec de la commande claude.' };
+  });
+  return {
+    results,
+    installed: results.filter((entry) => entry.action === 'install' && entry.ok).length,
+    enabled: results.filter((entry) => entry.action === 'enable' && entry.ok).length,
+    disabled: results.filter((entry) => entry.action === 'disable' && entry.ok).length,
+    failed: results.filter((entry) => !entry.ok),
+  };
+}
+
 async function fetchWithTimeout(fetchImpl, url, options = {}, timeout = 3000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
@@ -705,6 +985,90 @@ function listManagedFiles(repoRoot, homeDir = path.join(os.homedir(), '.piecemak
       claudeCode: claudeAssetStatus(repoRoot, userHome, normalized),
     };
   });
+}
+
+// Lecture minimale du front matter (name/description) d'un skill/agent, pour
+// le pop-up « Ajouter le plugin legal Claude ». Même grammaire que
+// admin/markdown.mjs#parseMetadata (module navigateur, non réutilisable
+// ici — server.cjs ne charge pas de modules ES du dossier admin/), réduite
+// aux deux clés affichées.
+function pluginComponentFrontMatter(absolutePath) {
+  try {
+    const raw = fs.readFileSync(absolutePath, 'utf8');
+    const match = raw.match(/^---\n([\s\S]*?)\n---(?:\n|$)/);
+    if (!match) return {};
+    const values = {};
+    for (const line of match[1].split('\n')) {
+      const lineMatch = line.match(/^([A-Za-z][A-Za-z0-9_-]*):\s*(.*)$/);
+      if (!lineMatch) continue;
+      let value = lineMatch[2];
+      if (value.startsWith('"')) {
+        try { value = JSON.parse(value); } catch { value = value.replace(/^"|"$/g, ''); }
+      } else if (value.startsWith("'") && value.endsWith("'")) {
+        value = value.slice(1, -1).replaceAll("''", "'");
+      }
+      values[lineMatch[1]] = value;
+    }
+    return values;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Les skills et agents du plugin PieceMaker, avec leur état d'enregistrement
+ * auprès de Claude Code — support du pop-up de sélection de
+ * « Ajouter le plugin legal Claude ». S'appuie sur `repositoryAssets` /
+ * `claudeAssetStatus` (claude-assets.cjs), la même source que la liste de
+ * fichiers et `files/sync`, pour que les deux vues restent en accord.
+ */
+function listPluginComponents(repoRoot, userHome = os.homedir()) {
+  return repositoryAssets(repoRoot).map((relativePath) => {
+    const asset = claudeAssetOf(repoRoot, userHome, relativePath);
+    const status = claudeAssetStatus(repoRoot, userHome, relativePath);
+    const sourceFile = asset.type === 'dir' ? path.join(asset.source, 'SKILL.md') : asset.source;
+    const metadata = pluginComponentFrontMatter(sourceFile);
+    return {
+      path: relativePath,
+      kind: asset.kind,
+      slug: asset.slug,
+      name: metadata.name || asset.slug,
+      description: metadata.description || '',
+      state: status.state,
+      // Coché par défaut dans le pop-up : un enregistrement déjà présent,
+      // même périmé (« stale » — autre clone du dépôt), compte comme actif.
+      registered: ['linked', 'copied', 'stale'].includes(status.state),
+      note: status.state === 'conflict'
+        ? `Un ${asset.kind === 'skill' ? 'skill' : 'agent'} personnel du même nom existe déjà dans ~/.claude — non modifiable ici.`
+        : '',
+    };
+  });
+}
+
+/**
+ * Applique une sélection de composants (chemins relatifs voulus « actifs »)
+ * en enregistrant ceux cochés et en retirant ceux décochés, via
+ * `registerClaudeAsset`/`unregisterClaudeAsset` — jamais de substitution
+ * maison. Un composant en conflit (fichier personnel homonyme) n'est jamais
+ * touché, coché ou non. Idempotent : ré-appliquer la même sélection ne
+ * change rien à un état déjà atteint.
+ */
+function applyPluginComponentSelection(repoRoot, userHome, selection) {
+  const wanted = new Set((Array.isArray(selection) ? selection : []).map(String));
+  const assets = repositoryAssets(repoRoot).map((relativePath) => {
+    const current = claudeAssetStatus(repoRoot, userHome, relativePath);
+    if (current.state === 'conflict') return { path: relativePath, ...current };
+    const result = wanted.has(relativePath)
+      ? registerClaudeAsset(repoRoot, userHome, relativePath)
+      : unregisterClaudeAsset(repoRoot, userHome, relativePath);
+    return { path: relativePath, ...result };
+  });
+  return {
+    assets,
+    registered: assets.filter((asset) => asset.state === 'linked' || asset.state === 'copied').length,
+    removed: assets.filter((asset) => asset.state === 'missing' && !wanted.has(asset.path)).length,
+    conflicts: assets.filter((asset) => asset.state === 'conflict'),
+  };
 }
 
 function billingLedgerToMarkdown(file) {
@@ -1134,6 +1498,71 @@ function createAdminRouter({
       res.json({ ok: true, ...syncClaudeAssets(repoRoot, userHome) });
     } catch (error) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Support du bouton « Ajouter le plugin legal Claude » (onglet Skills et
+  // agents) : liste les composants du plugin PieceMaker avec leur état
+  // d'enregistrement, pour le pop-up de sélection.
+  router.get('/plugin/components', (req, res) => {
+    try {
+      const plugin = installedClaudePlugin();
+      res.json({
+        plugin: { installed: Boolean(plugin), version: plugin?.version || '' },
+        components: listPluginComponents(repoRoot, userHome),
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Installe/rafraîchit le plugin (marketplace + plugin) puis enregistre
+  // uniquement les composants cochés dans le pop-up — désenregistre ceux
+  // décochés. `components` : chemins relatifs (piecemaker-plugin/agents/...
+  // ou piecemaker-plugin/skills/.../SKILL.md) tels que renvoyés par
+  // GET /plugin/components.
+  router.post('/plugin/install', async (req, res) => {
+    try {
+      const selection = Array.isArray(req.body?.components) ? req.body.components : [];
+      const plugin = await ensureClaudePluginActive({ repoRoot, userHome });
+      const result = applyPluginComponentSelection(repoRoot, userHome, selection);
+      res.json({ ok: true, plugin, ...result });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Onglet « Marketplace officiel » du même pop-up : liste les plugins-
+  // connecteurs des marketplaces Claude Code déjà enregistrées (hors
+  // piecemaker) — voir le commentaire de listMarketplaceConnectors pour ce
+  // que la CLI expose réellement (aucune recherche distante).
+  router.get('/plugin/marketplace', (req, res) => {
+    try {
+      res.json(listMarketplaceConnectors());
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Enregistre (ou rafraîchit) le marketplace officiel Anthropic quand le
+  // poste ne l'a pas encore — bouton dédié dans l'onglet Marketplace.
+  router.post('/plugin/marketplace/register', (req, res) => {
+    try {
+      const result = registerOfficialMarketplace();
+      res.json({ ok: result.ok, ...result });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Installe/active/désactive les connecteurs cochés — `plugins` : ids
+  // `nom@marketplace` tels que renvoyés par GET /plugin/marketplace.
+  router.post('/plugin/marketplace/install', (req, res) => {
+    try {
+      const selection = Array.isArray(req.body?.plugins) ? req.body.plugins : [];
+      res.json({ ok: true, ...applyMarketplaceSelection(selection) });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
     }
   });
 
@@ -1587,21 +2016,28 @@ function createAdminRouter({
 }
 
 module.exports = {
+  applyMarketplaceSelection,
+  applyPluginComponentSelection,
   checkOllamaModelUpdate,
   configurationOverview,
   createLegalCase,
   createAdminRouter,
   createManagedFile,
+  ensureClaudePluginActive,
   folderPickerCommands,
   installProjectPlugin,
   isLocalOrigin,
   listDossiers,
   listManagedFiles,
+  listMarketplaceConnectors,
+  listPluginComponents,
+  listRegisteredMarketplaces,
   managedFileKind,
   normalizeAgentModel,
   normalizeAgentTools,
   readManagedFile,
   registerLegalCase,
+  registerOfficialMarketplace,
   revealCommands,
   saveManagedFile,
   selectLocalFolder,

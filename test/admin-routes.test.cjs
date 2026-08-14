@@ -6,15 +6,22 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
+  applyMarketplaceSelection,
+  applyPluginComponentSelection,
   checkOllamaModelUpdate,
   createManagedFile,
+  ensureClaudePluginActive,
   isLocalOrigin,
   listDossiers,
   listManagedFiles,
+  listMarketplaceConnectors,
+  listPluginComponents,
+  listRegisteredMarketplaces,
   managedFileKind,
   normalizeAgentModel,
   normalizeAgentTools,
   readManagedFile,
+  registerOfficialMarketplace,
   revealCommands,
   saveManagedFile,
   updateEnvFile,
@@ -248,4 +255,283 @@ test('les dossiers s’ouvrent avec les commandes du système, sans passer par u
 test('une action de dossier inconnue ou un chemin relatif sont refusés', () => {
   assert.throws(() => revealCommands('darwin', 'browser', '/Users/me'), /Action de dossier inconnue/);
   assert.throws(() => revealCommands('darwin', 'files', 'Dossiers/Martin'), /Chemin de dossier invalide/);
+});
+
+// ---------------------------------------------------------------------------
+// Pop-up « Ajouter le plugin legal Claude » (onglet Skills et agents) :
+// GET /api/admin/plugin/components et POST /api/admin/plugin/install.
+// ---------------------------------------------------------------------------
+
+function pluginFixture() {
+  const data = fixture();
+  fs.writeFileSync(
+    path.join(data.repo, 'piecemaker-plugin', 'agents', 'analyse.md'),
+    '---\nname: analyse\ndescription: "Analyse une pièce du dossier."\n---\n# Analyse\n',
+  );
+  fs.writeFileSync(
+    path.join(data.repo, 'piecemaker-plugin', 'skills', 'redaction', 'SKILL.md'),
+    '---\nname: redaction\ndescription: "Rédige un acte juridique."\n---\n# Rédaction\n',
+  );
+  return data;
+}
+
+test('listPluginComponents lit le front matter et l’état d’enregistrement de chaque composant', (t) => {
+  const data = pluginFixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+
+  const components = listPluginComponents(data.repo, data.home);
+  assert.deepEqual(components.map((component) => component.path), [
+    'piecemaker-plugin/agents/analyse.md',
+    'piecemaker-plugin/skills/redaction/SKILL.md',
+  ]);
+  assert.deepEqual(components.map((component) => component.state), ['missing', 'missing']);
+  assert.deepEqual(components.map((component) => component.registered), [false, false]);
+  const agent = components.find((component) => component.kind === 'agent');
+  assert.equal(agent.name, 'analyse');
+  assert.equal(agent.description, 'Analyse une pièce du dossier.');
+});
+
+test('applyPluginComponentSelection enregistre les composants cochés et retire ceux décochés, sans jamais toucher un conflit', (t) => {
+  const data = pluginFixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const agentPath = 'piecemaker-plugin/agents/analyse.md';
+  const skillPath = 'piecemaker-plugin/skills/redaction/SKILL.md';
+
+  // Un fichier personnel homonyme pour le skill : jamais remplacé.
+  const personalSkill = path.join(data.home, '.claude', 'skills', 'redaction');
+  fs.mkdirSync(personalSkill, { recursive: true });
+  fs.writeFileSync(path.join(personalSkill, 'SKILL.md'), '# skill personnel\n');
+
+  const applied = applyPluginComponentSelection(data.repo, data.home, [agentPath, skillPath]);
+  assert.equal(applied.registered, 1);
+  assert.equal(applied.conflicts.length, 1);
+  assert.equal(applied.conflicts[0].path, skillPath);
+  assert.equal(fs.readFileSync(path.join(personalSkill, 'SKILL.md'), 'utf8'), '# skill personnel\n');
+
+  let components = listPluginComponents(data.repo, data.home);
+  assert.equal(components.find((c) => c.path === agentPath).registered, true);
+  assert.equal(components.find((c) => c.path === skillPath).state, 'conflict');
+
+  // Idempotent : ré-appliquer la même sélection ne change rien.
+  const reapplied = applyPluginComponentSelection(data.repo, data.home, [agentPath, skillPath]);
+  assert.equal(reapplied.registered, 1);
+
+  // Décocher l'agent le retire — la liste reflète l'état réel, coché =
+  // enregistré, comme le pop-up le lit à sa réouverture.
+  const removed = applyPluginComponentSelection(data.repo, data.home, []);
+  assert.equal(removed.removed, 1);
+  components = listPluginComponents(data.repo, data.home);
+  assert.equal(components.find((c) => c.path === agentPath).registered, false);
+});
+
+test('ensureClaudePluginActive installe (marketplace puis plugin) quand rien n’est encore installé', async (t) => {
+  const data = pluginFixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const calls = [];
+  const runCommand = (command, args) => {
+    calls.push([command, ...args].join(' '));
+    if (args.includes('list') && args.includes('--json') && args.includes('marketplace')) return { ok: true, output: '[]' };
+    if (args.includes('list') && args.includes('--json')) return { ok: true, output: '[]' };
+    if (args.includes('add')) return { ok: true, output: 'ok' };
+    if (args.includes('install')) return { ok: true, output: 'ok' };
+    return { ok: false, output: 'inattendu' };
+  };
+
+  const result = await ensureClaudePluginActive({ repoRoot: data.repo, userHome: data.home, runCommand });
+  assert.equal(result.ok, true);
+  assert.equal(result.action, 'installed');
+  assert.equal(result.installed, true);
+  assert.ok(calls.some((call) => call.includes('marketplace add')));
+  assert.ok(calls.some((call) => call.includes('plugin install')));
+});
+
+test('ensureClaudePluginActive rapporte l’échec sans lever quand le CLI claude est absent', async (t) => {
+  const data = pluginFixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const runCommand = () => ({ ok: false, output: '' });
+
+  const result = await ensureClaudePluginActive({ repoRoot: data.repo, userHome: data.home, runCommand });
+  assert.equal(result.ok, false);
+  assert.equal(result.installed, false);
+  assert.match(result.reason, /Échec/);
+});
+
+test('ensureClaudePluginActive délègue à refreshClaudePlugin quand le plugin est déjà installé', async (t) => {
+  const data = pluginFixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const runCommand = (command, args) => {
+    if (args.includes('list') && args.includes('--json')) {
+      return { ok: true, output: JSON.stringify([{ id: 'piecemaker@piecemaker', enabled: true, version: '1.0.0' }]) };
+    }
+    throw new Error(`commande inattendue en environnement de test : ${[command, ...args].join(' ')}`);
+  };
+  let refreshCalledWith = null;
+  const refreshInstalledPlugin = async (options) => {
+    refreshCalledWith = options;
+    return { ok: true, refreshed: false, alreadyUpToDate: true };
+  };
+
+  const result = await ensureClaudePluginActive({
+    repoRoot: data.repo,
+    userHome: data.home,
+    runCommand,
+    refreshInstalledPlugin,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.action, 'refresh');
+  assert.equal(result.installed, true);
+  assert.equal(result.alreadyUpToDate, true);
+  assert.equal(refreshCalledWith.userHome, data.home);
+  assert.equal(refreshCalledWith.pluginDir, path.join(data.repo, 'piecemaker-plugin'));
+});
+
+// ---------------------------------------------------------------------------
+// Onglet « Marketplace officiel » du même pop-up : GET /plugin/marketplace,
+// POST /plugin/marketplace/register, POST /plugin/marketplace/install.
+// Constat d'investigation (voir CLAUDE.md / rapport de fonctionnalité) : la
+// CLI `claude` n'a pas de sous-commande de recherche distante — seule
+// `claude plugin list --available --json` énumère les plugins non installés
+// des marketplaces déjà enregistrées. Ces tests reproduisent sa forme
+// réelle (constatée sur un vrai poste) via un faux `runCommand` injecté.
+// ---------------------------------------------------------------------------
+
+const FAKE_MARKETPLACES = [
+  { name: 'piecemaker', source: 'github', repo: 'PieceMaker-Legal/PieceMaker-Installer' },
+  { name: 'claude-plugins-official', source: 'github', repo: 'anthropics/claude-plugins-official' },
+];
+const FAKE_AVAILABLE = {
+  installed: [
+    { id: 'telegram@claude-plugins-official', enabled: true, scope: 'user' },
+    { id: 'swift-lsp@claude-plugins-official', enabled: false, scope: 'user' },
+    { id: 'piecemaker@piecemaker', enabled: true, scope: 'user' },
+  ],
+  available: [
+    {
+      pluginId: 'frontend-design@claude-plugins-official',
+      name: 'frontend-design',
+      description: 'Guidance for distinctive UI design.',
+      marketplaceName: 'claude-plugins-official',
+      installCount: 12345,
+    },
+  ],
+};
+
+function fakeMarketplaceRunCommand(overrides = {}) {
+  return (command, args) => {
+    const key = args.join(' ');
+    if (overrides[key]) return overrides[key]();
+    if (args.includes('marketplace') && args.includes('list')) return { ok: true, output: JSON.stringify(FAKE_MARKETPLACES) };
+    if (args.includes('list') && args.includes('--available')) return { ok: true, output: JSON.stringify(FAKE_AVAILABLE) };
+    return { ok: false, output: `commande inattendue en test : ${key}` };
+  };
+}
+
+test('listRegisteredMarketplaces exclut le marketplace piecemaker et détecte le marketplace officiel Anthropic', () => {
+  const marketplaces = listRegisteredMarketplaces(fakeMarketplaceRunCommand());
+  assert.deepEqual(marketplaces.map((m) => m.name), ['claude-plugins-official']);
+  assert.equal(marketplaces[0].official, true);
+});
+
+test('listMarketplaceConnectors fusionne le catalogue disponible et les plugins installés, hors piecemaker', () => {
+  const state = listMarketplaceConnectors(fakeMarketplaceRunCommand());
+  assert.equal(state.officialRegistered, true);
+  const ids = state.plugins.map((p) => p.id).sort();
+  assert.deepEqual(ids, [
+    'frontend-design@claude-plugins-official',
+    'swift-lsp@claude-plugins-official',
+    'telegram@claude-plugins-official',
+  ]);
+  // Le plugin de notre propre marketplace n'apparaît jamais dans cet onglet.
+  assert.ok(!ids.includes('piecemaker@piecemaker'));
+  const telegram = state.plugins.find((p) => p.id === 'telegram@claude-plugins-official');
+  assert.equal(telegram.installed, true);
+  assert.equal(telegram.enabled, true);
+  const frontend = state.plugins.find((p) => p.id === 'frontend-design@claude-plugins-official');
+  assert.equal(frontend.installed, false);
+  assert.equal(frontend.description, 'Guidance for distinctive UI design.');
+  assert.equal(frontend.installCount, 12345);
+});
+
+test('listMarketplaceConnectors rapporte l’échec sans lever quand la CLI ne répond pas', () => {
+  const runCommand = () => ({ ok: false, output: '' });
+  const state = listMarketplaceConnectors(runCommand);
+  assert.deepEqual(state.plugins, []);
+  assert.match(state.reason, /Échec/);
+});
+
+test('applyMarketplaceSelection installe/active/désactive selon l’état courant, sans jamais désinstaller', () => {
+  const calls = [];
+  const runCommand = fakeMarketplaceRunCommand({
+    'plugin install frontend-design@claude-plugins-official -y': () => { calls.push('install'); return { ok: true, output: 'ok' }; },
+    'plugin enable swift-lsp@claude-plugins-official': () => { calls.push('enable'); return { ok: true, output: 'ok' }; },
+    'plugin disable telegram@claude-plugins-official': () => { calls.push('disable'); return { ok: true, output: 'ok' }; },
+  });
+
+  // Coché : frontend-design (pas installé) et swift-lsp (installé, désactivé) ;
+  // décoché : telegram (actif) — donc install + enable + disable, une fois chacun.
+  const result = applyMarketplaceSelection(
+    ['frontend-design@claude-plugins-official', 'swift-lsp@claude-plugins-official'],
+    runCommand,
+  );
+  assert.equal(result.installed, 1);
+  assert.equal(result.enabled, 1);
+  assert.equal(result.disabled, 1);
+  assert.deepEqual(result.failed, []);
+  assert.deepEqual(calls.sort(), ['disable', 'enable', 'install']);
+
+  // Idempotent : ré-appliquer un état déjà atteint n'invoque aucune commande.
+  const calls2 = [];
+  const runCommand2 = fakeMarketplaceRunCommand({
+    'plugin install frontend-design@claude-plugins-official -y': () => { calls2.push('install'); return { ok: true, output: 'ok' }; },
+  });
+  // État courant simulé : rien n'a changé côté CLI (toujours le fixture de
+  // départ), donc redemander exactement le même état initial (telegram actif
+  // seul) ne doit rien invoquer.
+  const noop = applyMarketplaceSelection(['telegram@claude-plugins-official'], runCommand2);
+  assert.deepEqual(calls2, []);
+  assert.equal(noop.installed, 0);
+  assert.equal(noop.enabled, 0);
+  assert.equal(noop.disabled, 0);
+});
+
+test('applyMarketplaceSelection remonte un échec individuel sans lever ni bloquer les autres', () => {
+  const runCommand = fakeMarketplaceRunCommand({
+    'plugin install frontend-design@claude-plugins-official -y': () => ({ ok: false, output: 'réseau indisponible' }),
+    'plugin enable swift-lsp@claude-plugins-official': () => ({ ok: true, output: 'ok' }),
+  });
+  // telegram reste coché (déjà actif) : aucune commande ne le concerne, seuls
+  // frontend-design (échoue) et swift-lsp (réussit) changent d'état.
+  const result = applyMarketplaceSelection(
+    ['frontend-design@claude-plugins-official', 'swift-lsp@claude-plugins-official', 'telegram@claude-plugins-official'],
+    runCommand,
+  );
+  assert.equal(result.enabled, 1);
+  assert.equal(result.failed.length, 1);
+  assert.equal(result.failed[0].id, 'frontend-design@claude-plugins-official');
+  assert.match(result.failed[0].reason, /réseau indisponible/);
+});
+
+test('registerOfficialMarketplace ajoute le marketplace absent, ou le met à jour s’il est déjà enregistré', () => {
+  const addCalls = [];
+  const runCommandMissing = (command, args) => {
+    if (args.includes('marketplace') && args.includes('list')) {
+      return { ok: true, output: JSON.stringify([FAKE_MARKETPLACES[0]]) }; // seul piecemaker enregistré
+    }
+    if (args.includes('marketplace') && args.includes('add')) { addCalls.push(args); return { ok: true, output: 'ok' }; }
+    return { ok: false, output: 'inattendu' };
+  };
+  const result = registerOfficialMarketplace(runCommandMissing);
+  assert.equal(result.ok, true);
+  assert.equal(result.alreadyRegistered, false);
+  assert.deepEqual(addCalls[0], ['plugin', 'marketplace', 'add', 'anthropics/claude-plugins-official']);
+
+  const updateCalls = [];
+  const runCommandPresent = (command, args) => {
+    if (args.includes('marketplace') && args.includes('list')) return { ok: true, output: JSON.stringify(FAKE_MARKETPLACES) };
+    if (args.includes('marketplace') && args.includes('update')) { updateCalls.push(args); return { ok: true, output: 'ok' }; }
+    return { ok: false, output: 'inattendu' };
+  };
+  const already = registerOfficialMarketplace(runCommandPresent);
+  assert.equal(already.alreadyRegistered, true);
+  assert.deepEqual(updateCalls[0], ['plugin', 'marketplace', 'update', 'claude-plugins-official']);
 });
