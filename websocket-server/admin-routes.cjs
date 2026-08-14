@@ -2,6 +2,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('node:crypto');
+const { pathToFileURL } = require('node:url');
 const { spawn, spawnSync } = require('child_process');
 const { performance } = require('node:perf_hooks');
 const {
@@ -49,9 +50,12 @@ const {
   writeInstitutionalTerms,
 } = require('../piecemaker-plugin/scripts/lib/institutional-terms.cjs');
 const {
+  claudeAssetOf,
   claudeAssetStatus,
   registerClaudeAsset,
+  repositoryAssets,
   syncClaudeAssets,
+  unregisterClaudeAsset,
 } = require('./claude-assets.cjs');
 const {
   controlDossierBot,
@@ -383,6 +387,122 @@ function installedClaudePlugin() {
   }
 }
 
+// Coordonnées marketplace/plugin — mêmes valeurs que
+// installer/lib/plugin-refresh.mjs (MARKETPLACE_NAME/PLUGIN_NAME) et
+// installer/steps/09-claude-assets.mjs (REPO_SLUG), dupliquées ici en
+// constantes plutôt qu'importées : ce fichier reste CommonJS pur pour tout
+// ce qui ne touche pas explicitement à l'installation du plugin.
+const CLAUDE_MARKETPLACE_NAME = 'piecemaker';
+const CLAUDE_PLUGIN_NAME = 'piecemaker';
+const CLAUDE_PLUGIN_SPEC = `${CLAUDE_PLUGIN_NAME}@${CLAUDE_MARKETPLACE_NAME}`;
+const CLAUDE_MARKETPLACE_SLUG = 'PieceMaker-Legal/PieceMaker-Installer';
+
+function parseJsonOutput(output) {
+  try {
+    return JSON.parse(output);
+  } catch {
+    return null;
+  }
+}
+
+// installer/lib/service.mjs (ESM) is the existing, tested implementation of
+// "refresh an already-installed plugin and verify convergence by content
+// fingerprint" (see its doc comment). It is loaded lazily via dynamic
+// import() — the one interop path that works from this CommonJS file — and
+// cached, since it is pure/side-effect-free at import time.
+let cachedRefreshClaudePlugin = null;
+async function loadRefreshClaudePlugin() {
+  if (!cachedRefreshClaudePlugin) {
+    const modulePath = path.join(__dirname, '..', 'installer', 'lib', 'service.mjs');
+    const mod = await import(pathToFileURL(modulePath).href);
+    cachedRefreshClaudePlugin = mod.refreshClaudePlugin;
+  }
+  return cachedRefreshClaudePlugin;
+}
+
+/**
+ * Installe ou rafraîchit le plugin Claude Code PieceMaker (marketplace +
+ * plugin), pour le bouton « Ajouter le plugin legal Claude » de l'onglet
+ * « Skills et agents ». Deux chemins :
+ *  - Plugin déjà installé : délègue à `refreshClaudePlugin()`
+ *    (installer/lib/service.mjs) — la même vérification de convergence par
+ *    empreinte de contenu que `piecemaker update` utilise déjà pour éviter de
+ *    laisser un cache Claude Code périmé (voir plugin-refresh.mjs). Best
+ *    effort, jamais levée.
+ *  - Jamais installé : reprend la séquence de
+ *    `installer/steps/09-claude-assets.mjs` (marketplace add — GitHub puis
+ *    repli sur la copie locale du dépôt — puis install), sans les invites
+ *    interactives de l'installeur : ce chemin doit pouvoir tourner depuis une
+ *    requête HTTP de l'administration.
+ * `runCommand` et `refreshInstalledPlugin` sont injectables pour les tests,
+ * afin de ne jamais dépendre d'un vrai CLI `claude` en CI.
+ */
+async function ensureClaudePluginActive({
+  repoRoot,
+  userHome = os.homedir(),
+  runCommand = captureCommand,
+  refreshInstalledPlugin = null,
+} = {}) {
+  const listPlugins = () => {
+    const result = runCommand('claude', ['plugin', 'list', '--json']);
+    return result.ok ? parseJsonOutput(result.output) : null;
+  };
+  const isPluginInstalled = (plugins) => Array.isArray(plugins)
+    && plugins.some((entry) => entry?.id === CLAUDE_PLUGIN_SPEC && entry.enabled !== false);
+
+  if (isPluginInstalled(listPlugins())) {
+    const refresh = refreshInstalledPlugin || await loadRefreshClaudePlugin();
+    const result = await refresh({ pluginDir: path.join(repoRoot, 'piecemaker-plugin'), userHome });
+    return { ok: Boolean(result?.ok), action: 'refresh', installed: true, ...result };
+  }
+
+  const marketplaces = runCommand('claude', ['plugin', 'marketplace', 'list', '--json']);
+  const marketplaceList = marketplaces.ok ? parseJsonOutput(marketplaces.output) : null;
+  const marketplaceRegistered = Array.isArray(marketplaceList)
+    && marketplaceList.some((entry) => entry?.name === CLAUDE_MARKETPLACE_NAME);
+
+  let marketplaceSource = 'existing';
+  if (marketplaceRegistered) {
+    const updated = runCommand('claude', ['plugin', 'marketplace', 'update', CLAUDE_MARKETPLACE_NAME]);
+    if (!updated.ok) {
+      return {
+        ok: false,
+        action: 'marketplace-update',
+        installed: false,
+        reason: updated.output || 'Échec de l’actualisation du marketplace « piecemaker ».',
+      };
+    }
+  } else {
+    const fromGitHub = runCommand('claude', ['plugin', 'marketplace', 'add', CLAUDE_MARKETPLACE_SLUG]);
+    if (fromGitHub.ok) {
+      marketplaceSource = 'github';
+    } else {
+      const fromLocal = runCommand('claude', ['plugin', 'marketplace', 'add', repoRoot]);
+      if (!fromLocal.ok) {
+        return {
+          ok: false,
+          action: 'marketplace-add',
+          installed: false,
+          reason: fromLocal.output || 'Échec de l’enregistrement du marketplace (GitHub et copie locale).',
+        };
+      }
+      marketplaceSource = 'local';
+    }
+  }
+
+  const install = runCommand('claude', ['plugin', 'install', CLAUDE_PLUGIN_SPEC]);
+  if (!install.ok) {
+    return {
+      ok: false,
+      action: 'plugin-install',
+      installed: false,
+      reason: install.output || 'Échec de l’installation du plugin — le client « claude » est-il installé ?',
+    };
+  }
+
+  return { ok: true, action: 'installed', installed: true, marketplaceSource };
+}
+
 async function fetchWithTimeout(fetchImpl, url, options = {}, timeout = 3000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
@@ -705,6 +825,90 @@ function listManagedFiles(repoRoot, homeDir = path.join(os.homedir(), '.piecemak
       claudeCode: claudeAssetStatus(repoRoot, userHome, normalized),
     };
   });
+}
+
+// Lecture minimale du front matter (name/description) d'un skill/agent, pour
+// le pop-up « Ajouter le plugin legal Claude ». Même grammaire que
+// admin/markdown.mjs#parseMetadata (module navigateur, non réutilisable
+// ici — server.cjs ne charge pas de modules ES du dossier admin/), réduite
+// aux deux clés affichées.
+function pluginComponentFrontMatter(absolutePath) {
+  try {
+    const raw = fs.readFileSync(absolutePath, 'utf8');
+    const match = raw.match(/^---\n([\s\S]*?)\n---(?:\n|$)/);
+    if (!match) return {};
+    const values = {};
+    for (const line of match[1].split('\n')) {
+      const lineMatch = line.match(/^([A-Za-z][A-Za-z0-9_-]*):\s*(.*)$/);
+      if (!lineMatch) continue;
+      let value = lineMatch[2];
+      if (value.startsWith('"')) {
+        try { value = JSON.parse(value); } catch { value = value.replace(/^"|"$/g, ''); }
+      } else if (value.startsWith("'") && value.endsWith("'")) {
+        value = value.slice(1, -1).replaceAll("''", "'");
+      }
+      values[lineMatch[1]] = value;
+    }
+    return values;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Les skills et agents du plugin PieceMaker, avec leur état d'enregistrement
+ * auprès de Claude Code — support du pop-up de sélection de
+ * « Ajouter le plugin legal Claude ». S'appuie sur `repositoryAssets` /
+ * `claudeAssetStatus` (claude-assets.cjs), la même source que la liste de
+ * fichiers et `files/sync`, pour que les deux vues restent en accord.
+ */
+function listPluginComponents(repoRoot, userHome = os.homedir()) {
+  return repositoryAssets(repoRoot).map((relativePath) => {
+    const asset = claudeAssetOf(repoRoot, userHome, relativePath);
+    const status = claudeAssetStatus(repoRoot, userHome, relativePath);
+    const sourceFile = asset.type === 'dir' ? path.join(asset.source, 'SKILL.md') : asset.source;
+    const metadata = pluginComponentFrontMatter(sourceFile);
+    return {
+      path: relativePath,
+      kind: asset.kind,
+      slug: asset.slug,
+      name: metadata.name || asset.slug,
+      description: metadata.description || '',
+      state: status.state,
+      // Coché par défaut dans le pop-up : un enregistrement déjà présent,
+      // même périmé (« stale » — autre clone du dépôt), compte comme actif.
+      registered: ['linked', 'copied', 'stale'].includes(status.state),
+      note: status.state === 'conflict'
+        ? `Un ${asset.kind === 'skill' ? 'skill' : 'agent'} personnel du même nom existe déjà dans ~/.claude — non modifiable ici.`
+        : '',
+    };
+  });
+}
+
+/**
+ * Applique une sélection de composants (chemins relatifs voulus « actifs »)
+ * en enregistrant ceux cochés et en retirant ceux décochés, via
+ * `registerClaudeAsset`/`unregisterClaudeAsset` — jamais de substitution
+ * maison. Un composant en conflit (fichier personnel homonyme) n'est jamais
+ * touché, coché ou non. Idempotent : ré-appliquer la même sélection ne
+ * change rien à un état déjà atteint.
+ */
+function applyPluginComponentSelection(repoRoot, userHome, selection) {
+  const wanted = new Set((Array.isArray(selection) ? selection : []).map(String));
+  const assets = repositoryAssets(repoRoot).map((relativePath) => {
+    const current = claudeAssetStatus(repoRoot, userHome, relativePath);
+    if (current.state === 'conflict') return { path: relativePath, ...current };
+    const result = wanted.has(relativePath)
+      ? registerClaudeAsset(repoRoot, userHome, relativePath)
+      : unregisterClaudeAsset(repoRoot, userHome, relativePath);
+    return { path: relativePath, ...result };
+  });
+  return {
+    assets,
+    registered: assets.filter((asset) => asset.state === 'linked' || asset.state === 'copied').length,
+    removed: assets.filter((asset) => asset.state === 'missing' && !wanted.has(asset.path)).length,
+    conflicts: assets.filter((asset) => asset.state === 'conflict'),
+  };
 }
 
 function billingLedgerToMarkdown(file) {
@@ -1134,6 +1338,37 @@ function createAdminRouter({
       res.json({ ok: true, ...syncClaudeAssets(repoRoot, userHome) });
     } catch (error) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Support du bouton « Ajouter le plugin legal Claude » (onglet Skills et
+  // agents) : liste les composants du plugin PieceMaker avec leur état
+  // d'enregistrement, pour le pop-up de sélection.
+  router.get('/plugin/components', (req, res) => {
+    try {
+      const plugin = installedClaudePlugin();
+      res.json({
+        plugin: { installed: Boolean(plugin), version: plugin?.version || '' },
+        components: listPluginComponents(repoRoot, userHome),
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Installe/rafraîchit le plugin (marketplace + plugin) puis enregistre
+  // uniquement les composants cochés dans le pop-up — désenregistre ceux
+  // décochés. `components` : chemins relatifs (piecemaker-plugin/agents/...
+  // ou piecemaker-plugin/skills/.../SKILL.md) tels que renvoyés par
+  // GET /plugin/components.
+  router.post('/plugin/install', async (req, res) => {
+    try {
+      const selection = Array.isArray(req.body?.components) ? req.body.components : [];
+      const plugin = await ensureClaudePluginActive({ repoRoot, userHome });
+      const result = applyPluginComponentSelection(repoRoot, userHome, selection);
+      res.json({ ok: true, plugin, ...result });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
     }
   });
 
@@ -1587,16 +1822,19 @@ function createAdminRouter({
 }
 
 module.exports = {
+  applyPluginComponentSelection,
   checkOllamaModelUpdate,
   configurationOverview,
   createLegalCase,
   createAdminRouter,
   createManagedFile,
+  ensureClaudePluginActive,
   folderPickerCommands,
   installProjectPlugin,
   isLocalOrigin,
   listDossiers,
   listManagedFiles,
+  listPluginComponents,
   managedFileKind,
   normalizeAgentModel,
   normalizeAgentTools,

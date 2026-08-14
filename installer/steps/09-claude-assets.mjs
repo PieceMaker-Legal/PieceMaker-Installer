@@ -27,6 +27,17 @@
  * back to registering the local working copy (REPO_ROOT) as a path-based
  * marketplace, which works but does not get background auto-refresh — see
  * piecemaker-plugin/README.md for the caveat.
+ *
+ * Cache convergence: `claude plugin update` exits 0 whether or not it
+ * actually recopied anything — the installed cache directory is keyed by the
+ * version string in piecemaker-plugin/.claude-plugin/plugin.json, so an edit
+ * without a version bump can leave it silently stale. `ensurePlugin()` below
+ * never trusts the exit code alone: it calls `pluginRefreshStatus()`
+ * (installer/lib/plugin-refresh.mjs) before running anything (skipping the
+ * command entirely when already converged — this step is idempotent) and
+ * again afterward, to confirm the cache's content fingerprint actually
+ * matches the repo. `check()` reports the same drift as a `partial` result so
+ * `piecemaker doctor` surfaces it without re-running the install.
  */
 
 import fs from 'node:fs';
@@ -35,6 +46,7 @@ import path from 'node:path';
 import { log, spinner } from '../lib/ui.mjs';
 import { confirm } from '../lib/prompt.mjs';
 import { REPO_ROOT, commandExists, run, runCapture } from '../lib/platform.mjs';
+import { MARKETPLACE_NAME, PLUGIN_NAME, REFRESH_REASON_LABEL, pluginRefreshStatus } from '../lib/plugin-refresh.mjs';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -47,9 +59,11 @@ export const meta = {
 };
 
 const REPO_SLUG = 'PieceMaker-Legal/PieceMaker-Installer';
-const MARKETPLACE_NAME = 'piecemaker';
-const PLUGIN_NAME = 'piecemaker';
+// Marketplace/plugin coordinates come from plugin-refresh.mjs so the version
+// drift check below (ensurePlugin) and the eventual `claude plugin ...`
+// commands always agree on the same names.
 const PLUGIN_SPEC = `${PLUGIN_NAME}@${MARKETPLACE_NAME}`;
+const PLUGIN_DIR = path.join(REPO_ROOT, 'piecemaker-plugin');
 const CLAUDE_MD = path.join(REPO_ROOT, 'CLAUDE.md');
 
 function parseJson(str) {
@@ -103,23 +117,53 @@ async function ensureMarketplace() {
   return { ok: false };
 }
 
+/**
+ * Install or refresh the plugin, then VERIFY the installed cache actually
+ * matches the repo instead of trusting `claude plugin update`'s exit code.
+ *
+ * That command exits 0 whether or not it recopied anything: when the plugin's
+ * declared version hasn't moved it can no-op, leaving stale hook/script bytes
+ * in the version-keyed cache directory even though the repo's content
+ * changed — the exact failure mode that shipped a broken anonymisation hook
+ * (see `installer/lib/plugin-refresh.mjs` and the auto-memory "Hooks inertes
+ * si plugin cache périmé"). So every call here re-checks `pluginRefreshStatus`
+ * after running a command and reports drift explicitly. Idempotent: an
+ * already-converged install skips `claude plugin update` entirely.
+ */
 async function ensurePlugin() {
   const plugins = listPlugins();
-  if (isPluginInstalled(plugins)) {
-    const spin = spinner(`Mise à jour du plugin (${PLUGIN_SPEC})...`);
-    const code = await run('claude', ['plugin', 'update', PLUGIN_SPEC]);
-    if (code === 0) spin.succeed('Plugin PieceMaker mis à jour (redémarrage de session requis).');
-    else spin.fail('Mise à jour impossible — la version déjà installée reste active.');
+  if (!isPluginInstalled(plugins)) {
+    const spin = spinner(`Installation du plugin (${PLUGIN_SPEC})...`);
+    const code = await run('claude', ['plugin', 'install', PLUGIN_SPEC]);
+    if (code === 0) {
+      spin.succeed('Plugin installé (skills + agents disponibles).');
+      return true;
+    }
+    spin.fail('Échec de l\'installation du plugin.');
+    return false;
+  }
+
+  const before = pluginRefreshStatus({ pluginDir: PLUGIN_DIR });
+  if (before.upToDate) {
+    log.ok(`Plugin PieceMaker déjà à jour (version ${before.repoVersion}).`);
     return true;
   }
 
-  const spin = spinner(`Installation du plugin (${PLUGIN_SPEC})...`);
-  const code = await run('claude', ['plugin', 'install', PLUGIN_SPEC]);
-  if (code === 0) {
-    spin.succeed('Plugin installé (skills + agents disponibles).');
+  const spin = spinner(`Mise à jour du plugin (${PLUGIN_SPEC})... [${REFRESH_REASON_LABEL[before.reason] || before.reason}]`);
+  const code = await run('claude', ['plugin', 'update', PLUGIN_SPEC]);
+  if (code !== 0) {
+    spin.fail('Mise à jour impossible — la version déjà installée reste active.');
+    return false;
+  }
+
+  const after = pluginRefreshStatus({ pluginDir: PLUGIN_DIR });
+  if (after.upToDate) {
+    spin.succeed(`Plugin PieceMaker rafraîchi et à jour (version ${after.repoVersion}) — redémarrage de session requis.`);
     return true;
   }
-  spin.fail('Échec de l\'installation du plugin.');
+  spin.stop();
+  log.warn(`Plugin Claude Code toujours périmé après « claude plugin update » (${REFRESH_REASON_LABEL[after.reason] || after.reason}).`);
+  log.detail('Le marketplace distant (GitHub) n\'a peut-être pas encore cette révision : poussez le dépôt, ou incrémentez la version du plugin, puis relancez cette étape.');
   return false;
 }
 
@@ -208,7 +252,7 @@ export async function install(ctx) {
   if (!pluginOk) {
     return {
       status: 'failed',
-      note: `Marketplace enregistré mais échec de "claude plugin install ${PLUGIN_SPEC}".`,
+      note: `Marketplace enregistré mais le plugin (${PLUGIN_SPEC}) n'a pas pu être installé/rafraîchi à jour — voir les avertissements ci-dessus.`,
     };
   }
 
@@ -229,17 +273,25 @@ export async function check(ctx) {
   const claudeMdOk = fs.existsSync(CLAUDE_MD);
   const unregistered = repositoryAssets(REPO_ROOT)
     .filter((asset) => !['linked', 'copied'].includes(claudeAssetStatus(REPO_ROOT, os.homedir(), asset)?.state));
+  // Installed and present is not the same as up to date: the cache is keyed
+  // by version, so an edit without a version bump leaves it silently stale —
+  // see installer/lib/plugin-refresh.mjs.
+  const refresh = pluginRefreshStatus({ pluginDir: PLUGIN_DIR });
 
-  if (pluginInstalled && claudeMdOk && unregistered.length) {
+  if (!pluginInstalled && !claudeMdOk) return { status: 'failed', note: 'Plugin non installé et CLAUDE.md absent.' };
+  if (!pluginInstalled) return { status: 'partial', note: 'CLAUDE.md présent, plugin non installé.' };
+  if (!claudeMdOk) return { status: 'partial', note: 'Plugin installé, CLAUDE.md absent.' };
+  if (!refresh.upToDate) {
+    return {
+      status: 'partial',
+      note: `Cache du plugin Claude Code périmé (${REFRESH_REASON_LABEL[refresh.reason] || refresh.reason}) — relancez cette étape.`,
+    };
+  }
+  if (unregistered.length) {
     return {
       status: 'partial',
       note: `${unregistered.length} skill(s)/agent(s) local(aux) non enregistré(s) dans ~/.claude — relancez cette étape.`,
     };
   }
-  if (pluginInstalled && claudeMdOk) return { status: 'done', note: '' };
-  if (!pluginInstalled && !claudeMdOk) return { status: 'failed', note: 'Plugin non installé et CLAUDE.md absent.' };
-  return {
-    status: 'partial',
-    note: !pluginInstalled ? 'CLAUDE.md présent, plugin non installé.' : 'Plugin installé, CLAUDE.md absent.',
-  };
+  return { status: 'done', note: '' };
 }

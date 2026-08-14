@@ -328,12 +328,18 @@ async function runOperationalCommand(command, knownUpdate = null) {
       }
 
       // Le dépôt est à jour, mais le plugin que Claude Code charge est une copie
-      // figée du marketplace : on la rafraîchit ici pour éviter le double
-      // « claude plugin marketplace update » + « claude plugin update » manuel.
+      // figée et versionnée du marketplace : on la rafraîchit ici pour éviter le
+      // double « claude plugin marketplace update » + « claude plugin update »
+      // manuel — et, surtout, on VÉRIFIE que le cache installé correspond bien
+      // au dépôt après coup (une commande peut sortir en code 0 sans rien avoir
+      // recopié si la version du plugin n'a pas changé — voir
+      // installer/lib/plugin-refresh.mjs).
       const spin = spinner('Rafraîchissement du plugin Claude Code...');
       const plugin = refreshClaudePlugin();
-      if (plugin.refreshed) {
-        spin.succeed('Plugin Claude Code rafraîchi — redémarrez votre session Claude Code pour charger la nouvelle version.');
+      if (plugin.alreadyUpToDate) {
+        spin.succeed(`Plugin Claude Code déjà à jour (version ${plugin.status.repoVersion}).`);
+      } else if (plugin.converged) {
+        spin.succeed(`Plugin Claude Code rafraîchi (version ${plugin.status.repoVersion}) — redémarrez votre session Claude Code pour charger la nouvelle version.`);
       } else {
         spin.stop();
         log.warn(`Plugin Claude Code non rafraîchi (${plugin.reason}).`);
