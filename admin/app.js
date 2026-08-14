@@ -3212,16 +3212,26 @@ function renderTimelineRow(doc) {
   return row;
 }
 
-// Graphe biparti déterministe : entités à gauche (triées par degré), pièces à
-// droite (ordre chronologique). Aucune physique — le survol met en évidence les
-// liens d'un nœud. Lisible en lot, et sans dépendance externe.
+// Vue déterministe de la topologie produite par Graphify : entités à gauche
+// (triées par degré), pièces à droite (ordre chronologique). Graphify construit
+// les nœuds et arêtes côté serveur à partir des seuls codes GLiNER ; ce rendu ne
+// fait que les disposer et réappliquer les libellés autorisés dans la vue cabinet.
 function renderChronologyGraph(data) {
-  const docs = data.documents;
-  const entities = data.entities;
-  if (!docs.length || !entities.length) {
+  const graphData = data.graph || {};
+  if (graphData.status === 'error') {
+    const error = document.createElement('p');
+    error.className = 'chronology-empty';
+    error.textContent = graphData.error || 'Le graphe Graphify n’a pas pu être généré.';
+    return error;
+  }
+  const graphNodes = Array.isArray(graphData.nodes) ? graphData.nodes : [];
+  const graphEdges = Array.isArray(graphData.edges) ? graphData.edges : [];
+  const docs = graphNodes.filter((node) => node.kind === 'document');
+  const entities = graphNodes.filter((node) => node.kind === 'entity');
+  if (!docs.length || !entities.length || !graphEdges.length) {
     const empty = document.createElement('p');
     empty.className = 'chronology-empty';
-    empty.textContent = 'Pas assez de liens pour tracer un graphe (aucune entité partagée).';
+    empty.textContent = 'Pas assez de liens GLiNER pour tracer un graphe.';
     return empty;
   }
   const rowH = 26;
@@ -3232,7 +3242,7 @@ function renderChronologyGraph(data) {
   const rightX = width - 200;
   const entityY = new Map();
   const docY = new Map();
-  entities.forEach((entity, i) => entityY.set(entity.code, padTop + i * rowH));
+  entities.forEach((entity, i) => entityY.set(entity.id, padTop + i * rowH));
   docs.forEach((doc, i) => docY.set(doc.id, padTop + i * rowH));
 
   const root = svg('svg', {
@@ -3250,21 +3260,21 @@ function renderChronologyGraph(data) {
 
   const edgeLayer = svg('g', { class: 'chronology-edges' });
   const edgeElements = [];
-  for (const doc of docs) {
-    const y2 = docY.get(doc.id);
-    for (const entity of doc.codes) {
-      const y1 = entityY.get(entity.code);
-      if (y1 == null) continue;
-      const midX = (leftX + rightX) / 2;
-      const path = svg('path', {
-        d: `M ${leftX} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${rightX} ${y2}`,
-        class: `chronology-edge cat-${entity.category}`,
-      });
-      path.dataset.entity = entity.code;
-      path.dataset.doc = doc.id;
-      edgeLayer.append(path);
-      edgeElements.push(path);
-    }
+  const entityById = new Map(entities.map((entity) => [entity.id, entity]));
+  for (const edge of graphEdges) {
+    const entity = entityById.get(edge.target);
+    const y1 = entityY.get(edge.target);
+    const y2 = docY.get(edge.source);
+    if (!entity || y1 == null || y2 == null) continue;
+    const midX = (leftX + rightX) / 2;
+    const path = svg('path', {
+      d: `M ${leftX} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${rightX} ${y2}`,
+      class: `chronology-edge cat-${entity.category}`,
+    });
+    path.dataset.entity = edge.target;
+    path.dataset.doc = edge.source;
+    edgeLayer.append(path);
+    edgeElements.push(path);
   }
   root.append(edgeLayer);
 
@@ -3279,16 +3289,16 @@ function renderChronologyGraph(data) {
 
   // Nœuds entités (gauche).
   for (const entity of entities) {
-    const y = entityY.get(entity.code);
+    const y = entityY.get(entity.id);
     const node = svg('g', { class: `chronology-node entity cat-${entity.category}` });
     node.append(svg('circle', { cx: leftX, cy: y, r: 5 }));
     const label = svg('text', { x: leftX - 12, y: y + 4, 'text-anchor': 'end' });
     label.textContent = truncate(entity.label || entity.code, 26);
     node.append(label);
     const title = svg('title');
-    title.textContent = `${CATEGORY_LABELS[entity.category] || entity.category} · ${entity.label || entity.code} · ${entity.documentCount} pièce(s)`;
+    title.textContent = `${CATEGORY_LABELS[entity.category] || entity.category} · ${entity.label || entity.code} · ${entity.degree} pièce(s)`;
     node.append(title);
-    node.addEventListener('mouseenter', () => highlight((path) => path.dataset.entity === entity.code));
+    node.addEventListener('mouseenter', () => highlight((path) => path.dataset.entity === entity.id));
     node.addEventListener('mouseleave', clearHighlight);
     root.append(node);
   }
@@ -3312,7 +3322,12 @@ function renderChronologyGraph(data) {
   const scroll = document.createElement('div');
   scroll.className = 'chronology-graph-scroll';
   scroll.append(root);
-  return scroll;
+  const wrapper = document.createElement('div');
+  const meta = document.createElement('p');
+  meta.className = 'chronology-graph-meta';
+  meta.textContent = 'Graphify · résultats GLiNER locaux · sans LLM (0 token)';
+  wrapper.append(meta, scroll);
+  return wrapper;
 }
 
 function svgHeader(x, text) {

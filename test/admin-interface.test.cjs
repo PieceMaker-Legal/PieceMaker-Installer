@@ -166,6 +166,17 @@ test('la liste des pièces affiche les états converti, anonymisé et protégé'
   assert.match(css, /\.protection-badge\.scanned/);
 });
 
+test('la chronologie masque réellement la frise et affiche la provenance Graphify sans LLM', () => {
+  const app = read('admin/app.js');
+  const css = read('admin/styles.css');
+  const routes = read('websocket-server/admin-routes.cjs');
+
+  assert.match(css, /\.chronology-timeline\[hidden\], \.chronology-graph\[hidden\] \{ display: none; \}/);
+  assert.match(app, /const graphData = data\.graph \|\| \{\}/);
+  assert.match(app, /Graphify · résultats GLiNER locaux · sans LLM \(0 token\)/);
+  assert.match(routes, /buildGraphifyDocumentGraph\(legalCase\.root, chronology\)/);
+});
+
 test('l’administration reste claire, tient dans le viewport et conserve les dossiers visibles', () => {
   const app = read('admin/app.js');
   const css = read('admin/styles.css');

@@ -372,9 +372,13 @@ Four hooks, wired in `piecemaker-plugin/hooks/hooks.json`:
   carry a client name) and stores only entity **codes** plus nature/date/
   juridiction — never a clear name, never a filename. `websocket-server/document-index.cjs`
   (`buildChronology`) joins it to `originalFilesOverview` and the case mapping to
-  produce a chronology + a bipartite pieces↔entities graph; codes are the join
-  key, so the graph is inherently anonymised and de-anonymised on the fly (like
-  the mapping editor) only for the cabinet's own view. Exposed at
+  produce the chronology. `websocket-server/graphify-document-graph.cjs` then
+  asks Graphify for the bipartite pieces↔entities topology using a temporary,
+  pseudonymised corpus (hashed document IDs + GLiNER codes only) with
+  `--code-only --no-cluster`; all LLM credentials are removed and the resulting
+  graph must report zero input/output tokens. Codes remain the join key, so the
+  persisted graph never contains a clear name or filename and is de-anonymised
+  on the fly (like the mapping editor) only for the cabinet's own view. Exposed at
   `GET /api/admin/repository/chronology` (`?deanonymize=0` returns codes only) and
   rendered by the "Chronologie" history-view in `/admin/`. GLiNER2 capabilities,
   the measured timings, and the *entities-empty-in-unified-`extract()`* caveat
