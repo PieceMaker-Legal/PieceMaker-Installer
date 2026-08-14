@@ -318,8 +318,13 @@ async function runOperationalCommand(command, knownUpdate = null) {
       log.info(`Restauration de l’installation depuis le dépôt distant (${pending.localChanges} fichier(s) localement modifié(s)).`);
     }
 
+    // A live server on the port is a PieceMaker server (the health probe
+    // answered 200), whether we started it or not — e.g. one launched by hand
+    // from the dev clone, so with no PID file it comes back unmanaged. We adopt
+    // it: stop whatever holds the port and bring a managed server back below,
+    // rather than leaving the user to restart it themselves.
     const previous = await getServerStatus();
-    if (previous.running && previous.managed) await stopServer();
+    if (previous.running) await stopServer();
     try {
       const result = updateRepository(pending);
       log.ok(`PieceMaker mis à jour (${result.ref}, ${result.target.slice(0, 7)}).`);
@@ -346,11 +351,9 @@ async function runOperationalCommand(command, knownUpdate = null) {
         log.detail('Rattrapage manuel : « claude plugin marketplace update piecemaker » puis « claude plugin update piecemaker@piecemaker ».');
       }
     } finally {
-      if (previous.running && previous.managed) {
+      if (previous.running) {
         const restarted = await startServer();
         log.ok(`Serveur redémarré : ${restarted.url}`);
-      } else if (previous.running) {
-        log.warn('Le serveur actif n’est pas géré par PieceMaker ; redémarrez-le manuellement.');
       }
       const daemon = restartTelegramDaemon();
       if (daemon.restarted) log.ok('Moniteur Telegram redémarré.');
