@@ -2656,6 +2656,8 @@ function showRevisionPlaceholder(title) {
   byId('revisionSha').textContent = '';
   byId('revisionTitle').textContent = title;
   byId('revisionMeta').textContent = 'Le diff sera calculé uniquement après votre clic.';
+  byId('revisionComment').hidden = true;
+  byId('revisionComment').textContent = '';
   byId('diffFile').textContent = 'Aucun fichier sélectionné';
   byId('diffStats').textContent = '';
   byId('diffContent').className = 'diff-content empty-state';
@@ -2784,6 +2786,9 @@ async function loadRevision(hash, filePath = '') {
       byId('revisionMeta').textContent = revision.kind === 'worktree'
         ? `${revision.filesCount} fichier${revision.filesCount > 1 ? 's' : ''} modifié${revision.filesCount > 1 ? 's' : ''}`
         : `${revision.author} · ${new Date(revision.timestamp).toLocaleString('fr-FR')} · ${revision.filesCount} fichier${revision.filesCount > 1 ? 's' : ''}`;
+      const comment = byId('revisionComment');
+      comment.textContent = revision.body || '';
+      comment.hidden = !revision.body;
       if (revision.kind === 'commit') renderRevisionFiles(revision.files, hash, revision.selectedPath);
       else setChangedFilesPane(false);
       byId('diffFile').textContent = revision.selectedPath || 'Sélectionnez un fichier';
