@@ -41,6 +41,52 @@ if (!process.env.PYTHON_PATH && userConfig.pythonPath) process.env.PYTHON_PATH =
 
 // Import anonymization module
 const { createAnonymizationRoutes, anonymizationMappings } = require('../taskpane/modules/anonymization-server.cjs');
+
+// ─── Anonymisation de la voie MCP Word (read_doc / edit_doc) ───────────────
+// Les hooks Claude Code ne couvrent que Read/Grep/Glob/Bash et Write/Edit ; la
+// voie du volet Word passe par CE serveur, hors de leur portée. On y applique
+// donc le même mapping, via la brique partagée mapping.cjs, pour qu'aucun nom
+// réel ne parte vers l'API (lecture) et que les écritures rétablissent les vrais
+// noms dans Word (écriture) — exactement ce que font anonymize-read.mjs et
+// deanonymize-write.mjs pour les outils natifs.
+const {
+  resolveConfiguredCaseMapping,
+  applyMapping,
+  revertMapping,
+} = require('../piecemaker-plugin/scripts/lib/mapping.cjs');
+
+// Chemin du document Word actuellement ouvert par open-doc — sert à retrouver le
+// dossier juridique (donc le mapping) auquel read_doc / edit_doc s'appliquent.
+// read_doc/edit_doc n'embarquent pas le chemin ; open-doc est le seul point où
+// on le connaît, on le mémorise donc ici.
+let activeWordDocPath = null;
+
+function activeCaseMapping() {
+  if (!activeWordDocPath) return null;
+  try {
+    const located = resolveConfiguredCaseMapping(userConfig, activeWordDocPath);
+    return located && located.exists ? located : null;
+  } catch {
+    return null;
+  }
+}
+
+// Applique récursivement une transformation de chaînes en préservant la forme
+// (objets/tableaux/nombres/booléens intacts) — le résultat reste un payload MCP
+// valide, on ne code que les chaînes à l'intérieur.
+function mapStrings(value, fn) {
+  if (typeof value === 'string') return fn(value);
+  if (Array.isArray(value)) return value.map((v) => mapStrings(v, fn));
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) out[k] = mapStrings(v, fn);
+    return out;
+  }
+  return value;
+}
+
+const anonymizeShape = (value, mapping) => mapStrings(value, (s) => applyMapping(s, mapping));
+const deanonymizeShape = (value, reverseMapping) => mapStrings(value, (s) => revertMapping(s, reverseMapping));
 // 🔍 LOG : Vérifier les variables d'environnement au démarrage
 console.log('🔍 [SERVER.JS] Variables d\'environnement au démarrage:');
 console.log('  MCP_URL:', process.env.MCP_URL);
@@ -538,6 +584,9 @@ app.post('/api/word/open-doc', async (req, res) => {
       });
     }
 
+    // Document actif → read_doc / edit_doc résolvent leur mapping à partir de lui.
+    activeWordDocPath = resolved;
+
     // 1. Enregistrement développeur (idempotent) — sans lui la référence
     //    webextension (storeType="Registry") ne se résout pas.
     const registration = ensureDevRegistration(MANIFEST_PATH, ADDIN_ID);
@@ -763,7 +812,14 @@ app.post('/api/word/read-doc', async (req, res) => {
           if (response.requestId === requestId) {
             clearTimeout(timeout);
             client.off('message', messageHandler);
-            resolve(res.json(response.result));
+            // Anonymisation à la lecture : le modèle ne doit jamais voir de nom
+            // réel. On code le résultat via le mapping du dossier du document
+            // actif — équivalent MCP du hook anonymize-read.mjs (Read/Bash).
+            const legalCase = activeCaseMapping();
+            const result = legalCase
+              ? anonymizeShape(response.result, legalCase.mapping)
+              : response.result;
+            resolve(res.json(result));
           }
         } catch (e) {
           // Ignorer les messages mal formés
@@ -809,7 +865,12 @@ app.post('/api/word/edit-doc', async (req, res) => {
           if (response.requestId === requestId) {
             clearTimeout(timeout);
             client.off('message', messageHandler);
-            resolve(res.json(response.result));
+            // L'écho de confirmation reste codé pour le modèle.
+            const legalCase = activeCaseMapping();
+            const result = legalCase
+              ? anonymizeShape(response.result, legalCase.mapping)
+              : response.result;
+            resolve(res.json(result));
           }
         } catch (e) {
           // Ignorer les messages mal formés
@@ -818,10 +879,19 @@ app.post('/api/word/edit-doc', async (req, res) => {
 
       client.on('message', messageHandler);
 
+      // Dé-anonymisation à l'écriture : le modèle a lu des codes, on rétablit les
+      // vrais noms AVANT d'écrire dans Word — équivalent MCP de
+      // deanonymize-write.mjs. Sans cela, un code serait écrit tel quel dans le
+      // document.
+      const legalCaseOut = activeCaseMapping();
+      const outboundParams = legalCaseOut
+        ? deanonymizeShape(params, legalCaseOut.reverse_mapping)
+        : params;
+
       client.send(JSON.stringify({
         requestId,
         action: 'edit_doc',
-        params: params
+        params: outboundParams
       }));
     });
   } catch (error) {
