@@ -200,15 +200,23 @@ test('le graphe des liens masque complètement la frise chronologique', () => {
   assert.match(css, /\.chronology-timeline\[hidden\], \.chronology-graph\[hidden\] \{ display: none; \}/);
 });
 
-test('la chronologie masque réellement la frise et affiche la provenance Graphify sans LLM', () => {
+test('la chronologie embarque le visualiseur officiel Graphify dans une iframe isolée', () => {
   const app = read('admin/app.js');
   const css = read('admin/styles.css');
   const routes = read('websocket-server/admin-routes.cjs');
+  const server = read('websocket-server/server.cjs');
+  const packageJson = JSON.parse(read('package.json'));
 
   assert.match(css, /\.chronology-timeline\[hidden\], \.chronology-graph\[hidden\] \{ display: none; \}/);
   assert.match(app, /const graphData = data\.graph \|\| \{\}/);
-  assert.match(app, /Graphify · résultats GLiNER locaux · sans LLM \(0 token\)/);
+  assert.match(app, /Visualiseur officiel Graphify · résultats GLiNER locaux · sans LLM \(0 token\)/);
+  assert.match(app, /frame\.setAttribute\('sandbox', 'allow-scripts'\)/);
+  assert.match(app, /frame\.srcdoc = graphData\.viewerHtml/);
+  assert.doesNotMatch(app, /chronology-svg|function svgHeader|function svg\(/);
+  assert.match(css, /\.graphify-viewer-frame/);
   assert.match(routes, /buildGraphifyDocumentGraph\(legalCase\.root, chronology\)/);
+  assert.match(server, /\/admin\/vendor\/vis-network\.min\.js/);
+  assert.equal(packageJson.dependencies['vis-network'], '9.1.13');
 });
 
 test('l’administration reste claire, tient dans le viewport et conserve les dossiers visibles', () => {

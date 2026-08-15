@@ -6,7 +6,9 @@
  * pièce et, comme seul contenu, les codes d'entités déjà attribués par GLiNER.
  * `--code-only` et `--no-cluster` court-circuitent toute étape LLM. Le graphe
  * persistant reste donc pseudonymisé ; les libellés sont rejoints en mémoire au
- * moment de répondre à l'administration.
+ * moment de répondre à l'administration. Une seconde passe temporaire appelle
+ * le renderer officiel Graphify (`cluster-only --no-label`) : son HTML interactif
+ * est renvoyé en mémoire, sans jamais persister les noms du dossier.
  */
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -18,6 +20,7 @@ const { stateKey } = require('../piecemaker-plugin/scripts/lib/anonymization-sta
 
 const GRAPHIFY_CACHE_RELATIVE = '.piecemaker/graphify';
 const GRAPHIFY_TIMEOUT_MS = 120_000;
+const GRAPHIFY_VIEWER_MAX_BYTES = 16 * 1024 * 1024;
 const MAX_PROCESS_OUTPUT = 16 * 1024;
 const generations = new Map();
 
@@ -308,6 +311,61 @@ function normalizedGraph(rawResult, topology, chronology) {
   };
 }
 
+function viewerGraphDocument(graph) {
+  return {
+    directed: true,
+    multigraph: false,
+    graph: {},
+    nodes: graph.nodes.map((node) => ({
+      id: node.id,
+      label: node.label,
+      file_type: node.kind === 'document' ? 'document' : node.category || 'entity',
+      source_file: node.kind === 'document' ? node.label : '',
+    })),
+    edges: graph.edges.map((edge) => ({
+      source: edge.source,
+      target: edge.target,
+      relation: edge.kind || 'references',
+      confidence: edge.confidence || 'EXTRACTED',
+    })),
+  };
+}
+
+function localizeGraphifyViewer(html) {
+  const remoteScript = /<script\s+src="https:\/\/unpkg\.com\/vis-network@9\.1\.6\/standalone\/umd\/vis-network\.min\.js"[\s\S]*?<\/script>/;
+  if (!remoteScript.test(html) || !html.includes('new vis.Network')) {
+    throw new Error('Le visualiseur produit par Graphify est invalide ou incompatible.');
+  }
+  return html.replace(remoteScript, '<script src="/admin/vendor/vis-network.min.js"></script>');
+}
+
+async function renderGraphifyViewer(graph, { command, runner }) {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-graphify-viewer-'));
+  try {
+    const output = path.join(temporary, 'graphify-out');
+    const graphFile = path.join(output, 'graph.json');
+    fs.mkdirSync(output, { recursive: true, mode: 0o700 });
+    // Cette copie contient les libellés autorisés pour la vue cabinet. Elle est
+    // détruite avec le HTML dès que Graphify a terminé son rendu.
+    fs.writeFileSync(graphFile, `${JSON.stringify(viewerGraphDocument(graph), null, 2)}\n`, {
+      encoding: 'utf8', mode: 0o600,
+    });
+    await runner(command, [
+      'cluster-only', temporary,
+      '--graph', graphFile,
+      '--no-label',
+    ], { cwd: temporary, env: graphifyEnvironment() });
+    const viewerFile = path.join(output, 'graph.html');
+    const size = fs.statSync(viewerFile).size;
+    if (!size || size > GRAPHIFY_VIEWER_MAX_BYTES) {
+      throw new Error('Le visualiseur Graphify dépasse la taille autorisée.');
+    }
+    return localizeGraphifyViewer(fs.readFileSync(viewerFile, 'utf8'));
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+}
+
 async function buildGraphifyDocumentGraph(caseRoot, chronology, options = {}) {
   const topology = topologyFromChronology(chronology);
   if (!topology.codes.length) {
@@ -330,7 +388,11 @@ async function buildGraphifyDocumentGraph(caseRoot, chronology, options = {}) {
     }
     rawResult = await pending;
   }
-  return normalizedGraph(rawResult, topology, chronology);
+  const command = options.command || graphifyCommand();
+  const runner = options.runner || runGraphifyProcess;
+  const graph = normalizedGraph(rawResult, topology, chronology);
+  graph.viewerHtml = await renderGraphifyViewer(graph, { command, runner });
+  return graph;
 }
 
 function graphifyErrorGraph(error) {
@@ -356,6 +418,9 @@ module.exports = {
   graphifyCommand,
   graphifyEnvironment,
   graphifyErrorGraph,
+  localizeGraphifyViewer,
+  renderGraphifyViewer,
   runGraphifyProcess,
   topologyFromChronology,
+  viewerGraphDocument,
 };

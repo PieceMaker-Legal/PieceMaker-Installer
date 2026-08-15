@@ -39,17 +39,35 @@ test('Graphify construit le graphe depuis les seuls hash et codes GLiNER, sans L
   const caseRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-graphify-test-'));
   t.after(() => fs.rmSync(caseRoot, { recursive: true, force: true }));
   const chronology = chronologyFixture();
-  let calls = 0;
+  let extractCalls = 0;
+  let viewerCalls = 0;
+  let temporaryViewerGraph = '';
 
   const runner = async (command, args, options) => {
-    calls += 1;
     assert.equal(command, 'graphify-test');
-    assert.ok(args.includes('--code-only'));
-    assert.ok(args.includes('--no-cluster'));
-    assert.equal(args[args.indexOf('--entity-map-labels') + 1], 'canonical');
     for (const key of ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'OLLAMA_BASE_URL']) {
       assert.equal(options.env[key], undefined);
     }
+    if (args[0] === 'cluster-only') {
+      viewerCalls += 1;
+      assert.ok(args.includes('--no-label'));
+      const graphFile = args[args.indexOf('--graph') + 1];
+      temporaryViewerGraph = graphFile;
+      const viewerInput = fs.readFileSync(graphFile, 'utf8');
+      assert.match(viewerInput, /Bernard Gilly|Société du Parc|Assignation Bernard/);
+      assert.doesNotMatch(graphFile, new RegExp(GRAPHIFY_CACHE_RELATIVE));
+      fs.writeFileSync(path.join(path.dirname(graphFile), 'graph.html'), `<!doctype html>
+<script src="https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js"
+        integrity="sha384-Ux6phic9PEHJ38YtrijhkzyJ8yQlH8i/+buBR8s3mAZOJrP1gwyvAcIYl3GWtpX1"
+        crossorigin="anonymous"></script>
+<div id="graph"></div><script>new vis.Network(document.getElementById('graph'), {}, {});</script>`);
+      return;
+    }
+
+    extractCalls += 1;
+    assert.ok(args.includes('--code-only'));
+    assert.ok(args.includes('--no-cluster'));
+    assert.equal(args[args.indexOf('--entity-map-labels') + 1], 'canonical');
 
     const corpus = args[1];
     const entityMap = args[args.indexOf('--entity-map') + 1];
@@ -93,6 +111,10 @@ test('Graphify construit le graphe depuis les seuls hash et codes GLiNER, sans L
   assert.equal(graph.edges.length, 3);
   assert.equal(graph.nodes.filter((node) => node.kind === 'entity').length, 2);
   assert.equal(graph.nodes.find((node) => node.code === 'PERSONNE_PHYSIQUE_01').label, 'Bernard Gilly');
+  assert.match(graph.viewerHtml, /src="\/admin\/vendor\/vis-network\.min\.js"/);
+  assert.match(graph.viewerHtml, /new vis\.Network/);
+  assert.doesNotMatch(graph.viewerHtml, /unpkg\.com/);
+  assert.equal(fs.existsSync(temporaryViewerGraph), false);
 
   const cache = path.join(caseRoot, ...GRAPHIFY_CACHE_RELATIVE.split('/'), 'graph.json');
   const persisted = fs.readFileSync(cache, 'utf8');
@@ -103,9 +125,11 @@ test('Graphify construit le graphe depuis les seuls hash et codes GLiNER, sans L
   const cached = await buildGraphifyDocumentGraph(caseRoot, chronology, {
     command: 'graphify-test', runner,
   });
-  assert.equal(calls, 1);
+  assert.equal(extractCalls, 1);
+  assert.equal(viewerCalls, 2);
   assert.equal(cached.cacheHit, true);
   assert.equal(cached.edges.length, 3);
+  assert.match(cached.viewerHtml, /new vis\.Network/);
 });
 
 test('l’environnement Graphify retire explicitement toutes les clés de modèles', () => {

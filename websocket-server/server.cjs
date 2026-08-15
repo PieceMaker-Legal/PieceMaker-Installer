@@ -181,6 +181,12 @@ app.use((req, res, next) => {
 });
 
 // Servir les fichiers statiques
+// Le visualiseur HTML est généré par Graphify, qui cible vis-network 9.1.x.
+// On sert localement la révision corrective compatible afin que le graphe reste
+// utilisable hors ligne et que son iframe isolée ne dépende d'aucun CDN.
+app.get('/admin/vendor/vis-network.min.js', (_req, res) => {
+  res.sendFile(path.join(REPO_ROOT, 'node_modules', 'vis-network', 'standalone', 'umd', 'vis-network.min.js'));
+});
 app.use('/admin', express.static(path.join(REPO_ROOT, 'admin'), { index: 'index.html' }));
 app.use('/api/admin', createAdminRouter({
   repoRoot: REPO_ROOT,

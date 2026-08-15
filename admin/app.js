@@ -3074,12 +3074,6 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
-function svg(tag, attrs = {}) {
-  const element = document.createElementNS('http://www.w3.org/2000/svg', tag);
-  for (const [key, value] of Object.entries(attrs)) element.setAttribute(key, String(value));
-  return element;
-}
-
 async function loadChronology() {
   const body = byId('chronologyBody');
   if (!selectedFolder) {
@@ -3221,10 +3215,10 @@ function renderTimelineRow(doc) {
   return row;
 }
 
-// Vue déterministe de la topologie produite par Graphify : entités à gauche
-// (triées par degré), pièces à droite (ordre chronologique). Graphify construit
-// les nœuds et arêtes côté serveur à partir des seuls codes GLiNER ; ce rendu ne
-// fait que les disposer et réappliquer les libellés autorisés dans la vue cabinet.
+// Graphify produit lui-même le document interactif (clustering Leiden, moteur
+// physique vis-network, recherche, inspection et filtres). L'iframe sans
+// `allow-same-origin` lui permet d'exécuter son renderer sans lui donner accès à
+// la page d'administration ni à ses données JavaScript.
 function renderChronologyGraph(data) {
   const graphData = data.graph || {};
   if (graphData.status === 'error') {
@@ -3233,121 +3227,24 @@ function renderChronologyGraph(data) {
     error.textContent = graphData.error || 'Le graphe Graphify n’a pas pu être généré.';
     return error;
   }
-  const graphNodes = Array.isArray(graphData.nodes) ? graphData.nodes : [];
-  const graphEdges = Array.isArray(graphData.edges) ? graphData.edges : [];
-  const docs = graphNodes.filter((node) => node.kind === 'document');
-  const entities = graphNodes.filter((node) => node.kind === 'entity');
-  if (!docs.length || !entities.length || !graphEdges.length) {
+  if (!graphData.viewerHtml) {
     const empty = document.createElement('p');
     empty.className = 'chronology-empty';
     empty.textContent = 'Pas assez de liens GLiNER pour tracer un graphe.';
     return empty;
   }
-  const rowH = 26;
-  const padTop = 30;
-  const height = Math.max(entities.length, docs.length) * rowH + padTop + 20;
-  const width = 720;
-  const leftX = 200;
-  const rightX = width - 200;
-  const entityY = new Map();
-  const docY = new Map();
-  entities.forEach((entity, i) => entityY.set(entity.id, padTop + i * rowH));
-  docs.forEach((doc, i) => docY.set(doc.id, padTop + i * rowH));
-
-  const root = svg('svg', {
-    class: 'chronology-svg', viewBox: `0 0 ${width} ${height}`,
-    // Dimensions intrinsèques explicites : sans elles, une <svg> en width:100% /
-    // height:auto s'effondre à 0px de haut dans un ancêtre flex/grid (Safari,
-    // Firefox) — le graphe n'affichait alors rien du tout.
-    width, height,
-    preserveAspectRatio: 'xMidYMin meet', role: 'img',
-    'aria-label': 'Graphe des liens entre pièces et entités',
-  });
-
-  root.append(svgHeader(leftX, 'Entités'));
-  root.append(svgHeader(rightX, 'Pièces (chronologique)'));
-
-  const edgeLayer = svg('g', { class: 'chronology-edges' });
-  const edgeElements = [];
-  const entityById = new Map(entities.map((entity) => [entity.id, entity]));
-  for (const edge of graphEdges) {
-    const entity = entityById.get(edge.target);
-    const y1 = entityY.get(edge.target);
-    const y2 = docY.get(edge.source);
-    if (!entity || y1 == null || y2 == null) continue;
-    const midX = (leftX + rightX) / 2;
-    const path = svg('path', {
-      d: `M ${leftX} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${rightX} ${y2}`,
-      class: `chronology-edge cat-${entity.category}`,
-    });
-    path.dataset.entity = edge.target;
-    path.dataset.doc = edge.source;
-    edgeLayer.append(path);
-    edgeElements.push(path);
-  }
-  root.append(edgeLayer);
-
-  const highlight = (predicate) => {
-    for (const path of edgeElements) path.classList.toggle('active', predicate(path));
-    root.classList.toggle('has-focus', typeof predicate === 'function' && edgeElements.some((p) => p.classList.contains('active')));
-  };
-  const clearHighlight = () => {
-    for (const path of edgeElements) path.classList.remove('active');
-    root.classList.remove('has-focus');
-  };
-
-  // Nœuds entités (gauche).
-  for (const entity of entities) {
-    const y = entityY.get(entity.id);
-    const node = svg('g', { class: `chronology-node entity cat-${entity.category}` });
-    node.append(svg('circle', { cx: leftX, cy: y, r: 5 }));
-    const label = svg('text', { x: leftX - 12, y: y + 4, 'text-anchor': 'end' });
-    label.textContent = truncate(entity.label || entity.code, 26);
-    node.append(label);
-    const title = svg('title');
-    title.textContent = `${CATEGORY_LABELS[entity.category] || entity.category} · ${entity.label || entity.code} · ${entity.degree} pièce(s)`;
-    node.append(title);
-    node.addEventListener('mouseenter', () => highlight((path) => path.dataset.entity === entity.id));
-    node.addEventListener('mouseleave', clearHighlight);
-    root.append(node);
-  }
-
-  // Nœuds pièces (droite).
-  for (const doc of docs) {
-    const y = docY.get(doc.id);
-    const node = svg('g', { class: 'chronology-node document' });
-    node.append(svg('circle', { cx: rightX, cy: y, r: 5 }));
-    const label = svg('text', { x: rightX + 12, y: y + 4, 'text-anchor': 'start' });
-    label.textContent = truncate(doc.name, 26);
-    node.append(label);
-    const title = svg('title');
-    title.textContent = `${doc.nature ? doc.nature + ' · ' : ''}${formatChronoDate(doc.dateIso)} · ${doc.name}`;
-    node.append(title);
-    node.addEventListener('mouseenter', () => highlight((path) => path.dataset.doc === doc.id));
-    node.addEventListener('mouseleave', clearHighlight);
-    root.append(node);
-  }
-
-  const scroll = document.createElement('div');
-  scroll.className = 'chronology-graph-scroll';
-  scroll.append(root);
   const wrapper = document.createElement('div');
   const meta = document.createElement('p');
   meta.className = 'chronology-graph-meta';
-  meta.textContent = 'Graphify · résultats GLiNER locaux · sans LLM (0 token)';
-  wrapper.append(meta, scroll);
+  meta.textContent = 'Visualiseur officiel Graphify · résultats GLiNER locaux · sans LLM (0 token)';
+  const frame = document.createElement('iframe');
+  frame.className = 'graphify-viewer-frame';
+  frame.title = 'Graphe interactif Graphify';
+  frame.setAttribute('sandbox', 'allow-scripts');
+  frame.referrerPolicy = 'no-referrer';
+  frame.srcdoc = graphData.viewerHtml;
+  wrapper.append(meta, frame);
   return wrapper;
-}
-
-function svgHeader(x, text) {
-  const label = svg('text', { x, y: 16, 'text-anchor': 'middle', class: 'chronology-axis-label' });
-  label.textContent = text;
-  return label;
-}
-
-function truncate(value, max) {
-  const text = String(value || '');
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
 async function setHistoryView(view) {
