@@ -46,6 +46,10 @@ const {
 } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
 const { buildChronology } = require('./document-index.cjs');
 const {
+  buildGraphifyDocumentGraph,
+  graphifyErrorGraph,
+} = require('./graphify-document-graph.cjs');
+const {
   readInstitutionalTerms,
   writeInstitutionalTerms,
 } = require('../piecemaker-plugin/scripts/lib/institutional-terms.cjs');
@@ -1912,10 +1916,19 @@ function createAdminRouter({
       // `?deanonymize=0` renvoie le graphe indexé par code, sans aucun nom.
       const deanonymize = req.query.deanonymize !== '0' && req.query.deanonymize !== 'false';
       const chronology = await buildChronology(legalCase.root, { deanonymize });
+      try {
+        chronology.graph = await buildGraphifyDocumentGraph(legalCase.root, chronology);
+      } catch (graphifyError) {
+        // Le graphe est un enrichissement : une installation Graphify absente ou
+        // une sortie invalide ne doit jamais rendre la frise inaccessible.
+        console.warn(`[graphify] Graphe chronologique indisponible: ${graphifyError.message}`);
+        chronology.graph = graphifyErrorGraph(graphifyError);
+      }
       chronology.case = { path: legalCase.id, name: legalCase.caseName, location: legalCase.root };
       finishAdminTiming(res, 'chronology', startedAt, {
         documents: chronology.stats.documents,
         entities: chronology.stats.entities,
+        graphEdges: chronology.graph.edges.length,
       });
       res.json(chronology);
     } catch (error) {

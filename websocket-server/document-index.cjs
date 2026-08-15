@@ -225,7 +225,12 @@ async function buildChronology(caseRoot, { deanonymize = false } = {}) {
     },
     documents,
     entities: entityList,
-    graph: { nodes, edges },
+    // Topologie de secours pour les consommateurs internes. La route admin la
+    // remplace par la sortie Graphify construite à partir de ce même index.
+    graph: {
+      engine: 'index-fallback', source: 'gliner', llm: false,
+      status: edges.length ? 'ready' : 'empty', nodes, edges,
+    },
   };
 }
 

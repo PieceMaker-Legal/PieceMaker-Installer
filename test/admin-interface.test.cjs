@@ -136,7 +136,10 @@ test('la vue Dossiers suit le bureau Git avec trois onglets et des détails int�
 
   assert.ok(switcher.indexOf('Modifications') < switcher.indexOf('Historique'));
   assert.ok(switcher.indexOf('Historique') < switcher.indexOf('Pièces protégées'));
-  assert.match(switcher, /id="changesView" class="active"/);
+  assert.match(switcher, /id="changesView" class="active"[^>]*>Modifications \(0\)<\/button>/);
+  assert.doesNotMatch(html, /id="historyTitle"/);
+  assert.doesNotMatch(app, /historyTitle/);
+  assert.match(app, /byId\('changesView'\)\.textContent = `Modifications \(\$\{changes\.length\}\)`/);
   for (const id of ['caseSelect', 'openCreateCase', 'branchSelect', 'openCreateBranch', 'refreshHistory', 'caseTelegramCard']) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
@@ -195,6 +198,17 @@ test('le graphe des liens masque complètement la frise chronologique', () => {
   assert.match(app, /timeline\.hidden = wantGraph;/);
   assert.match(app, /graph\.hidden = !wantGraph;/);
   assert.match(css, /\.chronology-timeline\[hidden\], \.chronology-graph\[hidden\] \{ display: none; \}/);
+});
+
+test('la chronologie masque réellement la frise et affiche la provenance Graphify sans LLM', () => {
+  const app = read('admin/app.js');
+  const css = read('admin/styles.css');
+  const routes = read('websocket-server/admin-routes.cjs');
+
+  assert.match(css, /\.chronology-timeline\[hidden\], \.chronology-graph\[hidden\] \{ display: none; \}/);
+  assert.match(app, /const graphData = data\.graph \|\| \{\}/);
+  assert.match(app, /Graphify · résultats GLiNER locaux · sans LLM \(0 token\)/);
+  assert.match(routes, /buildGraphifyDocumentGraph\(legalCase\.root, chronology\)/);
 });
 
 test('l’administration reste claire, tient dans le viewport et conserve les dossiers visibles', () => {

@@ -63,12 +63,15 @@ même 2–3 passages par document restent négligeables devant le scan complet.
 - **Date du document** → `extract_json` (`date_acte`) normalisée en ISO par
   `normalize_document_date` (formes « 14 mars 2023 » et « 14/03/2023 »).
 - **Personnes / sociétés / adresses citées** → les codes issus du scan PII
-  existant. GLiNER2 fournit la matière ; **le lien entre documents se calcule**
-  à partir des codes partagés (`buildChronology`), pas par le modèle.
+  existant. GLiNER2 fournit la matière ; Graphify construit ensuite la topologie
+  pièces↔entités à partir d'un corpus temporaire qui ne contient que les hash de
+  pièces et ces codes (`--code-only --no-cluster --entity-map`, sans LLM et avec
+  zéro token). Les libellés locaux ne sont rejoints qu'au moment de l'affichage.
 - Ce que GLiNER2 **ne fait pas** : décider seul qu'une date est *la* date de
-  l'acte (règle : première date de l'en-tête), ni relier deux documents (calcul
-  sur les codes). La classification et les relations restent des assistances,
-  jamais une source de vérité juridique.
+  l'acte (règle : première date de l'en-tête), ni inférer une relation juridique
+  entre deux documents. Graphify matérialise uniquement les références
+  déterministes fournies par les codes GLiNER. La classification et les
+  relations restent des assistances, jamais une source de vérité juridique.
 
 ## Reproduire les mesures
 
