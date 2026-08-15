@@ -1157,13 +1157,14 @@ async function createCommit({
 
 function parseLog(raw) {
   return String(raw || '').split('\x1e').map((record) => record.trim()).filter(Boolean).map((record) => {
-    const [hash, shortHash, author, timestamp, ...subject] = record.split('\x1f');
+    const [hash, shortHash, author, timestamp, subject, ...body] = record.split('\x1f');
     return {
       hash,
       shortHash,
       author,
       timestamp,
-      subject: subject.join(' '),
+      subject,
+      body: body.join('\x1f').trim(),
       kind: 'commit',
     };
   }).filter((entry) => entry.hash);
@@ -1181,7 +1182,7 @@ async function listHistory(casesRoot, homeDir, { caseName, limit = 120 } = {}) {
   const historyRef = await activeHistoryRef(legalCase, gitDir);
   const raw = (await runGit(legalCase.root, [
     'log', `--max-count=${safeLimit}`, '--date=iso-strict',
-    '--pretty=format:%x1e%H%x1f%h%x1f%an%x1f%aI%x1f%s', historyRef,
+    '--pretty=format:%x1e%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1f%b', historyRef,
   ], { gitDir })).stdout;
   const history = parseLog(raw);
   logPerformance('listHistory', startedAt, { commits: history.length, limit: safeLimit });
@@ -1216,9 +1217,9 @@ async function revisionMetadata(legalCase, gitDir, hash) {
   if ((await runGit(legalCase.root, ['merge-base', '--is-ancestor', commit, await activeHistoryRef(legalCase, gitDir)], { gitDir, allowFailure: true })).code !== 0) {
     throw new Error('Cette révision ne fait pas partie de ce dossier juridique.');
   }
-  const raw = (await runGit(legalCase.root, ['show', '-s', '--date=iso-strict', '--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s', commit], { gitDir })).stdout;
-  const [fullHash, shortHash, author, timestamp, ...subject] = raw.split('\x1f');
-  return { commit, hash: fullHash, shortHash, author, timestamp, subject: subject.join(' ') };
+  const raw = (await runGit(legalCase.root, ['show', '-s', '--date=iso-strict', '--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1f%b', commit], { gitDir })).stdout;
+  const [fullHash, shortHash, author, timestamp, subject, ...body] = raw.split('\x1f');
+  return { commit, hash: fullHash, shortHash, author, timestamp, subject, body: body.join('\x1f').trim() };
 }
 
 function parseShortStat(raw) {
