@@ -1300,8 +1300,8 @@ async function syncClaudeAssets() {
  * feuilles cochables en dessous. La case du groupe est tri-state — cochée si
  * tous ses éléments sélectionnables le sont, indéterminée si certains
  * seulement, décochée sinon — et bascule tous ses éléments d'un coup. Les
- * lignes réutilisent .original-row/.original-body/.original-badges (mêmes
- * styles que la liste des pièces). Construit une fois par rafraîchissement
+ * lignes réutilisent .original-row/.original-body/.original-badges pour garder
+ * une présentation compacte. Construit une fois par rafraîchissement
  * de données ; les cases individuelles mettent seulement à jour leurs
  * propres éléments DOM, donc l'état replié/déplié de chaque groupe survit
  * aux clics sur les cases (pas de reconstruction du DOM à chaque coche).
@@ -1853,15 +1853,16 @@ function statusLabel(original) {
 
 function renderOriginals() {
   const t0 = performance.now();
-  const list = byId('originalList');
+  const mosaic = byId('originalMosaic');
   const originals = visibleOriginals().slice().sort((a, b) => {
     if (a.protected !== b.protected) return a.protected ? 1 : -1;
     return a.path.localeCompare(b.path, 'fr');
   });
-  list.textContent = '';
+  mosaic.textContent = '';
   if (historyView === 'protected') {
     byId('historyTitle').textContent = originalsScope === 'all' ? 'Pièces du dossier' : 'Pièces non traitées';
     byId('historyCount').textContent = `${originals.length} pièce${originals.length > 1 ? 's' : ''}`;
+    byId('originalsViewCount').textContent = String(originals.length);
   }
   for (const button of document.querySelectorAll('.scope-button')) {
     button.classList.toggle('active', button.dataset.scope === originalsScope);
@@ -1876,13 +1877,13 @@ function renderOriginals() {
   }
 
   if (!selectedFolder) {
-    list.append(createHistoryEmpty('Sélectionnez un dossier'));
+    mosaic.append(createHistoryEmpty('Sélectionnez un dossier'));
     updateOriginalsActions();
     renderMappingSummary();
     return;
   }
   if (!originals.length) {
-    list.append(originalsScope === 'all'
+    mosaic.append(originalsScope === 'all'
       ? createHistoryEmpty('Aucune pièce', 'Ce dossier ne contient aucun document hors Markdown.')
       : createHistoryEmpty('Toutes les pièces sont traitées', 'Basculez sur « Toutes » pour gérer leur protection.'));
     updateOriginalsActions();
@@ -1892,25 +1893,29 @@ function renderOriginals() {
 
   const fragment = document.createDocumentFragment();
   const groups = [
-    { protected: false, label: 'Pièces accessibles à l’IA' },
-    { protected: true, label: 'Pièces protégées' },
+    { protected: false, label: 'Accessibles à l’IA', icon: '🔓', className: 'accessible' },
+    { protected: true, label: 'Pièces protégées', icon: '🛡', className: 'protected' },
   ];
   for (const group of groups) {
     const groupOriginals = originals.filter((original) => original.protected === group.protected);
-    if (!groupOriginals.length) continue;
-    const heading = document.createElement('div');
-    heading.className = 'original-group-title';
-    const headingLabel = document.createElement('span');
-    headingLabel.textContent = group.label;
+    const column = document.createElement('section');
+    column.className = `original-mosaic-column ${group.className}`;
+    const heading = document.createElement('header');
+    heading.className = 'original-mosaic-heading';
+    const headingLabel = document.createElement('strong');
+    headingLabel.textContent = `${group.icon} ${group.label}`;
     const headingCount = document.createElement('span');
     headingCount.className = 'count-badge';
     headingCount.textContent = String(groupOriginals.length);
     heading.append(headingLabel, headingCount);
-    fragment.append(heading);
+    const cards = document.createElement('div');
+    cards.className = 'original-card-grid';
     for (const original of groupOriginals) {
       const selectable = known.has(original.path);
       const row = document.createElement('label');
-      row.className = `original-row${selectedOriginals.has(original.path) ? ' selected' : ''}`;
+      row.className = `original-card ${group.className}${selectedOriginals.has(original.path) ? ' selected' : ''}`;
+      const controls = document.createElement('span');
+      controls.className = 'original-card-controls';
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
       checkbox.checked = selectedOriginals.has(original.path);
@@ -1922,6 +1927,7 @@ function renderOriginals() {
         row.classList.toggle('selected', checkbox.checked);
         updateOriginalsActions();
       });
+      controls.append(checkbox, shieldButton(original));
       const body = document.createElement('span');
       body.className = 'original-body';
       const name = document.createElement('strong');
@@ -1933,12 +1939,19 @@ function renderOriginals() {
       badges.className = 'original-badges';
       if (original.converted) badges.append(originalStatusBadge('converted', 'Converti'));
       if (original.scanned) badges.append(originalStatusBadge('scanned', 'Anonymisé'));
-      badges.append(shieldButton(original));
-      row.append(checkbox, body, badges);
-      fragment.append(row);
+      row.append(controls, body, badges);
+      cards.append(row);
     }
+    if (!groupOriginals.length) {
+      const empty = document.createElement('p');
+      empty.className = 'original-column-empty';
+      empty.textContent = group.protected ? 'Aucune pièce protégée' : 'Aucune pièce accessible';
+      cards.append(empty);
+    }
+    column.append(heading, cards);
+    fragment.append(column);
   }
-  list.append(fragment);
+  mosaic.append(fragment);
   updateOriginalsActions();
   renderMappingSummary();
   dlog('renderOriginals', `Rendered ${originals.length} originals in ${(performance.now() - t0).toFixed(2)}ms`);
@@ -2052,7 +2065,6 @@ function renderMappingSummary() {
   // même sur un dossier entièrement mappé.
   const entries = legalCase?.mapping?.entries || 0;
   byId('mappingCount').textContent = String(entries);
-  byId('mappingName').textContent = legalCase?.mapping?.name || 'Aucun mapping';
   byId('mappingState').textContent = !legalCase
     ? 'Sélectionnez un dossier'
     : legalCase.mapping?.exists
@@ -2419,17 +2431,18 @@ function collectMappingDocument() {
 function setDetailView(view) {
   detailView = view;
   byId('diffView').hidden = view !== 'diff';
+  byId('originalsView').hidden = view !== 'originals';
   byId('mappingView').hidden = view !== 'mapping';
   byId('telegramCaseView').hidden = view !== 'telegram';
   byId('chronologyPane').hidden = view !== 'chronology';
-  // La chronologie a besoin d'un maximum de hauteur : on comprime l'en-tête
-  // partagé (badge + titre, méta masquée) tant qu'elle occupe le volet.
-  document.querySelector('.revision-column')?.classList.toggle('chronology-mode', view === 'chronology');
-  const chronologyToggle = byId('showChronology');
-  if (chronologyToggle) {
-    chronologyToggle.classList.toggle('active', view === 'chronology');
-    chronologyToggle.setAttribute('aria-pressed', view === 'chronology' ? 'true' : 'false');
-    chronologyToggle.textContent = view === 'chronology' ? 'Masquer la chronologie' : 'Afficher la chronologie';
+  const protectedDetail = ['originals', 'mapping', 'chronology'].includes(view);
+  // Ces panneaux ont leur propre barre d'outils. Masquer l'en-tête de révision
+  // évite un titre en double et rend sa hauteur au contenu utile.
+  document.querySelector('.revision-column')?.classList.toggle('protected-detail-mode', protectedDetail);
+  for (const button of document.querySelectorAll('[data-protected-detail]')) {
+    const active = button.dataset.protectedDetail === view;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
   }
   byId('caseTelegramCard').classList.toggle('active', view === 'telegram');
   if (view !== 'diff') {
@@ -2438,16 +2451,17 @@ function setDetailView(view) {
   }
 }
 
+function showOriginalsView() {
+  setDetailView('originals');
+  selectedRevision = null;
+  renderOriginals();
+}
+
 // Affiche la chronologie dans le volet de droite depuis la vue « Pièces
-// protégées » (la frise est reconstruite à partir des pièces listées à gauche),
-// ou la masque si elle est déjà ouverte.
-function toggleChronologyView() {
+// protégées » (la frise est reconstruite à partir des pièces du dossier).
+function openChronologyView() {
   if (!selectedFolder) {
     toast('Sélectionnez un dossier');
-    return;
-  }
-  if (detailView === 'chronology') {
-    showRevisionPlaceholder('Sélectionnez une modification ou ouvrez le mapping');
     return;
   }
   setDetailView('chronology');
@@ -2552,15 +2566,12 @@ function renderHistoryItems() {
   list.textContent = '';
   updateManualCommitForm();
   const protectedMode = historyView === 'protected';
+  document.querySelector('.history-column')?.classList.toggle('protected-mode', protectedMode);
   byId('protectedTools').hidden = !protectedMode;
-  byId('originalList').hidden = !protectedMode;
   list.hidden = protectedMode;
   if (protectedMode) {
     renderOriginals();
-    // La chronologie occupe le volet de droite tant qu'on reste dans « Pièces
-    // protégées » : on ne repose le placeholder que si aucune vue riche (mapping,
-    // chronologie) n'est déjà ouverte.
-    if (detailView === 'diff') showRevisionPlaceholder('Sélectionnez une modification ou ouvrez le mapping');
+    if (!['originals', 'mapping', 'chronology'].includes(detailView)) showOriginalsView();
     return;
   }
   if (historyView === 'changes') {
@@ -3329,11 +3340,10 @@ function truncate(value, max) {
 async function setHistoryView(view) {
   historyView = view;
   selectedRevision = null;
-  // Changer de vue referme la chronologie / le mapping : on repose le placeholder
-  // de diff, ce qui rebascule aussi le bouton « Afficher la chronologie ».
-  showRevisionPlaceholder(view === 'protected'
-    ? 'Sélectionnez une modification ou ouvrez le mapping'
-    : view === 'changes' ? 'Sélectionnez une modification' : 'Sélectionnez un commit');
+  // Les pièces protégées ouvrent directement le premier des trois outils ; les
+  // vues Git conservent leur en-tête de révision et leur placeholder de diff.
+  if (view === 'protected') showOriginalsView();
+  else showRevisionPlaceholder(view === 'changes' ? 'Sélectionnez une modification' : 'Sélectionnez un commit');
   document.querySelectorAll('[data-history-view]').forEach((button) => button.classList.toggle('active', button.dataset.historyView === view));
   await loadHistoryItems();
 }
@@ -3514,7 +3524,8 @@ function initPerformanceMonitoring() {
 }
 
 document.querySelectorAll('[data-history-view]').forEach((button) => button.addEventListener('click', () => setHistoryView(button.dataset.historyView)));
-byId('showChronology').addEventListener('click', toggleChronologyView);
+byId('showOriginals').addEventListener('click', showOriginalsView);
+byId('showChronology').addEventListener('click', openChronologyView);
 byId('refreshHistory').addEventListener('click', () => loadRepositoryHistory());
 byId('caseSelect').addEventListener('change', (event) => selectHistoryFolder(event.currentTarget.value));
 byId('branchSelect').addEventListener('change', selectHistoryBranch);

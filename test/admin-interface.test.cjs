@@ -161,9 +161,40 @@ test('la liste des pièces affiche les états converti, anonymisé et protégé'
 
   assert.match(app, /if \(original\.converted\) badges\.append\(originalStatusBadge\('converted', 'Converti'\)\)/);
   assert.match(app, /if \(original\.scanned\) badges\.append\(originalStatusBadge\('scanned', 'Anonymisé'\)\)/);
-  assert.match(app, /badges\.append\(shieldButton\(original\)\)/);
+  assert.match(app, /controls\.append\(checkbox, shieldButton\(original\)\)/);
   assert.match(css, /\.protection-badge\.converted/);
   assert.match(css, /\.protection-badge\.scanned/);
+});
+
+test('les trois outils des pièces protégées partagent le volet de révision sans titres redondants', () => {
+  const html = read('admin/index.html');
+  const app = read('admin/app.js');
+  const css = read('admin/styles.css');
+  const historyColumn = html.match(/<aside class="history-column">[\s\S]*?<\/aside>/)?.[0] || '';
+  const revisionColumn = html.match(/<section class="revision-column">[\s\S]*?<\/section>/)?.[0] || '';
+
+  const originalsIndex = historyColumn.indexOf('data-protected-detail="originals"');
+  const mappingIndex = historyColumn.indexOf('data-protected-detail="mapping"');
+  const chronologyIndex = historyColumn.indexOf('data-protected-detail="chronology"');
+  assert.ok(originalsIndex >= 0 && originalsIndex < mappingIndex && mappingIndex < chronologyIndex);
+  assert.doesNotMatch(historyColumn, /id="originalMosaic"/);
+  for (const id of ['originalsView', 'originalMosaic', 'mappingView', 'chronologyPane']) {
+    assert.match(revisionColumn, new RegExp(`id="${id}"`));
+  }
+  assert.match(app, /byId\('originalsView'\)\.hidden = view !== 'originals'/);
+  assert.match(css, /\.revision-column\.protected-detail-mode \.revision-header \{ display: none; \}/);
+  assert.match(css, /\.original-mosaic \{[^}]*grid-template-columns: repeat\(2,/);
+  assert.match(css, /\.original-mosaic-column\.accessible/);
+  assert.match(css, /\.original-mosaic-column\.protected/);
+});
+
+test('le graphe des liens masque complètement la frise chronologique', () => {
+  const app = read('admin/app.js');
+  const css = read('admin/styles.css');
+
+  assert.match(app, /timeline\.hidden = wantGraph;/);
+  assert.match(app, /graph\.hidden = !wantGraph;/);
+  assert.match(css, /\.chronology-timeline\[hidden\], \.chronology-graph\[hidden\] \{ display: none; \}/);
 });
 
 test('l’administration reste claire, tient dans le viewport et conserve les dossiers visibles', () => {
