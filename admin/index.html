@@ -195,6 +195,7 @@
           <div>
             <p class="eyebrow">CARTE DU PROJET</p>
             <h2>Votre installation, en un regard</h2>
+            <p>Sélectionnez une brique du schéma pour consulter son état et la configurer sans quitter cette page.</p>
           </div>
           <button id="refreshConfiguration" class="button secondary" type="button">Actualiser</button>
         </div>
@@ -202,39 +203,42 @@
         <div id="configurationMap" class="configuration-map" aria-busy="true">
           <!-- 1 · Client IA -->
           <div class="cfg-client-row">
-            <button class="configuration-node client-node loading" type="button" data-config-component="client">
+            <button class="configuration-node client-node loading" type="button" data-config-component="client" aria-haspopup="dialog" aria-controls="configurationDetail">
               <span class="configuration-node-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"></rect><path d="M8 21h8M12 17v4"></path></svg>
               </span>
               <span class="configuration-node-copy"><small>Client IA</small><strong id="configurationClientName">Détection…</strong><span id="configurationClientSummary">Lecture de l’installation locale</span></span>
               <span id="configurationClientStatus" class="component-state pending"><i></i>Vérification</span>
-              <span class="configuration-node-arrow" aria-hidden="true">›</span>
+              <span class="configuration-node-action">Configurer <span aria-hidden="true">›</span></span>
             </button>
           </div>
 
           <!-- Accès au client -->
           <p class="cfg-band-label">On lui parle par</p>
           <div class="cfg-access-row">
-            <button class="configuration-node compact loading" type="button" data-config-component="terminal">
+            <button class="configuration-node compact loading" type="button" data-config-component="terminal" aria-haspopup="dialog" aria-controls="configurationDetail">
               <span class="configuration-node-icon terminal" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="m7 9 3 3-3 3M13 15h4"></path></svg>
               </span>
               <span class="configuration-node-copy"><strong>Terminal</strong><span id="configurationTerminalSummary">Détection…</span></span>
               <span id="configurationTerminalStatus" class="component-state pending"><i></i>Vérification</span>
+              <span class="configuration-node-action">Détails <span aria-hidden="true">›</span></span>
             </button>
-            <button class="configuration-node compact loading" type="button" data-config-component="mcp">
+            <button class="configuration-node compact loading" type="button" data-config-component="mcp" aria-haspopup="dialog" aria-controls="configurationDetail">
               <span class="configuration-node-icon mcp" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"></circle><circle cx="18" cy="6" r="3"></circle><circle cx="12" cy="18" r="3"></circle><path d="m8.6 7.5 2.2 7M15.4 7.5l-2.2 7M9 6h6"></path></svg>
               </span>
               <span class="configuration-node-copy"><strong>MCP</strong><span id="configurationMcpSummary">Détection…</span></span>
               <span id="configurationMcpStatus" class="component-state pending"><i></i>Vérification</span>
+              <span class="configuration-node-action">Détails <span aria-hidden="true">›</span></span>
             </button>
-            <button class="configuration-node compact loading" type="button" data-config-component="telegram">
+            <button class="configuration-node compact loading" type="button" data-config-component="telegram" aria-haspopup="dialog" aria-controls="configurationDetail">
               <span class="configuration-node-icon telegram" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M21 4 3 11l6 2 2 6 3-4 4 3z"></path><path d="m9 13 8-6"></path></svg>
               </span>
               <span class="configuration-node-copy"><strong>Telegram</strong><span id="configurationTelegramSummary">Détection…</span></span>
               <span id="configurationTelegramStatus" class="component-state pending"><i></i>Vérification</span>
+              <span class="configuration-node-action">Configurer <span aria-hidden="true">›</span></span>
             </button>
           </div>
 
@@ -242,13 +246,13 @@
 
           <!-- 2 · Barrière d'anonymisation (hooks) -->
           <div class="cfg-boundary">
-            <button class="configuration-node hooks-node loading" type="button" data-config-component="hooks">
+            <button class="configuration-node hooks-node loading" type="button" data-config-component="hooks" aria-haspopup="dialog" aria-controls="configurationDetail">
               <span class="configuration-node-icon hooks" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"></path><path d="m9 12 2 2 4-4"></path></svg>
               </span>
               <span class="configuration-node-copy"><small>Barrière d’anonymisation</small><strong>Hooks</strong><span id="configurationHooksSummary">Détection…</span></span>
               <span id="configurationHooksStatus" class="component-state pending"><i></i>Vérification</span>
-              <span class="configuration-node-arrow" aria-hidden="true">›</span>
+              <span class="configuration-node-action">Détails <span aria-hidden="true">›</span></span>
             </button>
             <div class="cfg-transform" aria-hidden="false">
               <div class="cfg-transform-row read">
@@ -272,38 +276,41 @@
 
           <!-- 3 · Le dossier -->
           <div class="cfg-client-row">
-            <button class="configuration-node docs-node" type="button" data-config-component="docs">
+            <button class="configuration-node docs-node" type="button" data-config-component="docs" aria-haspopup="dialog" aria-controls="configurationDetail">
               <span class="configuration-node-icon docs" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M4 4h9l3 3h4v13H4z"></path><path d="M8 13h8M8 16h5"></path></svg>
               </span>
               <span class="configuration-node-copy"><small>Sur le disque</small><strong>Dossier &amp; pièces</strong><span id="configurationDocsSummary">Les fichiers ne sont jamais réécrits — seule la vue du modèle est codée.</span></span>
-              <span class="configuration-node-arrow" aria-hidden="true">›</span>
+              <span class="configuration-node-action">Détails <span aria-hidden="true">›</span></span>
             </button>
           </div>
 
           <!-- Moteurs locaux -->
           <p class="cfg-band-label engines">Moteurs locaux</p>
           <div class="cfg-engines-row">
-            <button class="configuration-node compact loading" type="button" data-config-component="gliner">
+            <button class="configuration-node compact loading" type="button" data-config-component="gliner" aria-haspopup="dialog" aria-controls="configurationDetail">
               <span class="configuration-node-icon gliner" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M12 3v3M12 18v3M3 12h3M18 12h3M6 6l2 2M16 16l2 2M18 6l-2 2M8 16l-2 2"></path></svg>
               </span>
               <span class="configuration-node-copy"><strong>GLiNER · PII</strong><span id="configurationGlinerSummary">Détection…</span></span>
               <span id="configurationGlinerStatus" class="component-state pending"><i></i>Vérification</span>
+              <span class="configuration-node-action">Configurer <span aria-hidden="true">›</span></span>
             </button>
-            <button class="configuration-node compact loading" type="button" data-config-component="mineru">
+            <button class="configuration-node compact loading" type="button" data-config-component="mineru" aria-haspopup="dialog" aria-controls="configurationDetail">
               <span class="configuration-node-icon mineru" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"></path><path d="M4 9h16M9 9v10"></path></svg>
               </span>
               <span class="configuration-node-copy"><strong>MinerU · OCR</strong><span id="configurationMineruSummary">Détection…</span></span>
               <span id="configurationMineruStatus" class="component-state pending"><i></i>Vérification</span>
+              <span class="configuration-node-action">Configurer <span aria-hidden="true">›</span></span>
             </button>
-            <button class="configuration-node compact loading" type="button" data-config-component="ollama">
+            <button class="configuration-node compact loading" type="button" data-config-component="ollama" aria-haspopup="dialog" aria-controls="configurationDetail">
               <span class="configuration-node-icon ollama" aria-hidden="true">
                 <svg viewBox="0 0 24 24"><path d="M12 3a5 5 0 0 1 5 5v2a4 4 0 0 1 0 8H7a4 4 0 0 1 0-8V8a5 5 0 0 1 5-5z"></path><path d="M9 11h.01M15 11h.01"></path></svg>
               </span>
               <span class="configuration-node-copy"><strong>Ollama · LLM</strong><span id="configurationOllamaSummary">Détection…</span></span>
               <span id="configurationOllamaStatus" class="component-state pending"><i></i>Vérification</span>
+              <span class="configuration-node-action">Détails <span aria-hidden="true">›</span></span>
             </button>
           </div>
         </div>
@@ -340,8 +347,8 @@
       </section>
 
       <section id="settings" class="panel">
-        <div id="settingsDrawerGroup" class="drawer-form-group">
-        <div class="drawer-inline-actions"><a class="button secondary" href="/taskpane.html">Ouvrir le volet Word</a></div>
+        <div id="settingsConfigurationGroup" class="configuration-form-group">
+        <div class="configuration-inline-actions"><a class="button secondary" href="/taskpane.html">Ouvrir le volet Word</a></div>
         <div class="metrics">
           <article class="card metric"><span>Version</span><strong id="version">—</strong></article>
           <article class="card metric"><span>Word connecté</span><strong id="wordStatus">—</strong></article>
@@ -495,9 +502,9 @@
       </section>
 
       <section id="telegram" class="panel">
-        <div id="telegramDrawerGroup" class="drawer-form-group">
+        <div id="telegramConfigurationGroup" class="configuration-form-group">
         <form id="telegramForm">
-          <div class="drawer-inline-actions"><button id="refreshTelegram" class="button secondary" type="button">Actualiser les états</button></div>
+          <div class="configuration-inline-actions"><button id="refreshTelegram" class="button secondary" type="button">Actualiser les états</button></div>
           <div class="telegram-intro card">
             <div>
               <p class="eyebrow">DEUX BOTS SÉPARÉS</p>
@@ -616,15 +623,14 @@
     </main>
   </div>
 
-  <div id="configurationDrawerBackdrop" class="configuration-drawer-backdrop" hidden></div>
-  <aside id="configurationDrawer" class="configuration-drawer" role="dialog" aria-modal="true" aria-labelledby="configurationDrawerTitle" hidden>
-    <header class="configuration-drawer-header">
-      <div><p id="configurationDrawerEyebrow" class="eyebrow">CONFIGURATION</p><h2 id="configurationDrawerTitle">Composant</h2></div>
-      <button id="closeConfigurationDrawer" class="configuration-drawer-close" type="button" aria-label="Fermer le panneau">×</button>
+  <dialog id="configurationDetail" class="configuration-dialog" aria-labelledby="configurationDetailTitle">
+    <header class="configuration-detail-header">
+      <div><p id="configurationDetailEyebrow" class="eyebrow">CONFIGURATION</p><h2 id="configurationDetailTitle" tabindex="-1">Composant</h2></div>
+      <button id="closeConfigurationDetail" class="configuration-detail-close" type="button">Fermer</button>
     </header>
-    <div id="configurationDrawerBody" class="configuration-drawer-body"></div>
-    <footer id="configurationDrawerActions" class="configuration-drawer-actions"></footer>
-  </aside>
+    <div id="configurationDetailBody" class="configuration-detail-body"></div>
+    <footer id="configurationDetailActions" class="configuration-detail-actions"></footer>
+  </dialog>
 
   <dialog id="createFileDialog">
     <form id="createFileForm" method="dialog" class="dialog-card">

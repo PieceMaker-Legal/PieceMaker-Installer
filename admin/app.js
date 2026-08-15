@@ -113,7 +113,7 @@ let filesLoaded = false;
 let historyLoaded = false;
 let configurationLoaded = false;
 let configurationData = null;
-let configurationDrawerOrigin = null;
+let configurationDetailOrigin = null;
 let repositoryData = null;
 let historyItems = [];
 let selectedFolder = '';
@@ -574,7 +574,9 @@ function renderConfigurationFolders(folders) {
     const bot = makeElement('span', `folder-bot ${folder.bot?.configured ? 'configured' : ''} ${folder.bot?.running ? 'running' : ''}`.trim());
     bot.append(makeElement('span', '', folder.bot?.configured ? folder.bot.name : 'Telegram non associé'));
     button.append(copy, bot, makeElement('span', 'folder-row-arrow', '›'));
-    button.addEventListener('click', () => openConfigurationDrawer('folder', folder.id, button));
+    button.setAttribute('aria-haspopup', 'dialog');
+    button.setAttribute('aria-controls', 'configurationDetail');
+    button.addEventListener('click', () => openConfigurationDetail('folder', folder.id, button));
     list.append(button);
   }
 }
@@ -620,10 +622,10 @@ async function loadConfiguration({ quiet = false } = {}) {
   }
 }
 
-function appendDrawerDetails(container, rows, title = 'Détails') {
-  const section = makeElement('section', 'drawer-section');
+function appendConfigurationDetails(container, rows, title = 'Détails') {
+  const section = makeElement('section', 'configuration-detail-section');
   section.append(makeElement('h3', '', title));
-  const list = makeElement('ul', 'drawer-detail-list');
+  const list = makeElement('ul', 'configuration-detail-list');
   for (const [label, value] of rows) {
     const item = document.createElement('li');
     item.append(makeElement('span', '', label), makeElement('strong', '', String(value || '—')));
@@ -633,8 +635,8 @@ function appendDrawerDetails(container, rows, title = 'Détails') {
   container.append(section);
 }
 
-function drawerStatus(component, { configurable = false } = {}) {
-  const wrapper = makeElement('div', 'drawer-status');
+function configurationStatus(component, { configurable = false } = {}) {
+  const wrapper = makeElement('div', 'configuration-detail-status');
   wrapper.append(makeElement('strong', '', 'État de la brique'));
   const state = makeElement('span');
   componentState(state, component, { configurable });
@@ -642,50 +644,50 @@ function drawerStatus(component, { configurable = false } = {}) {
   return wrapper;
 }
 
-function addDrawerAction(label, tab, { primary = false, beforeNavigate = null } = {}) {
+function addConfigurationAction(label, tab, { primary = false, beforeNavigate = null } = {}) {
   const button = makeElement('button', `button ${primary ? 'primary' : 'secondary'}`, label);
   button.type = 'button';
   button.addEventListener('click', () => {
     if (beforeNavigate) beforeNavigate();
-    closeConfigurationDrawer();
+    closeConfigurationDetail();
     setActiveTab(tab);
     history.replaceState(null, '', `#${tab}`);
   });
-  byId('configurationDrawerActions').append(button);
+  byId('configurationDetailActions').append(button);
 }
 
-// Bouton de tiroir ouvrant un autre nœud de la carte (sans changer d'onglet).
-function addDrawerLink(label, kind, { primary = false } = {}) {
+// Bouton du détail ouvrant un autre nœud de la carte (sans changer d'onglet).
+function addConfigurationLink(label, kind, { primary = false } = {}) {
   const button = makeElement('button', `button ${primary ? 'primary' : 'secondary'}`, label);
   button.type = 'button';
-  button.addEventListener('click', () => openConfigurationDrawer(kind));
-  byId('configurationDrawerActions').append(button);
+  button.addEventListener('click', () => openConfigurationDetail(kind));
+  byId('configurationDetailActions').append(button);
 }
 
-// Les formulaires Paramètres / Telegram / termes institutionnels vivent désormais
-// dans le tiroir : on déplace l'élément existant (ses écouteurs restent liés) puis
+// Les formulaires Paramètres / Telegram / termes institutionnels vivent dans la
+// fenêtre de configuration : on déplace l'élément existant (ses écouteurs restent liés) puis
 // on le remet à sa place d'origine à la fermeture.
-let mountedDrawerForm = null;
+let mountedConfigurationForm = null;
 
-function mountDrawerForm(elementId, loader) {
+function mountConfigurationForm(elementId, loader) {
   const el = byId(elementId);
   if (!el) return;
-  mountedDrawerForm = { el, parent: el.parentNode, next: el.nextSibling };
-  el.classList.add('in-drawer');
-  byId('configurationDrawerBody').append(el);
+  mountedConfigurationForm = { el, parent: el.parentNode, next: el.nextSibling };
+  el.classList.add('in-configuration-detail');
+  byId('configurationDetailBody').append(el);
   if (typeof loader === 'function') { try { loader(); } catch { /* rechargé au prochain refresh */ } }
 }
 
-function restoreDrawerForm() {
-  if (!mountedDrawerForm) return;
-  const { el, parent, next } = mountedDrawerForm;
-  el.classList.remove('in-drawer');
+function restoreConfigurationForm() {
+  if (!mountedConfigurationForm) return;
+  const { el, parent, next } = mountedConfigurationForm;
+  el.classList.remove('in-configuration-detail');
   if (next && next.parentNode === parent) parent.insertBefore(el, next);
   else parent.append(el);
-  mountedDrawerForm = null;
+  mountedConfigurationForm = null;
 }
 
-const DRAWER_DESCRIPTIONS = {
+const CONFIGURATION_DESCRIPTIONS = {
   client: 'Pilote le projet et charge le plugin PieceMaker. Réglages généraux, signature des commits et identifiants Légifrance ci-dessous.',
   terminal: 'Shell local interactif ouvert depuis le volet Word, dans le contexte du dossier actif.',
   mcp: 'Relie le client aux outils documentaires PieceMaker et à la recherche juridique Légifrance.',
@@ -696,58 +698,64 @@ const DRAWER_DESCRIPTIONS = {
   docs: 'Les pièces restent sur le disque avec leurs vrais noms. Les hooks ne recodent que ce que le modèle lit ; aucun fichier n’est réécrit.',
   hooks: 'La barrière entre le modèle et le dossier. À chaque lecture, les noms deviennent des codes ; à chaque écriture, les codes redeviennent des noms.',
 };
-const DRAWER_TITLES = {
+const CONFIGURATION_TITLES = {
   client: 'Client IA & Paramètres', terminal: 'Terminal', mcp: 'MCP locaux', telegram: 'Telegram',
   gliner: 'GLiNER · détection PII', mineru: 'MinerU · OCR', ollama: 'Ollama · modèles locaux',
   docs: 'Dossier & pièces', hooks: 'Hooks — barrière d’anonymisation',
 };
 
 // Détail visuel du rôle des hooks à la lecture / écriture des documents.
-function appendHooksFlow(container) {
-  const section = makeElement('section', 'drawer-section');
+function appendConfigurationHooksFlow(container) {
+  const section = makeElement('section', 'configuration-detail-section');
   section.append(makeElement('h3', '', 'À chaque accès du modèle'));
-  const flow = makeElement('div', 'drawer-hooks-flow');
+  const flow = makeElement('div', 'configuration-hooks-flow');
   const steps = [
     ['read', 'Lecture d’une pièce', 'Jean Dupont', 'PERSONNE_1', 'Le modèle ne reçoit que des codes.'],
     ['write', 'Écriture / réponse', 'PERSONNE_1', 'Jean Dupont', 'Le dossier récupère les vrais noms.'],
   ];
   for (const [dir, title, from, to, note] of steps) {
-    const row = makeElement('div', `drawer-hook-step ${dir}`);
+    const row = makeElement('div', `configuration-hook-step ${dir}`);
     row.append(makeElement('strong', '', title));
-    const line = makeElement('div', 'drawer-hook-line');
+    const line = makeElement('div', 'configuration-hook-line');
     line.append(
       makeElement('span', `cfg-chip ${dir === 'read' ? 'name' : 'code'}`, from),
       makeElement('span', 'cfg-arrow', '→'),
       makeElement('span', `cfg-chip ${dir === 'read' ? 'code' : 'name'}`, to),
     );
-    row.append(line, makeElement('span', 'drawer-hook-note', note));
+    row.append(line, makeElement('span', 'configuration-hook-note', note));
     flow.append(row);
   }
   section.append(flow);
   container.append(section);
 }
 
-function openConfigurationDrawer(kind, reference = '', origin = null) {
+function openConfigurationDetail(kind, reference = '', origin = null) {
   if (!configurationData) return;
-  restoreDrawerForm();
-  const body = byId('configurationDrawerBody');
-  const actions = byId('configurationDrawerActions');
+  restoreConfigurationForm();
+  const detail = byId('configurationDetail');
+  const body = byId('configurationDetailBody');
+  const actions = byId('configurationDetailActions');
   body.textContent = '';
   actions.textContent = '';
-  configurationDrawerOrigin = origin || document.activeElement;
+  document.querySelectorAll('[aria-controls="configurationDetail"]').forEach((node) => {
+    node.classList.remove('active');
+  });
+  const selectedNode = origin || document.querySelector(`[data-config-component="${kind}"]`);
+  if (!detail.open) configurationDetailOrigin = selectedNode || document.activeElement;
+  selectedNode?.classList.add('active');
 
   if (kind === 'folder') {
     const folder = configurationData.folders.find((entry) => entry.id === reference);
     if (!folder) return;
-    byId('configurationDrawerEyebrow').textContent = 'DOSSIER JURIDIQUE';
-    byId('configurationDrawerTitle').textContent = folder.name;
-    body.append(drawerStatus({ installed: true }), makeElement('p', 'drawer-description', 'Dossier enregistré dans PieceMaker. Son Assistant Telegram reste isolé des autres dossiers.'));
-    appendDrawerDetails(body, [
+    byId('configurationDetailEyebrow').textContent = 'DOSSIER JURIDIQUE';
+    byId('configurationDetailTitle').textContent = folder.name;
+    body.append(configurationStatus({ installed: true }), makeElement('p', 'configuration-detail-description', 'Dossier enregistré dans PieceMaker. Son Assistant Telegram reste isolé des autres dossiers.'));
+    appendConfigurationDetails(body, [
       ['Emplacement', folder.path],
       ['Bot Telegram', folder.bot?.configured ? folder.bot.name : 'Non associé'],
       ['État du bot', folder.bot?.running ? 'Actif' : folder.bot?.configured ? 'Arrêté' : 'À configurer'],
     ]);
-    addDrawerAction('Ouvrir le dossier', 'history', {
+    addConfigurationAction('Ouvrir le dossier', 'history', {
       primary: true,
       beforeNavigate: () => {
         selectedFolder = folder.id;
@@ -755,66 +763,66 @@ function openConfigurationDrawer(kind, reference = '', origin = null) {
       },
     });
   } else if (kind === 'docs') {
-    byId('configurationDrawerEyebrow').textContent = 'SUR LE DISQUE';
-    byId('configurationDrawerTitle').textContent = DRAWER_TITLES.docs;
-    body.append(makeElement('p', 'drawer-description', DRAWER_DESCRIPTIONS.docs));
-    appendDrawerDetails(body, [
+    byId('configurationDetailEyebrow').textContent = 'SUR LE DISQUE';
+    byId('configurationDetailTitle').textContent = CONFIGURATION_TITLES.docs;
+    body.append(makeElement('p', 'configuration-detail-description', CONFIGURATION_DESCRIPTIONS.docs));
+    appendConfigurationDetails(body, [
       ['Pièces originales', 'Protégées par défaut'],
       ['Markdown / JSON', 'Anonymisés à la volée'],
       ['Réécriture disque', 'Jamais'],
     ]);
-    addDrawerAction('Voir les dossiers', 'history', { primary: true });
+    addConfigurationAction('Voir les dossiers', 'history', { primary: true });
   } else {
     const component = configurationData.components[kind];
     if (!component) return;
-    byId('configurationDrawerEyebrow').textContent = 'COMPOSANT';
-    byId('configurationDrawerTitle').textContent = DRAWER_TITLES[kind] || component.name;
-    body.append(drawerStatus(component, { configurable: CONFIGURABLE_COMPONENTS.has(kind) }), makeElement('p', 'drawer-description', DRAWER_DESCRIPTIONS[kind] || component.summary));
+    byId('configurationDetailEyebrow').textContent = 'COMPOSANT';
+    byId('configurationDetailTitle').textContent = CONFIGURATION_TITLES[kind] || component.name;
+    body.append(configurationStatus(component, { configurable: CONFIGURABLE_COMPONENTS.has(kind) }), makeElement('p', 'configuration-detail-description', CONFIGURATION_DESCRIPTIONS[kind] || component.summary));
 
     if (kind === 'client') {
-      appendDrawerDetails(body, [
+      appendConfigurationDetails(body, [
         ['Client détecté', component.name],
         ['Plugin PieceMaker', component.pluginInstalled ? `Installé${component.pluginVersion ? ` · v${component.pluginVersion}` : ''}` : 'Non installé'],
       ]);
-      if (component.clients.length > 1) appendDrawerDetails(body, component.clients.map((client) => [client.name, client.version || 'Détecté']), 'Clients détectés');
-      mountDrawerForm('settingsDrawerGroup', loadSettings);
-      addDrawerAction('Skills et agents', 'files', { primary: true });
+      if (component.clients.length > 1) appendConfigurationDetails(body, component.clients.map((client) => [client.name, client.version || 'Détecté']), 'Clients détectés');
+      mountConfigurationForm('settingsConfigurationGroup', loadSettings);
+      addConfigurationAction('Skills et agents', 'files', { primary: true });
     } else if (kind === 'terminal') {
-      appendDrawerDetails(body, [['Shell', component.shell], ['Transport', 'PTY local chiffré via WebSocket']]);
-      addDrawerAction('Voir les dossiers', 'history', { primary: true });
+      appendConfigurationDetails(body, [['Shell', component.shell], ['Transport', 'PTY local chiffré via WebSocket']]);
+      addConfigurationAction('Voir les dossiers', 'history', { primary: true });
     } else if (kind === 'hooks') {
-      appendHooksFlow(body);
-      appendDrawerDetails(body, [
+      appendConfigurationHooksFlow(body);
+      appendConfigurationDetails(body, [
         ['Garde-fous présents', `${component.count}/5`],
         ['Déclencheurs', 'Lecture · écriture · arrêt de session'],
         ['Fichiers sur disque', 'Jamais modifiés'],
       ]);
-      addDrawerAction('Voir le plugin', 'files', { primary: true });
+      addConfigurationAction('Voir le plugin', 'files', { primary: true });
     } else if (kind === 'gliner') {
-      appendDrawerDetails(body, [
+      appendConfigurationDetails(body, [
         ['Moteur', component.installed ? (component.engine || '—') : 'Non installé'],
         ['Accélération', component.coreml ? 'GPU CoreML' : 'CPU (torch)'],
         ['Réseau', 'Aucun — 100 % local'],
       ]);
-      if (component.installed) mountDrawerForm('institutionalTermsCard', loadInstitutionalTerms);
+      if (component.installed) mountConfigurationForm('institutionalTermsCard', loadInstitutionalTerms);
       else appendInstallAction(body, 'gliner');
     } else if (kind === 'mineru') {
-      appendDrawerDetails(body, [
+      appendConfigurationDetails(body, [
         ['Rôle', 'OCR PDF scannés / images'],
         ['Statut', component.installed ? 'Installé' : 'Optionnel · non installé'],
       ]);
       if (!component.installed) appendInstallAction(body, 'mineru');
     } else if (kind === 'ollama') {
-      appendDrawerDetails(body, [
+      appendConfigurationDetails(body, [
         ['Version', component.version ? `v${component.version}` : 'Indéterminée'],
         ['Modèles locaux', String(component.count || 0)],
       ]);
     } else if (kind === 'telegram') {
       if (Array.isArray(component.bots)) {
-        const section = makeElement('section', 'drawer-section');
+        const section = makeElement('section', 'configuration-detail-section');
         section.append(makeElement('h3', '', 'Bots'));
         for (const bot of component.bots) {
-          const service = makeElement('div', 'drawer-service');
+          const service = makeElement('div', 'configuration-service');
           service.append(
             makeElement('strong', '', bot.name || bot.role),
             makeElement('span', `component-state ${bot.running ? 'ok' : bot.configured ? 'warn' : 'error'}`, bot.running ? 'En ligne' : bot.configured ? 'Arrêté' : 'À configurer'),
@@ -824,12 +832,12 @@ function openConfigurationDrawer(kind, reference = '', origin = null) {
         }
         body.append(section);
       }
-      mountDrawerForm('telegramDrawerGroup', loadTelegram);
+      mountConfigurationForm('telegramConfigurationGroup', loadTelegram);
     } else if (kind === 'mcp') {
-      const section = makeElement('section', 'drawer-section');
+      const section = makeElement('section', 'configuration-detail-section');
       section.append(makeElement('h3', '', 'Serveurs disponibles'));
       for (const item of component.items) {
-        const service = makeElement('div', 'drawer-service');
+        const service = makeElement('div', 'configuration-service');
         service.append(
           makeElement('strong', '', item.name),
           makeElement('span', `component-state ${item.installed && item.configured ? 'ok' : item.installed ? 'warn' : 'error'}`, item.installed ? item.configured ? 'Prêt' : 'À configurer' : 'Absent'),
@@ -838,39 +846,41 @@ function openConfigurationDrawer(kind, reference = '', origin = null) {
         section.append(service);
       }
       body.append(section);
-      addDrawerLink('Identifiants Légifrance', 'client', { primary: true });
+      addConfigurationLink('Identifiants Légifrance', 'client', { primary: true });
     }
   }
 
-  byId('configurationDrawerBackdrop').hidden = false;
-  byId('configurationDrawer').hidden = false;
-  byId('closeConfigurationDrawer').focus();
+  if (!detail.open) detail.showModal();
+  byId('configurationDetailTitle').focus({ preventScroll: true });
 }
 
-function closeConfigurationDrawer() {
+function closeConfigurationDetail() {
   if (installPollTimer) { clearTimeout(installPollTimer); installPollTimer = null; }
-  restoreDrawerForm();
-  byId('configurationDrawerBackdrop').hidden = true;
-  byId('configurationDrawer').hidden = true;
-  configurationDrawerOrigin?.focus?.();
-  configurationDrawerOrigin = null;
+  restoreConfigurationForm();
+  const detail = byId('configurationDetail');
+  if (detail.open) detail.close();
+  document.querySelectorAll('[aria-controls="configurationDetail"]').forEach((node) => {
+    node.classList.remove('active');
+  });
+  configurationDetailOrigin?.focus?.();
+  configurationDetailOrigin = null;
 }
 
 // Bloc « Installer » d'un moteur local absent (GLiNER / MinerU) : lance l'étape
-// d'installateur côté serveur puis suit sa progression sans quitter le tiroir.
+// d'installateur côté serveur puis suit sa progression sans quitter la page.
 let installPollTimer = null;
 
 const INSTALL_HINTS = {
-  gliner: 'Le modèle d’anonymisation (~400 Mo) sera téléchargé. L’installation continue même si vous fermez ce panneau.',
-  mineru: 'MinerU est volumineux (plusieurs centaines de Mo). L’installation continue même si vous fermez ce panneau.',
+  gliner: 'Le modèle d’anonymisation (~400 Mo) sera téléchargé. L’installation continue même si vous fermez cette fenêtre.',
+  mineru: 'MinerU est volumineux (plusieurs centaines de Mo). L’installation continue même si vous fermez cette fenêtre.',
 };
 
 function appendInstallAction(body, kind) {
-  const section = makeElement('section', 'drawer-section drawer-install');
-  section.append(makeElement('p', 'drawer-install-note', INSTALL_HINTS[kind] || ''));
+  const section = makeElement('section', 'configuration-detail-section configuration-install');
+  section.append(makeElement('p', 'configuration-install-note', INSTALL_HINTS[kind] || ''));
   const button = makeElement('button', 'button primary', 'Installer');
   button.type = 'button';
-  const progress = makeElement('p', 'drawer-install-progress');
+  const progress = makeElement('p', 'configuration-install-progress');
   progress.hidden = true;
   button.addEventListener('click', () => startComponentInstall(kind, button, progress));
   section.append(button, progress);
@@ -882,7 +892,7 @@ async function startComponentInstall(kind, button, progress) {
   button.disabled = true;
   button.textContent = 'Installation…';
   progress.hidden = false;
-  progress.className = 'drawer-install-progress running';
+  progress.className = 'configuration-install-progress running';
   progress.textContent = 'Démarrage…';
   try {
     const { job } = await api('/api/admin/configuration/install', {
@@ -891,7 +901,7 @@ async function startComponentInstall(kind, button, progress) {
     });
     pollComponentInstall(job.id, kind, button, progress);
   } catch (error) {
-    progress.className = 'drawer-install-progress error';
+    progress.className = 'configuration-install-progress error';
     progress.textContent = error.message;
     button.disabled = false;
     button.textContent = 'Réessayer';
@@ -906,20 +916,20 @@ function pollComponentInstall(id, kind, button, progress) {
       progress.textContent = job.progress || 'Installation en cours…';
       if (job.state === 'running') { installPollTimer = setTimeout(tick, 2500); return; }
       if (job.state === 'done') {
-        progress.className = 'drawer-install-progress ok';
+        progress.className = 'configuration-install-progress ok';
         progress.textContent = 'Installé.';
-        toast(`${DRAWER_TITLES[kind] || kind} · installé.`);
+        toast(`${CONFIGURATION_TITLES[kind] || kind} · installé.`);
         await loadConfiguration({ quiet: true });
-        closeConfigurationDrawer();
+        closeConfigurationDetail();
       } else {
-        progress.className = 'drawer-install-progress error';
+        progress.className = 'configuration-install-progress error';
         progress.textContent = job.error || 'Échec de l’installation.';
         button.disabled = false;
         button.textContent = 'Réessayer';
         toast(job.error || 'Échec de l’installation.');
       }
     } catch (error) {
-      progress.className = 'drawer-install-progress error';
+      progress.className = 'configuration-install-progress error';
       progress.textContent = error.message;
       button.disabled = false;
       button.textContent = 'Réessayer';
@@ -1558,7 +1568,7 @@ function openPluginComponentsDialog() {
 }
 
 function fileGroupLabel(kind) {
-  return { instructions: 'Instructions', skill: 'Skills', agent: 'Agents' }[kind] || kind;
+  return { instructions: 'Instructions', skill: 'Skills', agent: 'Agents', 'official-skill': 'Skills officiels' }[kind] || kind;
 }
 
 async function loadFiles({ selectPath = null } = {}) {
@@ -1568,7 +1578,7 @@ async function loadFiles({ selectPath = null } = {}) {
     try {
       const { files } = await api('/api/admin/files');
       list.textContent = '';
-      for (const kind of ['instructions', 'skill', 'agent']) {
+      for (const kind of ['instructions', 'skill', 'agent', 'official-skill']) {
         const groupFiles = files.filter((file) => file.kind === kind);
         if (!groupFiles.length) continue;
         const heading = document.createElement('div');
@@ -1581,6 +1591,13 @@ async function loadFiles({ selectPath = null } = {}) {
           button.className = `file-button${file.exists ? '' : ' missing'}`;
           button.dataset.path = file.path;
           button.append(makeElement('span', 'file-button-label', file.exists ? file.name : `${file.name} — créer`));
+          if (file.kind === 'official-skill') {
+            // Skill fourni par un plugin de marketplace installé : lecture
+            // seule, badge indiquant son plugin d'origine.
+            const badge = makeElement('span', 'asset-badge ok', 'Officiel');
+            badge.title = file.marketplace ? `${file.plugin} · ${file.marketplace}` : file.plugin || 'Plugin installé';
+            button.append(badge);
+          }
           const registration = claudeAssetBadge(file);
           if (registration) button.append(registration);
           button.addEventListener('click', () => selectFile(file, button));
@@ -3600,12 +3617,15 @@ document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click',
 }));
 byId('refreshConfiguration').addEventListener('click', () => loadConfiguration());
 document.querySelectorAll('[data-config-component]').forEach((node) => {
-  node.addEventListener('click', () => openConfigurationDrawer(node.dataset.configComponent, '', node));
+  node.addEventListener('click', () => openConfigurationDetail(node.dataset.configComponent, '', node));
 });
-byId('closeConfigurationDrawer').addEventListener('click', closeConfigurationDrawer);
-byId('configurationDrawerBackdrop').addEventListener('click', closeConfigurationDrawer);
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && !byId('configurationDrawer').hidden) closeConfigurationDrawer();
+byId('closeConfigurationDetail').addEventListener('click', closeConfigurationDetail);
+byId('configurationDetail').addEventListener('cancel', (event) => {
+  event.preventDefault();
+  closeConfigurationDetail();
+});
+byId('configurationDetail').addEventListener('click', (event) => {
+  if (event.target === event.currentTarget) closeConfigurationDetail();
 });
 byId('settingsForm').addEventListener('submit', saveSettings);
 byId('addInstitutionalTerm').addEventListener('click', addInstitutionalTermFromInput);

@@ -6,7 +6,7 @@ const test = require('node:test');
 const root = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
-test('Dossiers est le premier onglet ; Paramètres et Telegram sont repliés dans la Configuration', () => {
+test('Dossiers est le premier onglet ; Paramètres et Telegram sont regroupés dans la Configuration', () => {
   const html = read('admin/index.html');
   const nav = html.match(/<nav class="tabs"[\s\S]*?<\/nav>/)?.[0] || '';
   const settings = html.match(/<section id="settings"[\s\S]*?<form id="settingsForm">/)?.[0] || '';
@@ -17,12 +17,12 @@ test('Dossiers est le premier onglet ; Paramètres et Telegram sont repliés dan
   assert.doesNotMatch(nav, /data-tab="telegram"/);
   assert.doesNotMatch(nav, /Vue d’ensemble|dashboard/);
   assert.doesNotMatch(html, /id="dashboard"/);
-  // Le contenu Paramètres subsiste (déplacé dans le tiroir) avec ses métriques.
+  // Le contenu Paramètres subsiste (déplacé dans la fenêtre) avec ses métriques.
   for (const id of ['version', 'wordStatus', 'certStatus', 'assetCount', 'repoRoot']) {
     assert.match(settings, new RegExp(`id="${id}"`));
   }
-  // Groupes déplaçables dans le tiroir de configuration.
-  for (const id of ['settingsDrawerGroup', 'telegramDrawerGroup', 'institutionalTermsCard']) {
+  // Groupes déplaçables dans la fenêtre de configuration.
+  for (const id of ['settingsConfigurationGroup', 'telegramConfigurationGroup', 'institutionalTermsCard']) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
 });
@@ -43,25 +43,28 @@ test('Configuration montre le flux d’anonymisation, les moteurs locaux et héb
   assert.match(configuration, /cfg-transform-row read/);
   assert.match(configuration, /cfg-transform-row write/);
   for (const id of [
-    'configurationModelList', 'configurationFolderList', 'configurationDrawer',
-    'configurationDrawerBackdrop', 'refreshConfiguration',
+    'configurationModelList', 'configurationFolderList', 'configurationDetail',
+    'configurationDetailTitle', 'refreshConfiguration',
   ]) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
   assert.match(app, /api\('\/api\/admin\/configuration'\)/);
   assert.match(app, /\/api\/admin\/configuration\/models\/check/);
-  assert.match(app, /openConfigurationDrawer\('folder'/);
-  // Paramètres, Telegram et termes institutionnels sont montés dans le tiroir.
-  assert.match(app, /mountDrawerForm\('settingsDrawerGroup'/);
-  assert.match(app, /mountDrawerForm\('telegramDrawerGroup'/);
-  assert.match(app, /mountDrawerForm\('institutionalTermsCard'/);
+  assert.match(app, /openConfigurationDetail\('folder'/);
+  assert.match(app, /detail\.showModal\(\)/);
+  // Paramètres, Telegram et termes institutionnels sont montés dans la fenêtre.
+  assert.match(app, /mountConfigurationForm\('settingsConfigurationGroup'/);
+  assert.match(app, /mountConfigurationForm\('telegramConfigurationGroup'/);
+  assert.match(app, /mountConfigurationForm\('institutionalTermsCard'/);
   // Le serveur détecte GLiNER, MinerU et Telegram parmi les composants.
   for (const component of ['gliner', 'mineru', 'telegram']) {
     assert.match(routes, new RegExp(`${component}: \\{`));
   }
   assert.match(css, /\.configuration-map/);
-  assert.match(css, /\.configuration-drawer/);
+  assert.match(css, /\.configuration-dialog/);
   assert.match(css, /\.cfg-boundary/);
+  assert.doesNotMatch(html, /configurationDrawer|configuration-drawer|configurationDrawerBackdrop/);
+  assert.doesNotMatch(css, /\.configuration-drawer|\.configuration-drawer-backdrop/);
 });
 
 test('les paramètres permettent de modifier le nom appliqué à chaque commit', () => {
