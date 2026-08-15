@@ -984,10 +984,69 @@ function managedAbsolutePath(repoRoot, relativePath, homeDir = path.join(os.home
   return { normalized, absolute };
 }
 
-// Les instructions, skills et agents seulement : les aperçus de facturation
-// vivent dans ~/.piecemaker/billing, une hiérarchie distincte du dépôt, et ne
-// sont pas listés dans l'éditeur « Skills et agents ».
-function listManagedFiles(repoRoot, homeDir = path.join(os.homedir(), '.piecemaker'), userHome = os.homedir()) {
+// Préfixe des chemins synthétiques d'un skill fourni par un plugin de
+// marketplace installé (onglet « Skills et agents », groupe « Skills
+// officiels »). Ce ne sont pas des fichiers du dépôt : ils vivent dans le cache
+// Claude Code (~/.claude/plugins/cache/…), en lecture seule. Le chemin encode
+// l'id du plugin et le slug du skill pour être re-résolu à la lecture sans
+// stocker de chemin de version volatil.
+const OFFICIAL_SKILL_PREFIX = 'official-skill:';
+
+// Skills exposés par les plugins de marketplace installés ET activés (hors
+// notre propre plugin piecemaker, dont les skills sont déjà listés depuis le
+// dépôt). Source : `claude plugin list --json`, qui donne l'`installPath` exact
+// (dossier de version inclus) et l'état `enabled` de chaque plugin ; on y lit
+// alors les `skills/<slug>/SKILL.md`. `runCommand` injectable pour les tests.
+function installedPluginSkills(runCommand = captureCommand) {
+  const result = runCommand('claude', ['plugin', 'list', '--json'], 5000);
+  if (!result.ok) return [];
+  const plugins = parseJsonOutput(result.output);
+  if (!Array.isArray(plugins)) return [];
+  const skills = [];
+  const seen = new Set();
+  for (const plugin of plugins) {
+    if (!plugin?.id || plugin.enabled === false) continue;
+    // Nos propres skills sont déjà listés depuis le dépôt — ne pas les répéter.
+    if (plugin.id.endsWith(`@${CLAUDE_MARKETPLACE_NAME}`)) continue;
+    const installPath = typeof plugin.installPath === 'string' ? plugin.installPath : '';
+    if (!installPath) continue;
+    const skillsDir = path.join(installPath, 'skills');
+    let entries;
+    try {
+      entries = fs.readdirSync(skillsDir);
+    } catch {
+      continue; // pas de dossier skills/ (plugin d'agents seuls, MCP, etc.)
+    }
+    const [pluginName, marketplace] = plugin.id.split('@');
+    for (const name of entries.sort()) {
+      const skillFile = path.join(skillsDir, name, 'SKILL.md');
+      if (!fs.existsSync(skillFile)) continue;
+      const key = `${plugin.id}/${name}`;
+      if (seen.has(key)) continue; // même plugin installé en scope user ET project
+      seen.add(key);
+      const metadata = pluginComponentFrontMatter(skillFile);
+      skills.push({
+        path: `${OFFICIAL_SKILL_PREFIX}${plugin.id}/${name}`,
+        pluginId: plugin.id,
+        plugin: pluginName,
+        marketplace: marketplace || '',
+        slug: name,
+        name: metadata.name || name,
+        description: metadata.description || '',
+        absolute: skillFile,
+      });
+    }
+  }
+  return skills.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Les instructions, skills et agents du dépôt, plus les skills des plugins de
+// marketplace installés (groupe « Skills officiels », lecture seule) : les
+// aperçus de facturation vivent dans ~/.piecemaker/billing, une hiérarchie
+// distincte du dépôt, et ne sont pas listés dans l'éditeur « Skills et agents ».
+// `options.installedSkills` permet aux tests d'injecter la liste des skills de
+// plugins (sinon elle est lue via le CLI claude, non hermétique).
+function listManagedFiles(repoRoot, homeDir = path.join(os.homedir(), '.piecemaker'), userHome = os.homedir(), options = {}) {
   const candidates = ['AGENTS.md', 'CLAUDE.md'];
   const agentsDir = path.join(repoRoot, 'piecemaker-plugin', 'agents');
   if (fs.existsSync(agentsDir)) {
@@ -1003,7 +1062,7 @@ function listManagedFiles(repoRoot, homeDir = path.join(os.homedir(), '.piecemak
     }
   }
 
-  return candidates.map((relativePath) => {
+  const files = candidates.map((relativePath) => {
     const { absolute, normalized } = managedAbsolutePath(repoRoot, relativePath, homeDir);
     const kind = managedFileKind(normalized);
     return {
@@ -1021,6 +1080,25 @@ function listManagedFiles(repoRoot, homeDir = path.join(os.homedir(), '.piecemak
       claudeCode: claudeAssetStatus(repoRoot, userHome, normalized),
     };
   });
+
+  // Skills des plugins de marketplace installés — lecture seule, groupe
+  // « Skills officiels ». Un plugin installé depuis les onglets marketplace du
+  // pop-up apparaît ainsi dans la liste dès qu'il expose des skills.
+  const installedSkills = options.installedSkills || installedPluginSkills();
+  for (const skill of installedSkills) {
+    files.push({
+      path: skill.path,
+      name: skill.name,
+      kind: 'official-skill',
+      exists: true,
+      readonly: true,
+      plugin: skill.plugin,
+      marketplace: skill.marketplace,
+      description: skill.description,
+      claudeCode: null,
+    });
+  }
+  return files;
 }
 
 // Lecture minimale du front matter (name/description) d'un skill/agent, pour
@@ -1133,7 +1211,27 @@ function billingLedgerToMarkdown(file) {
   ].join('\n');
 }
 
+// Lecture (seule) d'un skill de plugin de marketplace : re-résolution du chemin
+// synthétique `official-skill:<pluginId>/<slug>` vers son SKILL.md dans le cache
+// Claude Code, via `installedPluginSkills`. Jamais d'écriture — saveManagedFile
+// refuse ce préfixe (managedAbsolutePath ne le reconnaît pas comme administrable).
+function readOfficialSkill(pathValue, runCommand = captureCommand) {
+  const skill = installedPluginSkills(runCommand).find((entry) => entry.path === pathValue);
+  if (!skill || !fs.existsSync(skill.absolute)) throw new Error('Skill de plugin introuvable ou plugin désactivé.');
+  return {
+    path: pathValue,
+    kind: 'official-skill',
+    exists: true,
+    content: fs.readFileSync(skill.absolute, 'utf8'),
+    readonly: true,
+    sourceType: 'markdown',
+  };
+}
+
 function readManagedFile(repoRoot, relativePath, homeDir = path.join(os.homedir(), '.piecemaker')) {
+  if (typeof relativePath === 'string' && relativePath.startsWith(OFFICIAL_SKILL_PREFIX)) {
+    return readOfficialSkill(relativePath);
+  }
   const { absolute, normalized } = managedAbsolutePath(repoRoot, relativePath, homeDir);
   const exists = fs.existsSync(absolute);
   const kind = managedFileKind(normalized);
@@ -2166,6 +2264,7 @@ module.exports = {
   createManagedFile,
   ensureClaudePluginActive,
   folderPickerCommands,
+  installedPluginSkills,
   installProjectPlugin,
   isLocalOrigin,
   listDossiers,

@@ -11,6 +11,7 @@ const {
   checkOllamaModelUpdate,
   createManagedFile,
   ensureClaudePluginActive,
+  installedPluginSkills,
   isLocalOrigin,
   listDossiers,
   listManagedFiles,
@@ -70,7 +71,7 @@ test('seuls les fichiers Markdown PieceMaker explicitement prévus sont accepté
 test('la liste contient les instructions, skills et agents', (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
-  const files = listManagedFiles(data.repo, data.home);
+  const files = listManagedFiles(data.repo, data.home, undefined, { installedSkills: [] });
   assert.deepEqual(files.map((file) => file.path), [
     'AGENTS.md',
     'CLAUDE.md',
@@ -89,7 +90,7 @@ test('la facturation reste hors de la liste des skills et agents', (t) => {
   fs.writeFileSync(path.join(data.home, 'billing', '2026-08.jsonl'), `${JSON.stringify({
     timestamp: '2026-08-06T08:00:00.000Z', event: 'Stop', task_label: 'Analyse', dossier: 'Martin', duration_ms: 65000,
   })}\n`);
-  const files = listManagedFiles(data.repo, data.home);
+  const files = listManagedFiles(data.repo, data.home, undefined, { installedSkills: [] });
   assert.deepEqual(files.filter((file) => file.kind === 'billing'), []);
   assert.deepEqual([...new Set(files.map((file) => file.kind))], ['instructions', 'agent', 'skill']);
   // La hiérarchie ~/.piecemaker/billing reste lisible en direct, toujours en
@@ -103,6 +104,87 @@ test('la facturation reste hors de la liste des skills et agents', (t) => {
     () => saveManagedFile(data.repo, data.home, 'billing/synthese/session-2026.md', 'altéré'),
     /lecture seule/,
   );
+});
+
+// ---------------------------------------------------------------------------
+// Skills des plugins de marketplace installés (groupe « Skills officiels »).
+// On simule un cache de plugin Claude Code sur disque + la sortie de
+// `claude plugin list --json` via un faux runCommand.
+// ---------------------------------------------------------------------------
+function pluginCacheFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-plugincache-'));
+  const install = (pluginId, version, skills) => {
+    const [name, marketplace] = pluginId.split('@');
+    const installPath = path.join(root, marketplace, name, version);
+    for (const [slug, front] of Object.entries(skills)) {
+      const dir = path.join(installPath, 'skills', slug);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'SKILL.md'), `---\nname: ${front.name}\ndescription: ${front.description}\n---\n# ${front.name}\n`);
+    }
+    return installPath;
+  };
+  return { root, install };
+}
+
+test('installedPluginSkills lit les skills des plugins installés et activés, hors piecemaker et désactivés', (t) => {
+  const cache = pluginCacheFixture();
+  t.after(() => fs.rmSync(cache.root, { recursive: true, force: true }));
+  const legalPath = cache.install('litigation-legal@claude-for-legal', '1.0.2', {
+    'claim-chart': { name: 'claim-chart', description: 'Construit un tableau de prétentions.' },
+    'chronology': { name: 'chronology', description: 'Chronologie du dossier.' },
+  });
+  const disabledPath = cache.install('document-skills@anthropic-agent-skills', 'abc', {
+    'pdf': { name: 'pdf', description: 'PDF.' },
+  });
+  const ownPath = cache.install('piecemaker@piecemaker', '0.2.2', {
+    'anonymisation': { name: 'anonymisation', description: 'Ne doit pas apparaître (skill du dépôt).' },
+  });
+  const runCommand = () => ({ ok: true, output: JSON.stringify([
+    { id: 'litigation-legal@claude-for-legal', enabled: true, installPath: legalPath },
+    { id: 'document-skills@anthropic-agent-skills', enabled: false, installPath: disabledPath },
+    { id: 'piecemaker@piecemaker', enabled: true, installPath: ownPath },
+  ]) });
+
+  const skills = installedPluginSkills(runCommand);
+  // Triés par nom : « chronology » précède « claim-chart ».
+  assert.deepEqual(skills.map((s) => s.path), [
+    'official-skill:litigation-legal@claude-for-legal/chronology',
+    'official-skill:litigation-legal@claude-for-legal/claim-chart',
+  ]);
+  const claimChart = skills.find((s) => s.slug === 'claim-chart');
+  assert.equal(claimChart.name, 'claim-chart');
+  assert.equal(claimChart.description, 'Construit un tableau de prétentions.');
+  assert.equal(claimChart.plugin, 'litigation-legal');
+  assert.equal(claimChart.marketplace, 'claude-for-legal');
+  // Ni le plugin désactivé, ni notre propre plugin ne contribuent.
+  assert.ok(!skills.some((s) => s.marketplace === 'anthropic-agent-skills'));
+  assert.ok(!skills.some((s) => s.plugin === 'piecemaker'));
+});
+
+test('installedPluginSkills reste silencieux si le CLI échoue ou renvoie autre chose', () => {
+  assert.deepEqual(installedPluginSkills(() => ({ ok: false, output: '' })), []);
+  assert.deepEqual(installedPluginSkills(() => ({ ok: true, output: 'pas du json' })), []);
+});
+
+test('listManagedFiles ajoute les skills officiels en lecture seule après ceux du dépôt', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const installedSkills = [{
+    path: 'official-skill:litigation-legal@claude-for-legal/claim-chart',
+    plugin: 'litigation-legal',
+    marketplace: 'claude-for-legal',
+    name: 'claim-chart',
+    description: 'Construit un tableau de prétentions.',
+  }];
+  const files = listManagedFiles(data.repo, data.home, undefined, { installedSkills });
+  const official = files.find((file) => file.kind === 'official-skill');
+  assert.ok(official, 'un skill officiel doit être présent');
+  assert.equal(official.readonly, true);
+  assert.equal(official.exists, true);
+  assert.equal(official.name, 'claim-chart');
+  assert.equal(official.plugin, 'litigation-legal');
+  // Il vient après les composants du dépôt (skills/agents editables d'abord).
+  assert.ok(files.findIndex((f) => f.kind === 'official-skill') > files.findIndex((f) => f.kind === 'skill'));
 });
 
 test('un nouveau skill reçoit un front matter et reste dans le dossier autorisé', (t) => {

@@ -14,11 +14,19 @@ this repo — read it before touching `websocket-server/` or `taskpane/`.
   pieces frame (Markdown conversion, local PII pipeline, mapping editor, and
   the per-file protection toggle — see "Piece protection" and "Originals
   pipeline" below), served at `/admin/`.
-  The "Skills et agents" file list is restricted to the repo's own hierarchies
+  The "Skills et agents" file list holds the repo's own editable hierarchies
   — `CLAUDE.md`/`AGENTS.md`, `piecemaker-plugin/skills/`,
-  `piecemaker-plugin/agents/`. The billing ledgers and syntheses under
-  `~/.piecemaker/billing/` are a separate hierarchy and are no longer listed
-  there (`readManagedFile` still renders them read-only if a path is given).
+  `piecemaker-plugin/agents/` — plus a read-only "Skills officiels" group:
+  the skills of the marketplace plugins currently installed **and** enabled in
+  Claude Code (`installedPluginSkills`, sourced from `claude plugin list --json`
+  → each plugin's `installPath/skills/<slug>/SKILL.md`, our own
+  `@piecemaker` plugin excluded since its skills already list from the repo).
+  These carry a synthetic `official-skill:<pluginId>/<slug>` path re-resolved on
+  read (`readOfficialSkill`), never editable — so a plugin installed from the
+  "Ajouter le plugin legal Claude" pop-up shows its skills here right away. The
+  billing ledgers and syntheses under `~/.piecemaker/billing/` are a separate
+  hierarchy and are no longer listed there (`readManagedFile` still renders them
+  read-only if a path is given).
   Original-document contents must never be read by this UI; original filenames
   are returned only after mapping substitution, with a generic fallback.
   Skills and agents created here are registered with Claude Code immediately —
