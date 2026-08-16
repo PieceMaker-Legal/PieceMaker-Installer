@@ -21,7 +21,8 @@ import {
 const require = createRequire(import.meta.url);
 const { createCommit, locateCaseFile } = require('./lib/commits.cjs');
 const { locateConfiguredCase } = require('./lib/case-folders.cjs');
-const { resolveConfiguredCaseMapping, revertMapping } = require('./lib/mapping.cjs');
+const { revertMapping } = require('./lib/mapping.cjs');
+const { readCentralMapping } = require('./lib/central-mapping.cjs');
 
 async function main() {
   const payload = await readHookPayload(2000);
@@ -47,9 +48,10 @@ async function main() {
 
   // Le nom d'un fichier porte souvent une entité
   // (« 06_Email_..._par_CAITLYN_SA.md ») : l'historique du cabinet doit rester
-  // lisible, alors que l'IA n'a vu que des codes.
-  const legalCase = resolveConfiguredCaseMapping(config, absolute);
-  const relative = legalCase ? revertMapping(located.relative, legalCase.reverse_mapping) : located.relative;
+  // lisible, alors que l'IA n'a vu que des codes. On rétablit avec le mapping
+  // central (schéma de codes unique désormais appliqué par le hook central).
+  const central = readCentralMapping();
+  const relative = revertMapping(located.relative, central.reverse_mapping);
 
   await createCommit({
     casesRoot: located.casesRoot,

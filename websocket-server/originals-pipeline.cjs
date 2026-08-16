@@ -38,6 +38,11 @@ const {
   readJsonFile,
   sortedMapping,
 } = require('../piecemaker-plugin/scripts/lib/mapping.cjs');
+// À chaque enregistrement d'un mapping de dossier, le mapping central global est
+// reconstruit et dé-conflicté : c'est lui que le hook central applique à toute
+// lecture, dossier ou non. `syncCentralMapping` ne jette jamais — un central qui
+// échoue ne doit pas faire échouer la sauvegarde du dossier.
+const { syncCentralMapping } = require('../piecemaker-plugin/scripts/lib/central-mapping.cjs');
 
 const SCRIPTS_DIR = path.join(__dirname, 'scripts');
 const CONVERTER_SCRIPT = () => process.env.SMART_CONVERTER_PATH || path.join(SCRIPTS_DIR, 'smart_converter.py');
@@ -116,6 +121,8 @@ function writeCaseMapping(caseRoot, document) {
       fs.unlinkSync(full);
     }
   }
+  // Le mapping central reflète désormais ce dossier. Best-effort et jamais bloquant.
+  try { syncCentralMapping(); } catch { /* le central ne doit pas bloquer une sauvegarde */ }
   return { file, exists: true, ignored: payload.ignored || [], ...payload };
 }
 

@@ -51,7 +51,7 @@ const READABLE_EXTENSIONS = new Set(['.md', '.json']);
  * celles rangées sous `ignored` et les variantes d'`extracted_data` ressortiraient
  * telles quelles. Le seul traitement correct est le refus.
  */
-const FORBIDDEN_JSON_PATTERNS = [/^mapping.*\.json$/i, /_sensitive_map\.json$/i];
+const FORBIDDEN_JSON_PATTERNS = [/^mapping.*\.json$/i, /_sensitive_map\.json$/i, /^central-mapping\.json$/i];
 
 /** Vrai pour un mapping de dossier ou un scan PII, où qu'il soit rangé. */
 function isMappingFile(filePath) {

@@ -223,14 +223,20 @@ The protection boundary is a property of the **file**, not of its location.
   firm that files its pieces flat, next to the Markdown they were converted
   from — the common case — got no protection at all.
 
-Four hooks, wired in `piecemaker-plugin/hooks/hooks.json`:
+Two plugin hooks remain, wired in `piecemaker-plugin/hooks/hooks.json`:
 
 | Event | Matcher | Script |
 | --- | --- | --- |
 | `PreToolUse` | `Read\|Grep\|Glob\|Bash` | `protect-originals.mjs` — denies a protected piece, pointing at its `.md` |
-| `PostToolUse` | `Read\|Grep\|Glob\|Bash` | `anonymize-read.mjs` — `updatedToolOutput` with the mapping applied |
-| `PreToolUse` | `Write\|Edit\|mcp__telegram__reply\|mcp__telegram__edit_message` | `deanonymize-write.mjs` — `updatedInput` with the mapping reversed |
-| `PostToolUse` | `Write\|Edit` | `commit-track.mjs` — case commit, label reversed |
+| `PostToolUse` | `Write\|Edit` | `commit-track.mjs` — case commit, label reversed with the **central** reverse mapping |
+
+The two per-case *transform* hooks (`anonymize-read.mjs` on read,
+`deanonymize-write.mjs` on write) are **superseded** by the global central hook
+(see "Central mapping and the global hook" below) and are no longer wired,
+though the scripts remain in the repo. One coding scheme now applies everywhere —
+so there is never a double substitution, nor a case-local code reversed against
+the wrong person. `protect-originals.mjs` (deny) and `commit-track.mjs` are
+orthogonal to the transform and stay in the plugin.
 
 - **Files on disk are never rewritten.** Only the tool *result* handed to the
   model is coded, and only the tool *input* about to be executed is restored.
@@ -267,9 +273,59 @@ Four hooks, wired in `piecemaker-plugin/hooks/hooks.json`:
   passes clear text there. A `Read` of a case `.md` returning real names is the
   tell (see the auto-memory on stale plugin caches).
 - Every hook otherwise fails open: no config, an unrelated path, or (outside a
-  registered case) no mapping all end in exit 0 with empty stdout, and
-  `anonymize-read.mjs` stays silent when the substitution changes nothing so
-  `Read` keeps its native line numbering.
+  registered case) no mapping all end in exit 0 with empty stdout, and the
+  transform hook stays silent when the substitution changes nothing so `Read`
+  keeps its native line numbering.
+
+### Central mapping and the global hook
+
+The transform (anonymise on read, de-anonymise on write) is done **globally**,
+by a single hook that fires for *every* Claude session on the machine — a case
+folder or not — against one merged mapping. This is the "un hook central qui
+fonctionne toujours" requirement.
+
+- **`~/.piecemaker/central-mapping.json`** — a de-conflicted merge of every
+  registered case's `mapping_default.json`, built by
+  `piecemaker-plugin/scripts/lib/central-mapping.cjs`. Two cases each number
+  their codes independently (both have `PERSONNE_PHYSIQUE_01`); merged as-is, one
+  code would name two different people — ambiguous anonymisation and, worse,
+  de-anonymisation to the *wrong* person. `buildCentralDocument` keeps a local
+  code only while it is globally free, otherwise **renumbers** it within its
+  prefix. Assignments are **stable**, persisted per `(case, local code)`, so a
+  rebuild never renumbers what is already placed and adding a case never disturbs
+  the others. The forward map keys on the exact entity string, so two cases that
+  share a spelling for two different people collapse to one code (the only
+  coherent choice when applying to an arbitrary file); de-anonymisation stays
+  correct — each case's code still reverts to that same string. The file holds
+  real names: it is written `0600`, matched by `isMappingFile`
+  (`central-mapping.json` pattern), and registered on the global secrets
+  blocklist so the model can never read it.
+- **Kept in sync on every save.** `writeCaseMapping` (`originals-pipeline.cjs`,
+  the choke point of admin save / rebuild / pipeline) calls `syncCentralMapping`
+  after each write; the server also rebuilds it at startup. `syncCentralMapping`
+  never throws — a failing central must not fail a case save.
+- **The global hook** —
+  `websocket-server/global-hooks/piecemaker-central-anonymize.mjs`, installed to
+  `~/.claude/hooks/` and wired in `~/.claude/settings.json` by
+  `websocket-server/central-hook-install.cjs` (server startup + installer). It is
+  autonomous like `~/.claude/hooks/piecemaker-guard-secrets.mjs`: it requires only
+  `~/.piecemaker/lib/substitution.cjs` (a stable copy of the plugin's substitution
+  engine — the marketplace plugin path is not stable) and reads the central JSON.
+  `PostToolUse Read|Grep|Glob|Bash` → `updatedToolOutput` with the mapping
+  applied; `PreToolUse Write|Edit|telegram` → `updatedInput` with it reversed.
+  It fails open on any missing piece, respects `anonymization.enabled`, and never
+  touches a mapping file's own content.
+- **The substitution engine is one file, re-exported.**
+  `piecemaker-plugin/scripts/lib/substitution.cjs` (dependency-free) owns
+  `buildEntityRegex` / `applyMapping` / `revertMapping`; `mapping.cjs` and the
+  admin router import it. The global hook uses the copied twin — a single
+  implementation, per the "one substitution engine" rule.
+- Applying every case's entities to every file everywhere widens the
+  false-positive surface (a client name could coincide with an unrelated word in
+  source code) — mitigated by the word-boundary + `MIN_ENTITY_LENGTH` guards and
+  the global `anonymization.enabled` off switch. And, as the auto-memory on
+  bypassable hooks records, a hook transform is defence-in-depth, not an OS-level
+  guarantee.
 
 ## Originals pipeline (admin)
 

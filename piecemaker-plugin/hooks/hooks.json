@@ -9,27 +9,9 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/protect-originals.mjs\""
           }
         ]
-      },
-      {
-        "matcher": "Write|Edit|mcp__telegram__reply|mcp__telegram__edit_message",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/deanonymize-write.mjs\""
-          }
-        ]
       }
     ],
     "PostToolUse": [
-      {
-        "matcher": "Read|Grep|Glob|Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/anonymize-read.mjs\""
-          }
-        ]
-      },
       {
         "matcher": "Write|Edit",
         "hooks": [
