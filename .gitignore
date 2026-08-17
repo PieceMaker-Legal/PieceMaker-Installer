@@ -62,6 +62,7 @@ web-bundles/
 # Ajouts manuels
 .claude/commands/BMad
 .claude/settings.local.json
+.claude/agents/codebase-scan.md
 __pycache__/
 # output/ contient les mappings d'anonymisation : des données client réelles.
 # Rien n'y est versionné hormis les modèles de documents.
