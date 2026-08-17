@@ -7,6 +7,33 @@
  * écritures. C'est le même regroupement que l'éditeur historique du task pane.
  */
 
+// Sigles de sociétés — miroir navigateur de `websocket-server/legal-forms.cjs`
+// (lui-même miroir de `_LEGAL_FORMS` dans `scripts/scan_utils.py`). Ce module est
+// servi tel quel au navigateur : il ne peut pas `import` le `.cjs` côté serveur,
+// d'où la copie. Toute modification d'un sigle doit être répercutée aux trois
+// endroits. Sert à reconnaître les codes à sigle (SA_1, GMBH_2) comme des sociétés.
+const LEGAL_FORM_TOKENS = new Set([
+  'SELARL', 'SELAS', 'SELCA', 'SELCS', 'SASU', 'SARL', 'EURL', 'EARL',
+  'SCOP', 'SCIC', 'GAEC', 'SAS', 'SCI', 'SCA', 'SCS', 'SCP', 'SCM', 'SNC',
+  'GIE', 'SLP', 'SEL', 'SEM',
+  'EEIG', 'CIC', 'CIO', 'CLG', 'RTM', 'PLC', 'LTD',
+  'LLLP', 'PLLC', 'LLC', 'LLP', 'INC', 'CORP', 'LP', 'GP', 'PC', 'PA', 'CO',
+  'PARTG', 'GMBH', 'KGAA', 'OHG', 'GBR', 'KG', 'AG', 'UG', 'EG', 'EK',
+  'SE', 'SA', 'BV', 'NV', 'SPA', 'SRL', 'SL', 'LDA', 'AB', 'OY', 'APS', 'AS',
+  'PTYLTD', 'PVTLTD',
+]);
+
+/** Un code désigne-t-il une société ? (repli/legacy …MORALE…/SOCIETE_ ou sigle) */
+function isSocieteCode(code) {
+  const normalizedCode = String(code || '').replace(/\s+/g, '_').toUpperCase();
+  if (normalizedCode.includes('MORALE') || normalizedCode.includes('SOCIETE')) return true;
+  return normalizedCode
+    .replace(/_\d+$/, '')
+    .split('_')
+    .filter(Boolean)
+    .some((token) => LEGAL_FORM_TOKENS.has(token));
+}
+
 function clean(value) {
   return String(value || '').trim();
 }
@@ -144,7 +171,7 @@ function partyCategoryForCode(code) {
   if (value.startsWith('SIREN_')) return 'siren';
   if (value.startsWith('ADRESSE_') || value.startsWith('LIEU_NAISSANCE_')) return 'adresses';
   if (value.includes('PERSONNE_PHYSIQUE') || value.startsWith('DIRIGEANT_')) return 'personnes_physiques';
-  if (value.includes('PERSONNE_MORALE') || value.startsWith('SOCIETE_')) return 'societes';
+  if (isSocieteCode(value)) return 'societes';
   return 'autres';
 }
 

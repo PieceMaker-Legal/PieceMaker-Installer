@@ -41,6 +41,9 @@ if (!process.env.PYTHON_PATH && userConfig.pythonPath) process.env.PYTHON_PATH =
 
 // Import anonymization module
 const { createAnonymizationRoutes, anonymizationMappings } = require('../taskpane/modules/anonymization-server.cjs');
+// Sigle → préfixe de code société (SA_1, SARL_1…), vocabulaire partagé avec le
+// pipeline GLiNER (voir legal-forms.cjs / scan_utils.py).
+const { detectCompanySigle } = require('./legal-forms.cjs');
 
 // ─── Anonymisation de la voie MCP Word (read_doc / edit_doc) ───────────────
 // Les hooks Claude Code ne couvrent que Read/Grep/Glob/Bash et Write/Edit ; la
@@ -1908,9 +1911,13 @@ Réponds UNIQUEMENT en YAML.".`;
       reverse_mapping[code].push(personne);
     });
 
-    // Mapper les sociétés (personnes morales)
-    societes.forEach((societe, index) => {
-      const code = `PERSONNE_MORALE_${String(index + 1).padStart(2, '0')}`;
+    // Mapper les sociétés : sigle en préfixe (SA_1, SARL_1, GMBH_1…), un compteur
+    // par sigle, sinon PERS_MORALE_1. Même vocabulaire que le pipeline GLiNER.
+    const societeCounters = {};
+    societes.forEach((societe) => {
+      const key = detectCompanySigle(societe) || 'PERS_MORALE';
+      const n = (societeCounters[key] = (societeCounters[key] || 0) + 1);
+      const code = `${key}_${n}`;
       mapping[societe] = code;
       if (!reverse_mapping[code]) reverse_mapping[code] = [];
       reverse_mapping[code].push(societe);

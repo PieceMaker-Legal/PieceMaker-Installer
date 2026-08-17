@@ -144,18 +144,26 @@ test('les combos ne proposent que les variants principaux du bon type', () => {
     'Claire Reynaud': 'PERSONNE_PHYSIQUE_01',
     'Mme Reynaud': 'PERSONNE_PHYSIQUE_01',
     Alpha: 'PERSONNE_MORALE_01',
+    Beta: 'SA_1',
+    Gamma: 'GMBH_1',
     Paris: 'ADRESSE_01',
   };
   const reverse = {
     PERSONNE_PHYSIQUE_01: ['Claire Reynaud', 'Mme Reynaud'],
     PERSONNE_MORALE_01: ['Alpha'],
+    SA_1: ['Beta'],
+    GMBH_1: ['Gamma'],
     ADRESSE_01: ['Paris'],
   };
   assert.deepEqual(principalPartyOptions(mapping, reverse, 'personne_physique'), [
     { code: 'PERSONNE_PHYSIQUE_01', principal: 'Claire Reynaud' },
   ]);
+  // Les codes à sigle (SA_1, GMBH_1) sont proposés comme sociétés au même titre
+  // que le repli PERSONNE_MORALE_01.
   assert.deepEqual(principalPartyOptions(mapping, reverse, 'societe'), [
     { code: 'PERSONNE_MORALE_01', principal: 'Alpha' },
+    { code: 'SA_1', principal: 'Beta' },
+    { code: 'GMBH_1', principal: 'Gamma' },
   ]);
 });
 

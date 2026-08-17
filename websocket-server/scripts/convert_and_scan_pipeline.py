@@ -963,6 +963,49 @@ def parse_address(address_text: str) -> Dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Société codes : le sigle sert de préfixe (SA_1, SARL_1, SCI_1, GMBH_1, LLC_1…)
+# ---------------------------------------------------------------------------
+# Une organisation dont le nom (ou son contexte immédiat) porte une forme juridique
+# — détectée littéralement par scan_utils.extract_legal_form, qui a typé l'entité
+# ORGANIZATION_<sigle> — est codée <sigle>_<n>. Sans sigle, elle tombe sur
+# PERS_MORALE_<n>. Chaque sigle a son propre compteur (SA_1, SA_2, puis SARL_1…),
+# non paddé, conformément au choix du cabinet. Les personnes/adresses gardent leur
+# padding _01. Ce vocabulaire est reflété à l'identique côté administration
+# (`originals-pipeline.cjs`) : les deux chemins écrivent le même mapping.
+
+def _societe_form_key(entity_type: str) -> str:
+    """Clé de compteur / préfixe de code d'une organisation.
+
+    ORGANIZATION_SA → 'SA' (code SA_1) ; ORGANIZATION nu → 'PERS_MORALE'.
+    """
+    if entity_type.startswith("ORGANIZATION_"):
+        return entity_type.split("_", 1)[1] or "PERS_MORALE"
+    return "PERS_MORALE"
+
+
+def _societe_counter_key_of_code(code: str) -> str:
+    """Clé de compteur d'un code société déjà attribué (legacy compris).
+
+    SA_3 → 'SA' ; URGOT SA → 'SA' ; role-préfixé CLIENT_DEMANDEUR_SA_1 → 'SA' ;
+    PERS_MORALE_2 / PERSONNE_MORALE_01 → 'PERS_MORALE'. On lit le dernier segment
+    avant le numéro, sauf présence de MORALE (repli sans sigle).
+    """
+    body = re.sub(r"_\d+$", "", str(code)).upper()
+    tokens = [t for t in body.split("_") if t]
+    if "MORALE" in tokens:
+        return "PERS_MORALE"
+    return tokens[-1] if tokens else "PERS_MORALE"
+
+
+def _next_societe_code(entity_type: str, societe_counters: Dict[str, int]) -> str:
+    """Prochain code société pour *entity_type*, en incrémentant son compteur propre."""
+    key = _societe_form_key(entity_type)
+    n = societe_counters.get(key, 0) + 1
+    societe_counters[key] = n
+    return f"{key}_{n}"
+
+
 def convert_to_anonymization_format(consolidated_entities: Dict) -> Dict:
     """Convert consolidated entities to anonymization mapping format.
 
@@ -1015,6 +1058,9 @@ def convert_to_anonymization_format(consolidated_entities: Dict) -> Dict:
         "siren": 1,
         "autres": 1
     }
+    # Sociétés : un compteur par sigle (SA, SARL, GMBH…) et un pour PERS_MORALE,
+    # séparé de `counters["societes"]` qui n'est plus utilisé pour les coder.
+    societe_counters: Dict[str, int] = {}
 
     # Track seen entities to avoid duplicates across files
     seen_entities = {}  # text -> code
@@ -1044,20 +1090,19 @@ def convert_to_anonymization_format(consolidated_entities: Dict) -> Dict:
             # Generate code based on category
             if category == "personnes_physiques":
                 code = f"PERSONNE_PHYSIQUE_{counters[category]:02d}"
+                counters[category] += 1
             elif category == "societes":
-                if entity_type.startswith("ORGANIZATION_"):
-                    form = entity_type.split("_", 1)[1]   # e.g. SA, GMBH, LLC
-                    code = f"SOCIETE_{form}_{counters[category]:02d}"
-                else:
-                    code = f"PERSONNE_MORALE_{counters[category]:02d}"
+                # Sigle en préfixe (SA_1, SARL_1…) ou PERS_MORALE_1, compteur par sigle.
+                code = _next_societe_code(entity_type, societe_counters)
             elif category == "adresses":
                 code = f"ADRESSE_{counters[category]:02d}"
+                counters[category] += 1
             elif category == "siren":
                 code = f"SIREN_{counters[category]:02d}"
+                counters[category] += 1
             else:
                 code = f"{entity_type}_{counters[category]:02d}"
-
-            counters[category] += 1
+                counters[category] += 1
 
             # Get variants from entity (pre-consolidated for PERSON entities)
             variants = entity.get("variants", [text])
@@ -1149,28 +1194,33 @@ def merge_with_existing_mapping(new_mapping: Dict, existing_mapping: Optional[Di
     # Find highest existing code numbers per category
     code_counters = {
         "personnes_physiques": 1,
-        "societes": 1,
         "adresses": 1,
         "siren": 1,
         "autres": 1
     }
+    # Sociétés : un compteur par sigle (SA, SARL, GMBH…) + PERS_MORALE, amorcé
+    # depuis les codes déjà présents. Le bucket `societes` d'extracted_data donne
+    # les codes société quelle que soit leur forme (bare SA_3 comme legacy
+    # URGOT SA), là où un test par sous-chaîne ne reconnaîtrait pas SA_3.
+    societe_counters: Dict[str, int] = {}
 
     for code in merged_reverse.keys():
         if "PERSONNE_PHYSIQUE_" in code or code.startswith("DIRIGEANT_"):
             num = int(code.split("_")[-1])
             code_counters["personnes_physiques"] = max(code_counters["personnes_physiques"], num + 1)
-        elif code.startswith("SOCIETE_"):
-            num = int(code.split("_")[-1])
-            code_counters["societes"] = max(code_counters["societes"], num + 1)
-        elif "PERSONNE_MORALE_" in code:
-            num = int(code.split("_")[-1])
-            code_counters["societes"] = max(code_counters["societes"], num + 1)
         elif code.startswith("ADRESSE_"):
             num = int(code.split("_")[-1])
             code_counters["adresses"] = max(code_counters["adresses"], num + 1)
         elif code.startswith("SIREN_"):
             num = int(code.split("_")[-1])
             code_counters["siren"] = max(code_counters["siren"], num + 1)
+
+    for code in merged_extracted.get("societes", {}).keys():
+        match = re.search(r"_(\d+)$", code)
+        if not match:
+            continue
+        key = _societe_counter_key_of_code(code)
+        societe_counters[key] = max(societe_counters.get(key, 0), int(match.group(1)) + 1)
 
     # Merge new entries
     for text, code in new_mapping.get('mapping', {}).items():
@@ -1197,24 +1247,25 @@ def merge_with_existing_mapping(new_mapping: Dict, existing_mapping: Optional[Di
         # Generate new code with incremented counter
         if category == "personnes_physiques":
             new_code = f"PERSONNE_PHYSIQUE_{code_counters[category]:02d}"
+            code_counters[category] += 1
         elif category == "societes":
-            # Preserve legal form suffix from original code (e.g. SOCIETE_SA_01 → SOCIETE_SA_02)
-            parts = code.split("_")
-            if len(parts) == 3 and parts[0] == "SOCIETE":
-                form = parts[1]  # e.g. SA, GMBH, LLC
-                new_code = f"SOCIETE_{form}_{code_counters[category]:02d}"
-            else:
-                new_code = f"PERSONNE_MORALE_{code_counters[category]:02d}"
+            # Le sigle du code d'origine est préservé : SA_3 → SA_<n>, legacy
+            # URGOT SA → SA_<n>, sinon PERS_MORALE_<n>. Compteur par sigle.
+            key = _societe_counter_key_of_code(code)
+            n = societe_counters.get(key, 0) + 1
+            societe_counters[key] = n
+            new_code = f"{key}_{n}"
         elif category == "adresses":
             new_code = f"ADRESSE_{code_counters[category]:02d}"
+            code_counters[category] += 1
         elif category == "siren":
             new_code = f"SIREN_{code_counters[category]:02d}"
+            code_counters[category] += 1
         else:
             # Extract entity type from new code
             entity_type = code.split("_")[0] if "_" in code else "AUTRE"
             new_code = f"{entity_type}_{code_counters[category]:02d}"
-
-        code_counters[category] += 1
+            code_counters[category] += 1
 
         # Get variants from existing entry
         old_entry = new_mapping.get('extracted_data', {}).get(category, {}).get(code, {})

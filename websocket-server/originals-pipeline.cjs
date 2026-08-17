@@ -38,6 +38,9 @@ const {
   readJsonFile,
   sortedMapping,
 } = require('../piecemaker-plugin/scripts/lib/mapping.cjs');
+// Vocabulaire des sigles de sociétés (SA_1, SARL_1, PERS_MORALE_1…), miroir de
+// `_LEGAL_FORMS` (scan_utils.py) — sert à classer un code déjà attribué.
+const { isSocieteCode, societeCounterKey } = require('./legal-forms.cjs');
 
 const SCRIPTS_DIR = path.join(__dirname, 'scripts');
 const CONVERTER_SCRIPT = () => process.env.SMART_CONVERTER_PATH || path.join(SCRIPTS_DIR, 'smart_converter.py');
@@ -176,19 +179,27 @@ function codeCategory(code) {
   if (code.startsWith('SIREN_')) return 'siren';
   if (code.startsWith('ADRESSE_') || code.startsWith('LIEU_NAISSANCE_')) return 'adresses';
   if (code.includes('PERSONNE_PHYSIQUE_') || code.startsWith('DIRIGEANT_')) return 'personnes_physiques';
-  if (code.startsWith('SOCIETE_') || code.includes('PERSONNE_MORALE_')) return 'societes';
+  // Sociétés : repli/legacy (…MORALE…, SOCIETE_…) et codes à sigle (SA_1, GMBH_2).
+  // Testé après les familles distinctives, qui ne portent aucun sigle.
+  if (isSocieteCode(code)) return 'societes';
   return 'autres';
 }
 
+/** Clé de compteur société (le sigle) déduite du type d'entité scanné. */
+function societeCodeKey(entityType) {
+  const type = String(entityType || '').toUpperCase();
+  return type.startsWith('ORGANIZATION_')
+    ? (codePrefix(type.slice('ORGANIZATION_'.length)) || 'PERS_MORALE')
+    : 'PERS_MORALE';
+}
+
 function entityCode(entityType, category, index) {
-  const number = String(index).padStart(2, '0');
   const type = String(entityType || 'AUTRE').toUpperCase();
+  // Sociétés : sigle en préfixe, sans zéro (SA_1, SARL_1, PERS_MORALE_1), compteur
+  // par sigle. Les autres familles gardent leur padding _01.
+  if (category === 'societes') return `${societeCodeKey(entityType)}_${index}`;
+  const number = String(index).padStart(2, '0');
   if (category === 'personnes_physiques') return `PERSONNE_PHYSIQUE_${number}`;
-  if (category === 'societes') {
-    return type.startsWith('ORGANIZATION_')
-      ? `SOCIETE_${codePrefix(type.slice('ORGANIZATION_'.length))}_${number}`
-      : `PERSONNE_MORALE_${number}`;
-  }
   if (category === 'adresses') return `ADRESSE_${number}`;
   return `${codePrefix(type)}_${number}`;
 }
@@ -253,12 +264,16 @@ async function rebuildCaseMapping(caseRoot) {
     Object.entries(current.extracted_data).map(([category, codes]) => [category, { ...codes }])
   );
 
+  // Compteurs amorcés sur les codes déjà attribués. Les sociétés comptent par
+  // sigle : la clé `societes:<sigle>` (SA, SARL, PERS_MORALE…) sépare les suites,
+  // pour que la 1re SA soit SA_1 et la 1re SARL SARL_1 indépendamment.
   const counters = new Map();
   for (const code of new Set(Object.values(mapping))) {
     const match = /_(\d+)$/.exec(code);
     if (!match) continue;
     const category = codeCategory(code);
-    counters.set(category, Math.max(counters.get(category) || 0, Number(match[1])));
+    const key = category === 'societes' ? `societes:${societeCounterKey(code)}` : category;
+    counters.set(key, Math.max(counters.get(key) || 0, Number(match[1])));
   }
 
   // Index des noms déjà codés : une variante détectée plus tard rejoint son
@@ -289,8 +304,9 @@ async function rebuildCaseMapping(caseRoot) {
         }
         const isNewCode = !code;
         if (!code) {
-          const index = (counters.get(category) || 0) + 1;
-          counters.set(category, index);
+          const key = category === 'societes' ? `societes:${societeCodeKey(entityType)}` : category;
+          const index = (counters.get(key) || 0) + 1;
+          counters.set(key, index);
           code = entityCode(entityType, category, index);
         }
 

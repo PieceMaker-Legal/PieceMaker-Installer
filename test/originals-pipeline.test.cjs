@@ -153,7 +153,7 @@ test('le mapping est reconstruit depuis les scans PII sans réutiliser un code',
   assert.equal(rebuilt.added, 3);
   assert.equal(rebuilt.mapping['Jean Dupont'], 'PERSONNE_PHYSIQUE_01');
   assert.equal(rebuilt.mapping['Marie Martin'], 'PERSONNE_PHYSIQUE_02');
-  assert.equal(rebuilt.mapping['Société Alpha'], 'PERSONNE_MORALE_01');
+  assert.equal(rebuilt.mapping['Société Alpha'], 'PERS_MORALE_1');
   assert.deepEqual(rebuilt.reverse_mapping.PERSONNE_PHYSIQUE_01, ['Jean Dupont']);
   assert.equal(new Set(Object.values(rebuilt.mapping)).size, 3);
 
@@ -161,6 +161,35 @@ test('le mapping est reconstruit depuis les scans PII sans réutiliser un code',
   assert.deepEqual(Object.keys(onDisk.mapping), ['Société Alpha', 'Marie Martin', 'Jean Dupont']);
   assert.equal(fs.existsSync(path.join(data.caseRoot, 'contrat_sensitive_map.json')), false);
   assert.equal((await listOriginals(data.caseRoot)).find((file) => file.name === 'contrat.pdf').scanned, true);
+});
+
+test('une société à sigle est codée avec le sigle en préfixe, un compteur par sigle', async (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  writeScan(data.caseRoot, 'contrat', {
+    ORGANIZATION_SA: [{ text: 'Alpha', score: 0.9 }, { text: 'Delta', score: 0.9 }],
+    ORGANIZATION_SARL: [{ text: 'Beta', score: 0.9 }],
+    ORGANIZATION_GMBH: [{ text: 'Gamma', score: 0.9 }],
+    ORGANIZATION: [{ text: 'Groupe Sans Forme', score: 0.9 }],
+  });
+
+  const rebuilt = await rebuildCaseMapping(data.caseRoot);
+  // Chaque sigle repart de 1 (SA_1, SA_2, SARL_1…) ; sans sigle → PERS_MORALE_1.
+  assert.equal(rebuilt.mapping.Alpha, 'SA_1');
+  assert.equal(rebuilt.mapping.Delta, 'SA_2');
+  assert.equal(rebuilt.mapping.Beta, 'SARL_1');
+  assert.equal(rebuilt.mapping.Gamma, 'GMBH_1');
+  assert.equal(rebuilt.mapping['Groupe Sans Forme'], 'PERS_MORALE_1');
+
+  // Un second scan poursuit chaque suite sans réutiliser un code.
+  writeScan(data.caseRoot, 'annexe', {
+    ORGANIZATION_SA: [{ text: 'Epsilon', score: 0.9 }],
+    ORGANIZATION: [{ text: 'Autre Groupe', score: 0.9 }],
+  });
+  const again = await rebuildCaseMapping(data.caseRoot);
+  assert.equal(again.mapping.Epsilon, 'SA_3');
+  assert.equal(again.mapping['Autre Groupe'], 'PERS_MORALE_2');
+  assert.equal(again.mapping.Alpha, 'SA_1');
 });
 
 test('un second scan complète le mapping sans renuméroter les codes déjà attribués', async (t) => {

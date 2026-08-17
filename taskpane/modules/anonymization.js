@@ -11,6 +11,33 @@
  * The anonymizeText() function MUST work exactly as before.
  */
 
+// Sigles de sociétés — miroir navigateur de `websocket-server/legal-forms.cjs`
+// (lui-même miroir de `_LEGAL_FORMS` dans `scripts/scan_utils.py`). Ce module est
+// servi au navigateur et ne peut pas require le `.cjs` : d'où la copie. Depuis le
+// choix du cabinet, une société à sigle est codée avec ce sigle en préfixe
+// (SA_1, SARL_1, GMBH_1…), sinon PERS_MORALE_1 — à reconnaître pour les classer.
+const LEGAL_FORM_TOKENS = new Set([
+    'SELARL', 'SELAS', 'SELCA', 'SELCS', 'SASU', 'SARL', 'EURL', 'EARL',
+    'SCOP', 'SCIC', 'GAEC', 'SAS', 'SCI', 'SCA', 'SCS', 'SCP', 'SCM', 'SNC',
+    'GIE', 'SLP', 'SEL', 'SEM',
+    'EEIG', 'CIC', 'CIO', 'CLG', 'RTM', 'PLC', 'LTD',
+    'LLLP', 'PLLC', 'LLC', 'LLP', 'INC', 'CORP', 'LP', 'GP', 'PC', 'PA', 'CO',
+    'PARTG', 'GMBH', 'KGAA', 'OHG', 'GBR', 'KG', 'AG', 'UG', 'EG', 'EK',
+    'SE', 'SA', 'BV', 'NV', 'SPA', 'SRL', 'SL', 'LDA', 'AB', 'OY', 'APS', 'AS',
+    'PTYLTD', 'PVTLTD',
+]);
+
+/** Un code désigne-t-il une société ? (repli/legacy …MORALE…/SOCIETE_ ou sigle) */
+function isSocieteCode(code) {
+    const normalizedCode = String(code || '').replace(/\s+/g, '_').toUpperCase();
+    if (normalizedCode.includes('MORALE') || normalizedCode.includes('SOCIETE')) return true;
+    return normalizedCode
+        .replace(/_\d+$/, '')
+        .split('_')
+        .filter(Boolean)
+        .some((token) => LEGAL_FORM_TOKENS.has(token));
+}
+
 // ============================================
 // STATE
 // ============================================
@@ -279,20 +306,14 @@ function convertFlatToHierarchical(flatMapping, flatReverse) {
     for (const [code, variants] of Object.entries(codeToVariants)) {
         let category;
         if (code.startsWith('SIREN_')) category = 'siren';
-        else if (code.startsWith('ADRESSE_')) category = 'adresses';
-        else if (code.startsWith('PERSONNE_MORALE_')) category = 'societes';
-        else if (code.startsWith('PERSONNE_')) category = 'personnes_physiques';
-        else if (code.startsWith('SOCIETE_')) category = 'societes';
-        // Support dossier codes (CLIENT, ADVERSAIRE, DIRIGEANT)
-        else if (code.startsWith('CLIENT_') && (code.includes('SOCIÉTÉ') || code.includes('SA') || code.includes('SARL'))) category = 'societes';
-        else if (code.startsWith('CLIENT_') && code.includes('PERS_PHYSIQUE')) category = 'personnes_physiques';
-        else if (code.startsWith('ADVERSAIRE_') && (code.includes('SOCIÉTÉ') || code.includes('SA') || code.includes('SARL'))) category = 'societes';
-        else if (code.startsWith('ADVERSAIRE_') && code.includes('PERS_PHYSIQUE')) category = 'personnes_physiques';
-        else if (code.startsWith('DIRIGEANT_CLIENT_') || code.startsWith('DIRIGEANT_ADVERSAIRE_')) category = 'personnes_physiques';
+        else if (code.startsWith('ADRESSE_') || code.includes('LIEU_NAISSANCE')) category = 'adresses';
+        else if (code.includes('PERSONNE_PHYSIQUE') || code.includes('PERS_PHYSIQUE') || code.startsWith('DIRIGEANT_')) category = 'personnes_physiques';
+        // Sociétés : repli/legacy (…MORALE…, SOCIETE_…) et codes à sigle (SA_1, GMBH_2),
+        // y compris préfixés d'un rôle de dossier (CLIENT_DEMANDEUR_SA_1).
+        else if (isSocieteCode(code)) category = 'societes';
         // Support short OLLAMA codes (P01, S01, etc.)
         else if (code.match(/^P\d+$/)) category = 'personnes_physiques';
         else if (code.match(/^S\d+$/)) category = 'societes';
-        else if (code.match(/^SA_\d+$/)) category = 'societes';
         else continue;
 
         // Choose main variant from reverse_mapping

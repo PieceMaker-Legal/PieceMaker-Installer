@@ -42,8 +42,12 @@ _EN_STOPWORDS = frozenset([
 ])
 
 _CORPORATE_SUFFIXES_RE = re.compile(
-    r'\b(?:SA|SAS|SARL|SCI|SASU|EURL|SE|SCR|SCA|SNC'
-    r'|Ltd|Inc|Corp|GmbH|AG|NV|BV|PLC|LLC|LLP)\b',
+    r'\b(?:SELARL|SELAS|SELCA|SELCS|SASU|SARL|EURL|EARL|SCOP|SCIC|GAEC'
+    r'|SAS|SCI|SCA|SCS|SCP|SCM|SNC|SCR|GIE|SLP|SEL|SEM|SA|SE'
+    r'|EEIG|CIC|CIO|CLG|RTM|Ltd|Limited|PLC'
+    r'|LLLP|PLLC|LLC|LLP|Inc|Corp|LP|GP|PC'
+    r'|gGmbH|GmbH|KGaA|PartG|OHG|GbR|KG|AG|UG'
+    r'|NV|BV|SpA|Srl|Lda|ApS)\b',
     re.IGNORECASE,
 )
 
@@ -148,33 +152,77 @@ def resolve_overlapping_spans(results: List[RecognizerResult]) -> List[Recognize
 # higher on French filings ("URGOT SA", "CAITLYN SA") than on an English URD.
 
 # (canonical token, regex alternatives, nationality) — longest/most specific first,
-# so SASU wins over SAS, and SARL over SA.
+# so SASU wins over SAS, SARL over SA, SELARL over SARL, SCIC over SCI, LLLP over
+# LLP over LP. `_LEGAL_FORM_RE` is a single ordered alternation of named groups and
+# Python's `re` is leftmost/first-alternative (not longest-match): the token that
+# codes an organisation (`ORGANIZATION_<token>` → code `<token>_1`) is the first
+# entry in this list whose pattern matches at the earliest position, so a more
+# specific sigle must appear before the shorter one it contains.
+#
+# Coverage requested: French forms (commercial, civil, libéral, coopératif,
+# agricole), plus the foreign forms a French firm meets in its files — British,
+# American and German especially. The regex is case-sensitive (no re.IGNORECASE),
+# which is deliberate: it keeps two-letter sigles (SA, SE, AG, KG, PA, CO…) from
+# matching lowercase words, since a legal form is written in its canonical case.
 _LEGAL_FORMS = [
-    ("SASU",  r"S\.?A\.?S\.?U\.?",                          "French"),
-    ("SARL",  r"S\.?A\.?R\.?L\.?",                           "French"),
-    ("EURL",  r"E\.?U\.?R\.?L\.?",                           "French"),
-    ("SAS",   r"S\.?A\.?S\.?",                               "French"),
-    ("SCI",   r"S\.?C\.?I\.?",                               "French"),
-    ("SNC",   r"S\.?N\.?C\.?",                               "French"),
-    ("SCA",   r"S\.?C\.?A\.?",                               "French"),
-    ("GIE",   r"G\.?I\.?E\.?",                               "French"),
-    ("SLP",   r"S\.?L\.?P\.?",                               "French"),
-    ("SCS",   r"S\.?C\.?S\.?",                               "French"),
-    ("SCM",   r"S\.?C\.?M\.?",                               "French"),
-    ("SE",    r"SE|Societas\s+Europaea",                      "Other"),
-    ("SA",    r"S\.?A\.?|Société\s+Anonyme",                 "French"),
-    ("GMBH",  r"gGmbH|GmbH|Gesellschaft\s+mit\s+beschränkter\s+Haftung", "German"),
-    ("KGAA",  r"KGaA",                                        "German"),
-    ("AG",    r"AG|Aktiengesellschaft",                       "German"),
-    ("OHG",   r"OHG",                                         "German"),
-    ("KG",    r"KG",                                          "German"),
+    # ── France — exercice libéral (before SARL / SAS / SEL) ──
+    ("SELARL", r"S\.?E\.?L\.?A\.?R\.?L\.?",                   "French"),
+    ("SELAS",  r"S\.?E\.?L\.?A\.?S\.?",                       "French"),
+    ("SELCA",  r"S\.?E\.?L\.?C\.?A\.?",                       "French"),
+    ("SELCS",  r"S\.?E\.?L\.?C\.?S\.?",                       "French"),
+    # ── France — commercial / civil / coopératif / agricole ──
+    ("SASU",  r"S\.?A\.?S\.?U\.?",                            "French"),
+    ("SARL",  r"S\.?A\.?R\.?L\.?",                            "French"),
+    ("EURL",  r"E\.?U\.?R\.?L\.?",                            "French"),
+    ("EARL",  r"E\.?A\.?R\.?L\.?",                            "French"),
+    ("SCOP",  r"S\.?C\.?O\.?P\.?",                            "French"),
+    ("SCIC",  r"S\.?C\.?I\.?C\.?",                            "French"),
+    ("GAEC",  r"G\.?A\.?E\.?C\.?",                            "French"),
+    ("SAS",   r"S\.?A\.?S\.?",                                "French"),
+    ("SCI",   r"S\.?C\.?I\.?",                                "French"),  # société civile immobilière
+    ("SCA",   r"S\.?C\.?A\.?",                                "French"),
+    ("SCS",   r"S\.?C\.?S\.?",                                "French"),
+    ("SCP",   r"S\.?C\.?P\.?",                                "French"),
+    ("SCM",   r"S\.?C\.?M\.?",                                "French"),
+    ("SNC",   r"S\.?N\.?C\.?",                                "French"),
+    ("GIE",   r"G\.?I\.?E\.?",                                "French"),
+    ("SLP",   r"S\.?L\.?P\.?",                                "French"),
+    ("SEL",   r"S\.?E\.?L\.?",                                "French"),
+    ("SEM",   r"S\.?E\.?M\.?",                                "French"),
+    # ── Royaume-Uni ──
+    ("EEIG",  r"E\.?E\.?I\.?G\.?",                            "British"),
+    ("CIC",   r"C\.?I\.?C\.?",                                "British"),
+    ("CIO",   r"C\.?I\.?O\.?",                                "British"),
+    ("CLG",   r"C\.?L\.?G\.?",                                "British"),
+    ("RTM",   r"R\.?T\.?M\.?",                                "British"),
     ("PLC",   r"P\.?L\.?C\.?|Public\s+Limited\s+Company",     "British"),
-    ("LLP",   r"L\.?L\.?P\.?",                                "British"),
     ("LTD",   r"Ltd\.?|Limited",                              "British"),
+    # ── États-Unis (LLLP > LLP > LP ; PLLC > PLC/LLC) ──
+    ("LLLP",  r"L\.?L\.?L\.?P\.?",                            "American"),
+    ("PLLC",  r"P\.?L\.?L\.?C\.?",                            "American"),
     ("LLC",   r"L\.?L\.?C\.?|Limited\s+Liability\s+Company",  "American"),
+    ("LLP",   r"L\.?L\.?P\.?",                                "American"),
     ("INC",   r"Inc\.?|Incorporated",                         "American"),
     ("CORP",  r"Corp\.?|Corporation",                         "American"),
     ("LP",    r"L\.?P\.?",                                    "American"),
+    ("GP",    r"G\.?P\.?",                                    "American"),
+    ("PC",    r"P\.?C\.?",                                    "American"),
+    ("PA",    r"P\.?A\.?",                                    "American"),
+    ("CO",    r"Co\.?|Company",                               "American"),
+    # ── Allemagne (gGmbH before GmbH ; KGaA before KG) ──
+    ("PARTG", r"PartG\s?mbB|PartGmbB|PartG",                  "German"),
+    ("GMBH",  r"gGmbH|GmbH|Gesellschaft\s+mit\s+beschränkter\s+Haftung", "German"),
+    ("KGAA",  r"KGaA",                                        "German"),
+    ("OHG",   r"OHG",                                         "German"),
+    ("GBR",   r"GbR",                                         "German"),
+    ("KG",    r"KG",                                          "German"),
+    ("AG",    r"AG|Aktiengesellschaft",                       "German"),
+    ("UG",    r"UG\s*\(haftungsbeschränkt\)|UG",              "German"),
+    ("EG",    r"eG",                                          "German"),
+    ("EK",    r"e\.?K\.?",                                    "German"),
+    # ── Autres formes européennes / internationales ──
+    ("SE",    r"SE|Societas\s+Europaea",                      "Other"),
+    ("SA",    r"S\.?A\.?|Société\s+Anonyme",                 "French"),
     ("BV",    r"B\.?V\.?",                                    "Dutch"),
     ("NV",    r"N\.?V\.?",                                    "Dutch"),
     ("SPA",   r"S\.?p\.?A\.?",                                "Italian"),

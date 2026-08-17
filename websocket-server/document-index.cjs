@@ -18,6 +18,7 @@ const path = require('node:path');
 const { stateKey } = require('../piecemaker-plugin/scripts/lib/anonymization-state.cjs');
 const { originalFilesOverview } = require('../piecemaker-plugin/scripts/lib/commits.cjs');
 const { readCaseMapping } = require('../piecemaker-plugin/scripts/lib/mapping.cjs');
+const { isSocieteCode } = require('./legal-forms.cjs');
 
 const DOCUMENT_INDEX_RELATIVE_PATH = '.piecemaker/document-index.json';
 
@@ -61,9 +62,10 @@ function categoryForCode(code) {
   // former le séparateur ("SOCIETE SA_02"). Blancs normalisés, casse ignorée.
   const c = String(code).replace(/\s+/g, '_').toUpperCase();
   if (c.includes('PERSONNE_PHYSIQUE') || c.includes('DIRIGEANT')) return 'personne';
-  if (c.includes('PERSONNE_MORALE') || c.includes('SOCIETE')) return 'societe';
   if (c.includes('ADRESSE')) return 'adresse';
   if (c.includes('SIREN')) return 'siren';
+  // Sociétés : repli/legacy (…MORALE…, SOCIETE_…) et codes à sigle (SA_1, GMBH_2).
+  if (isSocieteCode(c)) return 'societe';
   return 'autre';
 }
 
