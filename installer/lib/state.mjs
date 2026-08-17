@@ -35,6 +35,11 @@ export function loadConfig() {
     port: 43098,
     pythonPath: null,
     venvPath: path.join(HOME_DIR, 'venv'),
+    // Confinement OS optionnel (microsoft/mxc). mxcPath pointe le binaire mxc-exec
+    // une fois construit par l'étape 14 ; mxcEnabled permet de désactiver le
+    // confinement sans supprimer le binaire.
+    mxcPath: null,
+    mxcEnabled: true,
   };
   return { ...defaults, ...readJson(CONFIG_FILE, {}) };
 }

@@ -202,6 +202,16 @@ execution contract, why the substitution has no size ceiling, how to prove the
 chain works on a real case, and why a hook edit needs a `claude plugin update`
 before it affects anything. What follows is the summary.
 
+These hooks parse raw command text, so they are **bypassable** as an enforcement
+boundary (`$VAR`, `python -c "open(...)"`, `find -exec cat {}`, `cd`+relative —
+the `hook-protection-contournable` finding). `docs/mxc-sandbox.md` describes the
+OS-level second layer that closes that gap: the task-pane Claude Code PTY is
+launched through `microsoft/mxc` (`websocket-server/mxc-sandbox.cjs`, installed
+best-effort by `installer/steps/14-mxc-sandbox.mjs`), which denies the venv, the
+case mapping and the central mapping at the **syscall** level on macOS/Linux
+(Windows is allowlist-only — `mapping_default.json` stays hook-only there). It is
+defence-in-depth, not a replacement: the hooks are never removed.
+
 The protection boundary is a property of the **file**, not of its location.
 `piecemaker-plugin/scripts/lib/protection.cjs` owns it:
 

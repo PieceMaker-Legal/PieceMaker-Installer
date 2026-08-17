@@ -3347,6 +3347,12 @@ try {
   pty = null;
 }
 
+// Confinement OS optionnel (microsoft/mxc) : la session Claude Code du volet
+// tourne sous Seatbelt/ProcessContainer pour bloquer au niveau syscall le venv
+// et les mappings d'anonymisation, en défense en profondeur des hooks
+// (contournables). Voir websocket-server/mxc-sandbox.cjs et docs/mxc-sandbox.md.
+const mxcSandbox = require('./mxc-sandbox.cjs');
+
 // Stockage des terminaux PTY actifs (par WebSocket client)
 const ptyTerminals = new Map();
 
@@ -3369,17 +3375,44 @@ function createPtyTerminal(ws, cols = 80, rows = 24, documentId = null) {
       cwd = getOutputPath(documentId);
     }
 
-    const ptyProcess = pty.spawn(userInfo.shell, [], {
+    const ptyEnv = {
+      ...process.env,
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor'
+    };
+
+    // Router le shell à travers mxc quand le confinement OS est disponible : le
+    // venv et les mappings sont alors refusés au niveau syscall, quel que soit
+    // le phrasé de la commande de l'agent. Repli silencieux sur le shell nu si
+    // mxc est absent ou si la génération de la politique échoue.
+    let sandbox = null;
+    if (mxcSandbox.isMxcAvailable()) {
+      try {
+        sandbox = mxcSandbox.buildSandboxConfig({
+          shell: userInfo.shell,
+          cwd,
+          documentId,
+          env: ptyEnv,
+          resolveCaseRoot: getOutputPath,
+        });
+      } catch (error) {
+        console.warn('⚠️ [PTY] Politique mxc non générée, session non confinée:', error.message);
+        sandbox = null;
+      }
+    }
+
+    const spawnFile = sandbox ? sandbox.mxcPath : userInfo.shell;
+    const spawnArgs = sandbox ? sandbox.args : [];
+    const ptyProcess = pty.spawn(spawnFile, spawnArgs, {
       name: 'xterm-256color',
       cols: cols,
       rows: rows,
       cwd,
-      env: {
-        ...process.env,
-        TERM: 'xterm-256color',
-        COLORTERM: 'truecolor'
-      }
+      env: ptyEnv
     });
+    console.log(sandbox
+      ? `🔒 [PTY] Session confinée via mxc (${mxcSandbox.containmentBackend()})`
+      : '🔓 [PTY] Session non confinée (mxc indisponible — protection par hooks uniquement)');
     ws.send(JSON.stringify({ 
       type: 'pty-config', 
       fontSize: 10  // Taille en pixels (par défaut 15)
@@ -3399,6 +3432,7 @@ function createPtyTerminal(ws, cols = 80, rows = 24, documentId = null) {
       if (ws.readyState === 1) {
         ws.send(JSON.stringify({ type: 'pty-exit', exitCode, signal }));
       }
+      if (sandbox) sandbox.cleanup();
       ptyTerminals.delete(ws);
     });
 
