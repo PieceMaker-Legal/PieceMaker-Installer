@@ -63,6 +63,10 @@ web-bundles/
 .claude/commands/BMad
 .claude/settings.local.json
 .claude/agents/codebase-scan.md
+# Repères d'architecture pour développer la code base (chargé par Claude Code
+# dans le clone de développement, jamais livré au clone d'exécution / à
+# l'utilisateur). Le CLAUDE.md versionné est, lui, orienté utilisateur.
+CLAUDE.local.md
 __pycache__/
 # output/ contient les mappings d'anonymisation : des données client réelles.
 # Rien n'y est versionné hormis les modèles de documents.

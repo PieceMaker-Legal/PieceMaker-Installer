@@ -115,6 +115,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); outline:
 .asset-badge.ok { background: var(--accent); color: var(--brand-dark); }
 .asset-badge.warn { background: #fff0cc; color: var(--warn); }
 .agent-fields { display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 10px; background: #f8faf9; padding: 12px; }
+.agent-fields[hidden] { display: none; }
 .hint { margin: 0; color: var(--muted); font-size: .74rem; }
 
 .term-add { display: flex; gap: 8px; align-items: stretch; margin: 4px 0 12px; }
@@ -133,6 +134,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); outline:
 .metadata-editor .wide { grid-column: 1 / -1; }
 .metadata-editor label { font-size: .75rem; }
 .metadata-editor input { min-height: 36px; background: white; }
+.metadata-editor textarea { background: white; resize: vertical; min-height: 88px; padding: 9px 11px; line-height: 1.4; }
 .editor-toolbar { display: flex; flex-wrap: wrap; gap: 5px; border: 1px solid var(--line); border-bottom: 0; border-radius: 10px 10px 0 0; background: #f3f6f4; padding: 7px; }
 .editor-toolbar button, .editor-toolbar select { width: auto; min-height: 34px; border: 1px solid transparent; border-radius: 6px; background: transparent; padding: 5px 9px; color: var(--ink); cursor: pointer; }
 .editor-toolbar button:hover { border-color: #cbd6d4; background: white; }
