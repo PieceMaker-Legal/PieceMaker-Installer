@@ -46,7 +46,7 @@ const {
   readProtection,
   writeProtection,
 } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
-const { buildChronology } = require('./document-index.cjs');
+const { buildChronology, writeDocumentIndexOverride } = require('./document-index.cjs');
 const {
   buildGraphifyDocumentGraph,
   graphifyErrorGraph,
@@ -2223,6 +2223,34 @@ function createAdminRouter({
         graphEdges: chronology.graph.edges.length,
       });
       res.json(chronology);
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Correction manuelle des métadonnées d'une pièce dans la chronologie —
+  // nature (type), date, lieu (juridiction) et champs libres ajoutés/retirés par
+  // le cabinet. Stocké dans un fichier d'override séparé que le pipeline ne
+  // réécrit jamais : un re-scan ne peut donc pas écraser la correction.
+  // `path` désigne la pièce ORIGINALE (comme le reste de la chronologie) et sert
+  // seulement à calculer la clé de hachage — il n'est jamais lu. Envoyer une
+  // correction entièrement vide efface l'entrée (retour aux valeurs détectées).
+  router.put('/repository/document-meta', (req, res) => {
+    try {
+      const legalCase = selectedCase(req.body?.case);
+      const relativePath = String(req.body?.path || '').trim();
+      if (!relativePath) throw new Error('Chemin de pièce manquant.');
+      // Validation d'appartenance au dossier (même règle que le reste) ; on ne
+      // lit pas la pièce, on refuse seulement un chemin hors racine.
+      resolveCasePath(legalCase.root, relativePath);
+      const body = req.body || {};
+      const override = writeDocumentIndexOverride(legalCase.root, relativePath, {
+        nature: body.nature,
+        dateIso: body.dateIso,
+        juridiction: body.juridiction,
+        fields: body.fields,
+      });
+      res.json({ ok: true, override });
     } catch (error) {
       res.status(400).json({ error: error.message });
     }

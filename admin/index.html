@@ -781,6 +781,40 @@
     </form>
   </dialog>
 
+  <dialog id="chronologyMetaDialog" class="chronology-meta-dialog">
+    <form id="chronologyMetaForm" class="dialog-card chronology-meta-card">
+      <header class="procedure-dialog-header">
+        <div><p class="eyebrow">CHRONOLOGIE</p><h2 id="chronologyMetaTitle">Métadonnées de la pièce</h2><p>Corrigez la date, le lieu et le type détectés, ou ajoutez vos propres champs. Ces corrections priment sur la détection et survivent à un nouveau scan.</p></div>
+        <button id="closeChronologyMeta" class="dialog-close" type="button" aria-label="Fermer">×</button>
+      </header>
+      <div class="chronology-meta-grid">
+        <label class="chronology-meta-field">
+          <span>Type de document</span>
+          <input id="chronologyMetaNature" list="chronologyNatureList" placeholder="ex. assignation" autocomplete="off">
+          <datalist id="chronologyNatureList"></datalist>
+        </label>
+        <label class="chronology-meta-field">
+          <span>Date</span>
+          <input id="chronologyMetaDate" type="date">
+        </label>
+        <label class="chronology-meta-field chronology-meta-field-wide">
+          <span>Lieu / juridiction</span>
+          <input id="chronologyMetaJuris" placeholder="ex. Tribunal judiciaire de Paris" autocomplete="off">
+        </label>
+      </div>
+      <div class="chronology-meta-custom">
+        <div class="chronology-meta-col-title">Champs personnalisés</div>
+        <div id="chronologyMetaFields" class="chronology-meta-fields"></div>
+        <button id="addChronologyMetaField" class="button ghost compact" type="button">+ Ajouter un champ</button>
+      </div>
+      <span id="chronologyMetaMessage" class="message"></span>
+      <div class="actions">
+        <button id="cancelChronologyMeta" class="button secondary" type="button">Annuler</button>
+        <button id="saveChronologyMeta" class="button primary" type="submit">Enregistrer</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="toast" role="status" aria-live="polite"></div>
   <script type="module" src="app.js"></script>
 </body>

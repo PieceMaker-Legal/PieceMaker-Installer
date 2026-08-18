@@ -8,6 +8,9 @@ const test = require('node:test');
 const {
   readDocumentIndex,
   documentIndexFile,
+  documentIndexOverridesFile,
+  readDocumentIndexOverrides,
+  writeDocumentIndexOverride,
   categoryForCode,
   buildChronology,
 } = require('../websocket-server/document-index.cjs');
@@ -160,5 +163,84 @@ test('buildChronology lists an unscanned original with no metadata', async () =>
   assert.equal(chrono.stats.documents, 2);
   assert.equal(chrono.stats.indexed, 0);
   assert.ok(chrono.documents.every((d) => d.indexed === false && d.codes.length === 0));
+  assert.ok(chrono.documents.every((d) => d.edited === false && Array.isArray(d.fields) && d.fields.length === 0));
+  fs.rmSync(caseRoot, { recursive: true, force: true });
+});
+
+test('a manual override wins over detection and re-orders the timeline', async () => {
+  const caseRoot = fixture({ index: SAMPLE_INDEX(), mapping: SAMPLE_MAPPING() });
+  // Correct the Courrier: new date pushes it AFTER the Assignation, new type/lieu,
+  // and two custom fields (one blank-labelled entry must be dropped).
+  writeDocumentIndexOverride(caseRoot, 'Courrier.pdf', {
+    nature: 'mise en demeure',
+    dateIso: '2023-06-01',
+    juridiction: 'Étude de Maître X',
+    fields: [{ label: 'Cote', value: 'D12' }, { label: '', value: '' }],
+  });
+  const chrono = await buildChronology(caseRoot, { deanonymize: true });
+  const courrier = chrono.documents.find((d) => d.name === 'Courrier.pdf');
+  assert.equal(courrier.edited, true);
+  assert.equal(courrier.nature, 'mise en demeure');
+  assert.equal(courrier.dateIso, '2023-06-01');
+  assert.equal(courrier.juridiction, 'Étude de Maître X');
+  assert.deepEqual(courrier.fields, [{ label: 'Cote', value: 'D12' }]);
+  // June now sorts last; span end moves with it.
+  assert.deepEqual(chrono.documents.map((d) => d.name), ['Assignation.pdf', 'Courrier.pdf']);
+  assert.deepEqual(chrono.stats.span, { from: '2023-03-14', to: '2023-06-01' });
+  fs.rmSync(caseRoot, { recursive: true, force: true });
+});
+
+test('a manually typed lieu is never scrubbed against the mapping', async () => {
+  const caseRoot = fixture({ index: SAMPLE_INDEX(), mapping: SAMPLE_MAPPING() });
+  // Detection would scrub a lieu sharing a token with a mapped party; a manual
+  // one is the cabinet's deliberate annotation and must survive verbatim.
+  writeDocumentIndexOverride(caseRoot, 'Courrier.pdf', { juridiction: 'Bernard Gilly' });
+  const chrono = await buildChronology(caseRoot, { deanonymize: true });
+  const courrier = chrono.documents.find((d) => d.name === 'Courrier.pdf');
+  assert.equal(courrier.juridiction, 'Bernard Gilly');
+  fs.rmSync(caseRoot, { recursive: true, force: true });
+});
+
+test('overrides are ignored in the code-only view (never leak clear text)', async () => {
+  const caseRoot = fixture({ index: SAMPLE_INDEX(), mapping: SAMPLE_MAPPING() });
+  writeDocumentIndexOverride(caseRoot, 'Courrier.pdf', {
+    juridiction: 'Étude de Maître X',
+    fields: [{ label: 'Note', value: 'texte libre en clair' }],
+  });
+  const chrono = await buildChronology(caseRoot, { deanonymize: false });
+  const courrier = chrono.documents.find((d) => d.name === 'Courrier.pdf');
+  assert.equal(courrier.edited, false);
+  assert.equal(courrier.juridiction, null);
+  assert.deepEqual(courrier.fields, []);
+  fs.rmSync(caseRoot, { recursive: true, force: true });
+});
+
+test('an emptied override deletes the entry (reverts to detection)', async () => {
+  const caseRoot = fixture({ index: SAMPLE_INDEX(), mapping: SAMPLE_MAPPING() });
+  writeDocumentIndexOverride(caseRoot, 'Courrier.pdf', { nature: 'mise en demeure' });
+  assert.ok(readDocumentIndexOverrides(caseRoot).documents[stateKey('Courrier.pdf')]);
+  // Clearing every field removes the override rather than persisting an empty shell.
+  const result = writeDocumentIndexOverride(caseRoot, 'Courrier.pdf', {
+    nature: '', dateIso: null, juridiction: '', fields: [],
+  });
+  assert.equal(result, null);
+  assert.ok(!readDocumentIndexOverrides(caseRoot).documents[stateKey('Courrier.pdf')]);
+  const chrono = await buildChronology(caseRoot, { deanonymize: true });
+  const courrier = chrono.documents.find((d) => d.name === 'Courrier.pdf');
+  assert.equal(courrier.edited, false);
+  assert.equal(courrier.nature, 'courrier'); // detected value is back
+  fs.rmSync(caseRoot, { recursive: true, force: true });
+});
+
+test('override files are written 0600 and keyed by the same hash as the index', async () => {
+  const caseRoot = fixture({ index: SAMPLE_INDEX(), mapping: SAMPLE_MAPPING() });
+  writeDocumentIndexOverride(caseRoot, 'Assignation.pdf', { nature: 'jugement' });
+  const file = documentIndexOverridesFile(caseRoot);
+  assert.ok(fs.existsSync(file));
+  if (process.platform !== 'win32') {
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  }
+  const stored = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.ok(stored.documents[stateKey('Assignation.pdf')]);
   fs.rmSync(caseRoot, { recursive: true, force: true });
 });

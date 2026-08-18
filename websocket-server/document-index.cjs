@@ -22,8 +22,101 @@ const { isSocieteCode } = require('./legal-forms.cjs');
 
 const DOCUMENT_INDEX_RELATIVE_PATH = '.piecemaker/document-index.json';
 
+// Corrections manuelles du cabinet (nature / date / lieu + champs libres), dans
+// un fichier SÉPARÉ que le pipeline Python ne réécrit jamais : un re-scan ne
+// peut donc pas écraser ce qu'un utilisateur a corrigé à la main. Clé identique
+// à l'index (`stateKey` du chemin relatif). C'est une annotation propre à la vue
+// cabinet : elle n'est appliquée qu'en mode ré-identifié, jamais en mode
+// « codes seuls » (elle porte du texte libre saisi en clair).
+const DOCUMENT_INDEX_OVERRIDES_RELATIVE_PATH = '.piecemaker/document-index-overrides.json';
+
+const OVERRIDE_MAX_FIELDS = 24;
+
 function documentIndexFile(caseRoot) {
   return path.join(caseRoot, ...DOCUMENT_INDEX_RELATIVE_PATH.split('/'));
+}
+
+function documentIndexOverridesFile(caseRoot) {
+  return path.join(caseRoot, ...DOCUMENT_INDEX_OVERRIDES_RELATIVE_PATH.split('/'));
+}
+
+function cleanOverrideString(value, max) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, max);
+}
+
+/** Normalise une correction manuelle : champs bornés, `fields` filtré et plafonné. */
+function normalizeOverrideEntry(entry) {
+  const source = entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : {};
+  const fields = Array.isArray(source.fields)
+    ? source.fields
+        .map((field) => {
+          if (!field || typeof field !== 'object' || Array.isArray(field)) return null;
+          const label = cleanOverrideString(field.label, 120) || '';
+          const value = cleanOverrideString(field.value, 400) || '';
+          return label || value ? { label, value } : null;
+        })
+        .filter(Boolean)
+        .slice(0, OVERRIDE_MAX_FIELDS)
+    : [];
+  return {
+    nature: cleanOverrideString(source.nature, 120),
+    dateIso: /^\d{4}-\d{2}-\d{2}$/.test(source.dateIso) ? source.dateIso : null,
+    juridiction: cleanOverrideString(source.juridiction, 200),
+    fields,
+    updatedAt: typeof source.updatedAt === 'string' ? source.updatedAt : null,
+  };
+}
+
+/** Une correction vide (tous champs effacés) : signal de retour à la détection. */
+function isEmptyOverride(entry) {
+  return entry.nature == null && entry.dateIso == null && entry.juridiction == null && entry.fields.length === 0;
+}
+
+/** Lecture tolérante des corrections manuelles ; fichier absent → aucune correction. */
+function readDocumentIndexOverrides(caseRoot) {
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(documentIndexOverridesFile(caseRoot), 'utf8').replace(/^﻿/, ''));
+  } catch {
+    return { version: 1, documents: {} };
+  }
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const documents = source.documents && typeof source.documents === 'object' && !Array.isArray(source.documents)
+    ? source.documents
+    : {};
+  const clean = {};
+  for (const [key, entry] of Object.entries(documents)) {
+    if (!/^[a-f0-9]{64}$/i.test(key)) continue;
+    clean[key.toLowerCase()] = normalizeOverrideEntry(entry);
+  }
+  return { version: 1, documents: clean };
+}
+
+/**
+ * Écrit (ou supprime) la correction manuelle d'une pièce, désignée par son chemin
+ * RELATIF à la racine du dossier — la même clé que la chronologie. Une correction
+ * entièrement vide efface l'entrée (retour aux valeurs détectées). Écriture
+ * atomique, permissions 0600 comme l'index.
+ */
+function writeDocumentIndexOverride(caseRoot, relativePath, override) {
+  const key = stateKey(relativePath);
+  if (!key) throw new Error('Chemin de pièce invalide.');
+  const current = readDocumentIndexOverrides(caseRoot);
+  const normalized = normalizeOverrideEntry({ ...override, updatedAt: new Date().toISOString() });
+  if (isEmptyOverride(normalized)) {
+    delete current.documents[key];
+  } else {
+    current.documents[key] = normalized;
+  }
+  const file = documentIndexOverridesFile(caseRoot);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = `${file}.piecemaker-${process.pid}.tmp`;
+  fs.writeFileSync(temporary, `${JSON.stringify(current, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(temporary, file);
+  return current.documents[key] || null;
 }
 
 /** Lecture tolérante : un index absent ou corrompu donne un index vide. */
@@ -107,6 +200,10 @@ function scrubFreeText(value, tokens) {
  */
 async function buildChronology(caseRoot, { deanonymize = false } = {}) {
   const index = readDocumentIndex(caseRoot);
+  // Les corrections manuelles n'existent que pour la vue cabinet : elles portent
+  // du texte libre saisi en clair (lieu, champs), qui n'a rien à faire dans la
+  // sortie « codes seuls ». En mode codes, on garde strictement les valeurs GLiNER.
+  const overrides = deanonymize ? readDocumentIndexOverrides(caseRoot) : { documents: {} };
   const mapping = readCaseMapping(caseRoot);
   const reverse = mapping.reverse_mapping || {};
   // Un code renuméroté/supprimé dans l'éditeur ne doit pas rester fantôme dans le
@@ -138,7 +235,9 @@ async function buildChronology(caseRoot, { deanonymize = false } = {}) {
 
   const documents = [];
   for (const file of originals) {
-    const entry = index.documents[stateKey(file.path)] || null;
+    const key = stateKey(file.path);
+    const entry = index.documents[key] || null;
+    const override = overrides.documents[key] || null;
     const docId = file.path;
     const codes = [];
     if (entry) {
@@ -146,6 +245,10 @@ async function buildChronology(caseRoot, { deanonymize = false } = {}) {
         if (noteEntity(code, docId)) codes.push(code);
       }
     }
+    // Une correction manuelle « prend la main » sur la pièce : la popup pré-remplit
+    // les valeurs détectées, l'utilisateur édite, et l'ensemble est ré-enregistré —
+    // une re-détection ultérieure ne réécrase donc pas un choix explicite. Le lieu
+    // saisi à la main n'est jamais épuré (contrairement au champ détecté).
     documents.push({
       id: docId,
       path: file.path,
@@ -155,11 +258,13 @@ async function buildChronology(caseRoot, { deanonymize = false } = {}) {
       protected: file.protected,
       scanned: file.scanned,
       indexed: Boolean(entry),
-      nature: entry ? entry.nature : null,
+      edited: Boolean(override),
+      nature: override ? override.nature : (entry ? entry.nature : null),
       natureConfidence: entry ? entry.nature_confidence : null,
       date: entry ? entry.doc_date : null,
-      dateIso: entry ? entry.doc_date_iso : null,
-      juridiction: entry ? scrubFreeText(entry.juridiction, scrubTokens) : null,
+      dateIso: override ? override.dateIso : (entry ? entry.doc_date_iso : null),
+      juridiction: override ? override.juridiction : (entry ? scrubFreeText(entry.juridiction, scrubTokens) : null),
+      fields: override ? override.fields : [],
       codes: codes.map((code) => ({ code, category: categoryForCode(code), label: labelFor(code) })),
     });
   }
@@ -238,8 +343,12 @@ async function buildChronology(caseRoot, { deanonymize = false } = {}) {
 
 module.exports = {
   DOCUMENT_INDEX_RELATIVE_PATH,
+  DOCUMENT_INDEX_OVERRIDES_RELATIVE_PATH,
   documentIndexFile,
+  documentIndexOverridesFile,
   readDocumentIndex,
+  readDocumentIndexOverrides,
+  writeDocumentIndexOverride,
   categoryForCode,
   buildChronology,
 };

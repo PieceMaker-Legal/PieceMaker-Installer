@@ -3400,6 +3400,20 @@ function renderTimelineRow(doc) {
     card.append(juris);
   }
 
+  if (Array.isArray(doc.fields) && doc.fields.length) {
+    const list = document.createElement('dl');
+    list.className = 'chronology-fields';
+    for (const field of doc.fields) {
+      if (!field.label && !field.value) continue;
+      const term = document.createElement('dt');
+      term.textContent = field.label || '—';
+      const desc = document.createElement('dd');
+      desc.textContent = field.value || '';
+      list.append(term, desc);
+    }
+    card.append(list);
+  }
+
   if (doc.codes.length) {
     const chips = document.createElement('div');
     chips.className = 'chronology-chips';
@@ -3422,6 +3436,15 @@ function renderTimelineRow(doc) {
 
   const actions = document.createElement('div');
   actions.className = 'chronology-card-actions';
+
+  const editButton = document.createElement('button');
+  editButton.type = 'button';
+  editButton.className = 'button ghost compact';
+  editButton.textContent = doc.edited ? '✏️ Métadonnées ✓' : '✏️ Métadonnées';
+  editButton.title = 'Corriger la date, le lieu, le type ou ajouter des champs';
+  if (doc.edited) editButton.classList.add('chronology-edited');
+  editButton.addEventListener('click', () => openChronologyMetaDialog(doc));
+  actions.append(editButton);
 
   const correctButton = document.createElement('button');
   correctButton.type = 'button';
@@ -3701,6 +3724,111 @@ async function saveChronologyEntityChanges(event) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Correction manuelle des métadonnées d'une pièce (chronologie) — type, date,
+// lieu et champs libres. Persisté via `PUT /api/admin/repository/document-meta`
+// dans un fichier d'override séparé : le pipeline ne l'écrase jamais, donc une
+// correction survit à un nouveau scan. Envoyer tout vide efface la correction
+// (retour aux valeurs détectées par GLiNER).
+let chronologyMetaDoc = null;
+
+const NATURE_SUGGESTIONS = [
+  'assignation', 'conclusions', 'requête', 'courrier', 'courriel',
+  'mise en demeure', 'contrat', 'facture', 'devis', 'attestation',
+  'jugement', 'arrêt', 'ordonnance', 'procès-verbal', 'constat',
+  'expertise', 'statuts de société', 'extrait Kbis', 'relevé bancaire',
+  'acte notarié', 'bordereau de pièces', 'autre',
+];
+
+function populateNatureList() {
+  const list = byId('chronologyNatureList');
+  if (!list || list.childElementCount) return;
+  for (const nature of NATURE_SUGGESTIONS) {
+    const option = document.createElement('option');
+    option.value = nature;
+    list.append(option);
+  }
+}
+
+function addChronologyMetaFieldRow(field = { label: '', value: '' }) {
+  const row = document.createElement('div');
+  row.className = 'chronology-meta-field-row';
+
+  const label = document.createElement('input');
+  label.className = 'chronology-meta-field-label';
+  label.placeholder = 'Intitulé (ex. Cote)';
+  label.value = field.label || '';
+
+  const value = document.createElement('input');
+  value.className = 'chronology-meta-field-value';
+  value.placeholder = 'Valeur';
+  value.value = field.value || '';
+
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'remove-chronology-entity';
+  remove.title = 'Supprimer ce champ';
+  remove.textContent = '×';
+  remove.addEventListener('click', () => row.remove());
+
+  row.append(label, value, remove);
+  byId('chronologyMetaFields').append(row);
+  return row;
+}
+
+function closeChronologyMetaDialog() {
+  chronologyMetaDoc = null;
+  byId('chronologyMetaDialog').close();
+}
+
+function openChronologyMetaDialog(doc) {
+  if (!selectedFolder) return;
+  chronologyMetaDoc = doc;
+  populateNatureList();
+  byId('chronologyMetaTitle').textContent = doc.name;
+  byId('chronologyMetaNature').value = doc.nature || '';
+  byId('chronologyMetaDate').value = doc.dateIso || '';
+  byId('chronologyMetaJuris').value = doc.juridiction || '';
+  const fields = byId('chronologyMetaFields');
+  fields.textContent = '';
+  for (const field of Array.isArray(doc.fields) ? doc.fields : []) addChronologyMetaFieldRow(field);
+  setMessage(byId('chronologyMetaMessage'), '');
+  byId('chronologyMetaDialog').showModal();
+}
+
+async function saveChronologyMeta(event) {
+  event.preventDefault();
+  if (!chronologyMetaDoc) return;
+  const button = byId('saveChronologyMeta');
+  button.disabled = true;
+  try {
+    const fields = [...byId('chronologyMetaFields').querySelectorAll('.chronology-meta-field-row')]
+      .map((row) => ({
+        label: row.querySelector('.chronology-meta-field-label').value.trim(),
+        value: row.querySelector('.chronology-meta-field-value').value.trim(),
+      }))
+      .filter((field) => field.label || field.value);
+    await api('/api/admin/repository/document-meta', {
+      method: 'PUT',
+      body: JSON.stringify({
+        case: selectedFolder,
+        path: chronologyMetaDoc.path,
+        nature: byId('chronologyMetaNature').value.trim(),
+        dateIso: byId('chronologyMetaDate').value || null,
+        juridiction: byId('chronologyMetaJuris').value.trim(),
+        fields,
+      }),
+    });
+    toast('Métadonnées enregistrées');
+    closeChronologyMetaDialog();
+    await loadChronology();
+  } catch (error) {
+    setMessage(byId('chronologyMetaMessage'), error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function setHistoryView(view) {
   historyView = view;
   selectedRevision = null;
@@ -3928,6 +4056,10 @@ byId('procedurePartiesForm').addEventListener('submit', saveProcedureParties);
 byId('closeChronologyEntity').addEventListener('click', closeChronologyEntityDialog);
 byId('cancelChronologyEntity').addEventListener('click', closeChronologyEntityDialog);
 byId('chronologyEntityForm').addEventListener('submit', saveChronologyEntityChanges);
+byId('closeChronologyMeta').addEventListener('click', closeChronologyMetaDialog);
+byId('cancelChronologyMeta').addEventListener('click', closeChronologyMetaDialog);
+byId('addChronologyMetaField').addEventListener('click', () => addChronologyMetaFieldRow());
+byId('chronologyMetaForm').addEventListener('submit', saveChronologyMeta);
 byId('caseTelegramCard').addEventListener('click', openCaseTelegramEditor);
 byId('telegramCaseView').addEventListener('submit', saveCaseTelegramBot);
 
