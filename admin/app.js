@@ -1661,6 +1661,9 @@ async function selectFile(file, button) {
       editor.classList.toggle('empty', !documentParts.body.trim());
       byId('editorToolbar').hidden = data.readonly;
       byId('saveFile').disabled = data.readonly;
+      // Suppression réservée aux skills et agents du dépôt qui existent déjà —
+      // ni instructions, ni skills officiels, ni fichiers en lecture seule.
+      byId('deleteFile').hidden = !(data.exists && !data.readonly && (data.kind === 'skill' || data.kind === 'agent'));
       byId('metadataEditor').hidden = !documentParts.frontMatter || data.readonly;
       byId('metadataName').value = documentParts.metadata.name || '';
       byId('metadataDescription').value = documentParts.metadata.description || '';
@@ -1701,6 +1704,37 @@ async function saveFile() {
     byId('dirtyBadge').hidden = true;
     setMessage(byId('fileMessage'), result.backup ? 'Enregistré avec sauvegarde.' : 'Fichier créé.', 'success');
     toast('Fichier Markdown enregistré');
+  } catch (error) {
+    setMessage(byId('fileMessage'), error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function deleteFile() {
+  if (!selectedFile || selectedFile.readonly || !selectedFile.exists) return;
+  if (!['skill', 'agent'].includes(selectedFile.kind)) return;
+  const label = selectedFile.kind === 'skill' ? 'ce skill' : 'cet agent';
+  if (!confirm(`Supprimer définitivement ${label} « ${selectedFile.name || selectedFile.path} » ?\nUne sauvegarde est conservée, mais le fichier disparaît de Claude Code.`)) return;
+  const button = byId('deleteFile');
+  button.disabled = true;
+  setMessage(byId('fileMessage'), 'Suppression…');
+  try {
+    await api(`/api/admin/file?path=${encodeURIComponent(selectedFile.path)}`, { method: 'DELETE' });
+    editorTouched = false;
+    selectedFile = null;
+    toast('Fichier supprimé');
+    byId('fileTitle').textContent = 'Sélectionnez un fichier';
+    byId('filePath').textContent = '';
+    byId('fileEditor').innerHTML = '';
+    byId('fileEditor').contentEditable = 'false';
+    byId('editorToolbar').hidden = true;
+    byId('metadataEditor').hidden = true;
+    byId('saveFile').disabled = true;
+    button.hidden = true;
+    byId('dirtyBadge').hidden = true;
+    await loadFiles();
+    setMessage(byId('fileMessage'), 'Fichier supprimé.', 'success');
   } catch (error) {
     setMessage(byId('fileMessage'), error.message, 'error');
   } finally {
@@ -3585,6 +3619,7 @@ byId('stopAssistant').addEventListener('click', (event) => controlTelegram('assi
 byId('startMonitor').addEventListener('click', (event) => controlTelegram('monitor', 'start', event.currentTarget));
 byId('stopMonitor').addEventListener('click', (event) => controlTelegram('monitor', 'stop', event.currentTarget));
 byId('saveFile').addEventListener('click', saveFile);
+byId('deleteFile').addEventListener('click', deleteFile);
 byId('fileEditor').addEventListener('input', markEditorDirty);
 document.querySelectorAll('#metadataEditor input').forEach((input) => input.addEventListener('input', markEditorDirty));
 document.querySelectorAll('#editorToolbar button').forEach((button) => {

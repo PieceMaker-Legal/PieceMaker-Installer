@@ -1364,6 +1364,30 @@ function createManagedFile(repoRoot, homeDir, { kind, slug, name, description, t
   return readManagedFile(repoRoot, relativePath, homeDir);
 }
 
+/**
+ * Supprime un skill ou un agent du dépôt : seuls ces deux types sont
+ * effaçables ici — instructions (CLAUDE.md/AGENTS.md), skills officiels et
+ * aperçus de facturation ne le sont jamais. Le contenu est sauvegardé avant
+ * retrait, puis l'enregistrement Claude Code (lien ou copie) est nettoyé par
+ * l'appelant via `unregisterClaudeAsset`. Pour un skill on retire le dossier
+ * `piecemaker-plugin/skills/<slug>/` entier (SKILL.md et ses annexes) ; pour un
+ * agent, le seul fichier `.md`.
+ */
+function deleteManagedFile(repoRoot, homeDir, relativePath) {
+  const { absolute, normalized } = managedAbsolutePath(repoRoot, relativePath, homeDir);
+  const kind = managedFileKind(normalized);
+  if (!['skill', 'agent'].includes(kind)) {
+    throw new Error('Seuls un skill ou un agent peuvent être supprimés.');
+  }
+  if (!fs.existsSync(absolute)) throw new Error('Fichier introuvable.');
+  backupFile(absolute, normalized, homeDir);
+  // Un skill vit dans son propre dossier — on supprime le dossier, pas juste
+  // le SKILL.md, pour ne pas laisser un dossier vide derrière.
+  const target = kind === 'skill' ? path.dirname(absolute) : absolute;
+  fs.rmSync(target, { recursive: true, force: true });
+  return { path: normalized, kind, deletedAt: new Date().toISOString() };
+}
+
 function isLocalOrigin(origin) {
   if (!origin) return true;
   try {
@@ -1826,6 +1850,19 @@ function createAdminRouter({
     }
   });
 
+  // Supprime un skill/agent du dépôt et retire son enregistrement Claude Code.
+  // Le chemin arrive en query (`?path=`) ou dans le corps.
+  router.delete('/file', (req, res) => {
+    try {
+      const relativePath = req.query?.path || req.body?.path;
+      const deleted = deleteManagedFile(repoRoot, homeDir, relativePath);
+      const claudeCode = unregisterClaudeAsset(repoRoot, userHome, deleted.path);
+      res.json({ ok: true, ...deleted, claudeCode });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   router.get('/dossiers', async (req, res) => {
     try {
       res.json({
@@ -2275,6 +2312,7 @@ module.exports = {
   createLegalCase,
   createAdminRouter,
   createManagedFile,
+  deleteManagedFile,
   ensureClaudePluginActive,
   folderPickerCommands,
   installedPluginSkills,

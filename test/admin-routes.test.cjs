@@ -10,6 +10,7 @@ const {
   applyPluginComponentSelection,
   checkOllamaModelUpdate,
   createManagedFile,
+  deleteManagedFile,
   ensureClaudePluginActive,
   installedPluginSkills,
   isLocalOrigin,
@@ -235,6 +236,32 @@ test('un nouvel agent reçoit ses propres réglages : outils et modèle', (t) =>
   assert.throws(() => createManagedFile(data.repo, data.home, {
     kind: 'agent', slug: 'x-y', name: 'x', description: 'x', model: 'inconnu',
   }), /Modèle inconnu/);
+});
+
+test('la suppression retire skill/agent avec sauvegarde, mais jamais les instructions', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+
+  // Un skill : le dossier entier disparaît, une sauvegarde est conservée.
+  const skillDir = path.join(data.repo, 'piecemaker-plugin', 'skills', 'redaction');
+  assert.ok(fs.existsSync(skillDir));
+  const deletedSkill = deleteManagedFile(data.repo, data.home, 'piecemaker-plugin/skills/redaction/SKILL.md');
+  assert.equal(deletedSkill.kind, 'skill');
+  assert.ok(!fs.existsSync(skillDir));
+
+  // Un agent : le seul fichier .md disparaît.
+  const agentFile = path.join(data.repo, 'piecemaker-plugin', 'agents', 'analyse.md');
+  assert.ok(fs.existsSync(agentFile));
+  deleteManagedFile(data.repo, data.home, 'piecemaker-plugin/agents/analyse.md');
+  assert.ok(!fs.existsSync(agentFile));
+
+  // Une sauvegarde a bien été déposée sous ~/.piecemaker/backups.
+  assert.ok(fs.existsSync(path.join(data.home, 'backups')));
+
+  // Instructions, traversée et fichier absent sont refusés.
+  assert.throws(() => deleteManagedFile(data.repo, data.home, 'CLAUDE.md'), /skill ou un agent/);
+  assert.throws(() => deleteManagedFile(data.repo, data.home, '../secret.md'), /administrables/);
+  assert.throws(() => deleteManagedFile(data.repo, data.home, 'piecemaker-plugin/agents/analyse.md'), /introuvable/);
 });
 
 test('un enregistrement crée une sauvegarde et refuse la traversée de dossiers', (t) => {
