@@ -107,7 +107,10 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); outline:
 .file-sidebar .section-heading { padding: 0 8px; }
 .new-file-actions { display: flex; gap: 7px; padding: 0 8px 10px; }
 .file-list { display: grid; gap: 4px; }
-.file-group { margin: 14px 8px 5px; color: var(--muted); font-size: .7rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.file-group { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 14px 8px 5px; color: var(--muted); font-size: .7rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.file-group-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-group-add { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: 0; border-radius: 999px; background: var(--accent); color: var(--brand-dark); padding: 0; font-size: .82rem; font-weight: 800; line-height: 1; text-transform: none; letter-spacing: normal; cursor: pointer; }
+.file-group-add:hover { background: var(--brand-dark); color: #fff; }
 .file-button { border: 0; border-radius: 8px; padding: 9px 10px; background: transparent; color: var(--ink); cursor: pointer; text-align: left; }
 .file-button:hover, .file-button.active { background: var(--accent); color: var(--brand-dark); }
 .file-button.missing { color: var(--muted); font-style: italic; }
@@ -116,6 +119,16 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); outline:
 .asset-badge { flex: none; border-radius: 999px; background: #edf1ef; padding: 3px 7px; color: var(--muted); font-size: .62rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
 .asset-badge.ok { background: var(--accent); color: var(--brand-dark); }
 .asset-badge.warn { background: #fff0cc; color: var(--warn); }
+.file-row { display: flex; align-items: center; gap: 4px; }
+.file-row .file-button { flex: 1; min-width: 0; }
+.file-row-delete { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 0; border-radius: 999px; background: transparent; padding: 0; color: var(--muted); font-size: 1rem; line-height: 1; cursor: pointer; }
+.file-row-delete:hover { background: #f8dfdc; color: var(--danger); }
+.file-assets { display: grid; gap: 2px; margin: 0 0 4px 22px; padding-left: 10px; border-left: 1px solid var(--line); }
+.file-asset { display: flex; align-items: center; justify-content: space-between; gap: 6px; border-radius: 6px; padding: 4px 8px; color: var(--muted); font-size: .78rem; }
+.file-asset:hover { background: #f3f7f6; }
+.file-asset-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-asset-delete { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border: 0; border-radius: 999px; background: transparent; padding: 0; color: var(--muted); font-size: .88rem; line-height: 1; cursor: pointer; }
+.file-asset-delete:hover { background: #f8dfdc; color: var(--danger); }
 .agent-fields { display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 10px; background: #f8faf9; padding: 12px; }
 .agent-fields[hidden] { display: none; }
 .hint { margin: 0; color: var(--muted); font-size: .74rem; }
@@ -137,7 +150,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); outline:
 .metadata-editor label { font-size: .75rem; }
 .metadata-editor input { min-height: 36px; background: white; }
 .metadata-editor textarea { background: white; resize: vertical; min-height: 88px; padding: 9px 11px; line-height: 1.4; }
-.editor-toolbar { display: flex; flex-wrap: wrap; gap: 5px; border: 1px solid var(--line); border-bottom: 0; border-radius: 10px 10px 0 0; background: #f3f6f4; padding: 7px; }
+.editor-toolbar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 5px; border: 1px solid var(--line); border-bottom: 0; border-radius: 10px 10px 0 0; background: #f3f6f4; padding: 7px; transition: box-shadow .18s ease, border-bottom-color .18s ease; }
+.editor-toolbar.is-floating { border-bottom: 1px solid var(--line); box-shadow: 0 8px 18px -8px rgba(0, 0, 0, .3); }
 .editor-toolbar button, .editor-toolbar select { width: auto; min-height: 34px; border: 1px solid transparent; border-radius: 6px; background: transparent; padding: 5px 9px; color: var(--ink); cursor: pointer; }
 .editor-toolbar button:hover { border-color: #cbd6d4; background: white; }
 .visual-editor { min-height: 500px; flex: 1; overflow: auto; border: 1px solid #cbd6d4; border-radius: 0 0 10px 10px; background: white; padding: 30px clamp(22px, 5vw, 64px); font: 16px/1.68 Georgia, "Times New Roman", serif; }
@@ -563,16 +577,24 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .chronology-rail::before { content: ""; position: absolute; top: 0; bottom: -10px; right: 5px; width: 2px; background: var(--line); }
 .chronology-row:last-child .chronology-rail::before { bottom: 50%; }
 .chronology-dot { position: relative; z-index: 1; width: 12px; height: 12px; border-radius: 999px; background: var(--brand); border: 2px solid var(--paper); }
-.chronology-date { margin-top: 3px; color: var(--muted); font-size: .72rem; font-weight: 700; }
+/* La ligne verticale de la frise est à `right: 5px` (2px de large) sur
+   `.chronology-rail`. Le point y reste flush (aligné sur le bord droit du
+   rail, donc centré sur la ligne) mais la date, elle, a besoin d'une marge à
+   droite pour ne pas être traversée par cette ligne — sans quoi son texte se
+   termine dans les 5-7px occupés par la ligne. */
+.chronology-date { margin-top: 3px; margin-right: 11px; color: var(--muted); font-size: .72rem; font-weight: 700; white-space: nowrap; }
 .chronology-card { margin: 0 0 10px; border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; background: var(--card); }
 .chronology-card.protected { border-style: dashed; opacity: .82; }
 .chronology-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .chronology-nature { border-radius: 999px; background: var(--accent); padding: 2px 9px; color: var(--brand-dark); font-size: .72rem; font-weight: 800; }
 .chronology-name { font-size: .9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .chronology-juris { margin-top: 4px; color: var(--muted); font-size: .78rem; }
-.chronology-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chronology-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; cursor: pointer; }
 .chronology-nochip { margin-top: 6px; color: var(--muted); font-size: .74rem; font-style: italic; }
 .chronology-undated-head { margin: 4px 0 8px; color: var(--muted); font-size: .72rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+
+.chronology-card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chronology-card-actions .button.compact { min-height: 26px; padding: 4px 9px; font-size: .7rem; font-weight: 700; }
 
 .entity-chip { border-radius: 999px; padding: 3px 9px; font-size: .74rem; font-weight: 700; border: 1px solid transparent; }
 .entity-chip.cat-personne { background: #e5effb; color: #1d4e89; }
@@ -582,8 +604,39 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .entity-chip.cat-autre { background: #edf1ef; color: var(--muted); }
 
 /* Graphe */
-.chronology-graph-meta { margin: 0 0 8px; color: var(--muted); font-size: .7rem; font-weight: 700; }
+.graphify-viewer-wrap { position: relative; }
+.chronology-graph-meta { margin: 0 88px 8px 0; color: var(--muted); font-size: .7rem; font-weight: 700; }
 .graphify-viewer-frame { display: block; width: 100%; height: clamp(520px, 68vh, 780px); border: 1px solid var(--line); border-radius: 10px; background: #0f0f1a; }
+.graphify-fullscreen-toggle { position: absolute; top: 0; right: 0; z-index: 2; }
+/* Le bouton bascule la classe suivante sur le conteneur (au lieu de la
+   Fullscreen API : l'iframe est en sandbox `allow-scripts` seul, une demande
+   de plein écran depuis son contenu ne serait pas fiable). */
+.graphify-viewer-wrap.graphify-fullscreen {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 16px; background: var(--paper);
+}
+.graphify-viewer-wrap.graphify-fullscreen .chronology-graph-meta { margin: 0 88px 0 0; }
+.graphify-viewer-wrap.graphify-fullscreen .graphify-viewer-frame { flex: 1; height: auto; }
+
+/* Correction des entités détectées (pièce ↔ mapping) */
+.chronology-entity-dialog { width: min(1120px, calc(100% - 28px)); max-height: min(90vh, 900px); overflow: hidden; }
+.chronology-entity-card { max-height: min(90vh, 900px); grid-template-rows: auto minmax(0, 1fr) auto auto; overflow: hidden; }
+.chronology-entity-columns { display: grid; min-height: 0; grid-template-columns: minmax(0, .95fr) minmax(0, 1.35fr); gap: 14px; overflow: hidden; }
+.chronology-entity-list-col, .chronology-entity-preview-col { display: flex; min-width: 0; min-height: 220px; flex-direction: column; overflow: hidden; border: 1px solid #d8dee4; border-radius: 12px; background: #f6f8fa; }
+.chronology-entity-col-title { border-bottom: 1px solid #d8dee4; padding: 10px 12px; color: #57606a; font-size: .65rem; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
+.chronology-entity-rows { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 8px; overflow: auto; padding: 10px; }
+.chronology-entity-row { display: grid; grid-template-columns: auto minmax(0, 1fr) 28px; align-items: center; gap: 8px; border: 1px solid #d8dee4; border-radius: 9px; background: #fff; padding: 8px 9px; }
+.chronology-entity-row input { width: 100%; min-width: 0; min-height: 32px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; padding: 5px 8px; color: #24292f; font-size: .78rem; }
+.chronology-entity-row input:focus { border-color: #0969da; outline: 2px solid rgba(9, 105, 218, .12); }
+.chronology-entity-row input.invalid { border-color: #cf222e; background: #fff8f7; }
+.chronology-entity-code { color: var(--muted); font-size: .62rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; display: block; margin-top: 2px; }
+.remove-chronology-entity { width: 28px; height: 32px; border: 0; border-radius: 6px; background: transparent; color: #6e7781; cursor: pointer; font-size: 1.05rem; }
+.remove-chronology-entity:hover { background: #ffebe9; color: #82071e; }
+.chronology-entity-empty { margin: auto; padding: 28px 16px; color: #8c959f; font-size: .74rem; text-align: center; }
+.chronology-entity-preview { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; font-size: .82rem; line-height: 1.55; }
+.chronology-entity-preview :is(h1, h2, h3) { margin: 12px 0 6px; }
+.chronology-entity-preview p { margin: 0 0 10px; }
 
 /* Configuration — carte lisible de l'installation locale. */
 #configuration { padding-bottom: 28px; }

@@ -10,6 +10,7 @@ const {
   applyPluginComponentSelection,
   checkOllamaModelUpdate,
   createManagedFile,
+  deleteManagedAsset,
   deleteManagedFile,
   ensureClaudePluginActive,
   installedPluginSkills,
@@ -19,11 +20,13 @@ const {
   listMarketplaceConnectors,
   listPluginComponents,
   listRegisteredMarketplaces,
+  listSkillAssets,
   managedFileKind,
   normalizeAgentModel,
   normalizeAgentTools,
   readManagedFile,
   registerOfficialMarketplace,
+  renameManagedFile,
   revealCommands,
   saveManagedAsset,
   saveManagedFile,
@@ -268,6 +271,59 @@ test('un fichier annexe s’écrit dans le dossier du skill, jamais ailleurs', (
   assert.throws(() => saveManagedAsset(data.repo, data.home, 'piecemaker-plugin/skills/redaction/SKILL.md', 'vide.txt', Buffer.alloc(0)), /vide/i);
 });
 
+test('les annexes d’un skill sont listées (nom seul, sous-dossiers inclus) et suppressibles une à une', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+
+  const skillDir = path.join(data.repo, 'piecemaker-plugin', 'skills', 'redaction');
+  fs.writeFileSync(path.join(skillDir, 'modele.docx'), 'x');
+  fs.mkdirSync(path.join(skillDir, 'scripts'), { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'scripts', 'analyse.py'), 'print("ok")\n');
+  // Fichier caché et dossier caché ignorés.
+  fs.writeFileSync(path.join(skillDir, '.DS_Store'), 'x');
+  fs.mkdirSync(path.join(skillDir, '.cache'), { recursive: true });
+  fs.writeFileSync(path.join(skillDir, '.cache', 'ignored.txt'), 'x');
+
+  const assets = listSkillAssets(data.repo, 'piecemaker-plugin/skills/redaction/SKILL.md');
+  assert.deepEqual(assets, [
+    { name: 'analyse.py', path: 'piecemaker-plugin/skills/redaction/scripts/analyse.py' },
+    { name: 'modele.docx', path: 'piecemaker-plugin/skills/redaction/modele.docx' },
+  ]);
+
+  // La même liste apparaît sous l'entrée `assets` du skill dans listManagedFiles ;
+  // les agents n'ont jamais d'annexes.
+  const files = listManagedFiles(data.repo, data.home, undefined, { installedSkills: [] });
+  const skillEntry = files.find((file) => file.path === 'piecemaker-plugin/skills/redaction/SKILL.md');
+  assert.deepEqual(skillEntry.assets.map((asset) => asset.name), ['analyse.py', 'modele.docx']);
+  const agentEntry = files.find((file) => file.path === 'piecemaker-plugin/agents/analyse.md');
+  assert.deepEqual(agentEntry.assets, []);
+
+  // Suppression d'une seule annexe : le reste du skill survit, une sauvegarde
+  // est déposée.
+  const deleted = deleteManagedAsset(data.repo, data.home, 'piecemaker-plugin/skills/redaction/scripts/analyse.py');
+  assert.equal(deleted.path, 'piecemaker-plugin/skills/redaction/scripts/analyse.py');
+  assert.ok(!fs.existsSync(path.join(skillDir, 'scripts', 'analyse.py')));
+  assert.ok(fs.existsSync(path.join(skillDir, 'SKILL.md')));
+  assert.ok(fs.existsSync(path.join(skillDir, 'modele.docx')));
+  assert.ok(fs.existsSync(path.join(data.home, 'backups')));
+
+  // SKILL.md n'est jamais une « annexe » supprimable ainsi.
+  assert.throws(
+    () => deleteManagedAsset(data.repo, data.home, 'piecemaker-plugin/skills/redaction/SKILL.md'),
+    /annexe/,
+  );
+  // Traversée hors du dépôt refusée.
+  assert.throws(
+    () => deleteManagedAsset(data.repo, data.home, '../secret.md'),
+    /annexe/,
+  );
+  // Chemin hors de l'arborescence des skills refusé.
+  assert.throws(
+    () => deleteManagedAsset(data.repo, data.home, 'piecemaker-plugin/agents/analyse.md'),
+    /annexe/,
+  );
+});
+
 test('la suppression retire skill/agent avec sauvegarde, mais jamais les instructions', (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
@@ -292,6 +348,36 @@ test('la suppression retire skill/agent avec sauvegarde, mais jamais les instruc
   assert.throws(() => deleteManagedFile(data.repo, data.home, 'CLAUDE.md'), /skill ou un agent/);
   assert.throws(() => deleteManagedFile(data.repo, data.home, '../secret.md'), /administrables/);
   assert.throws(() => deleteManagedFile(data.repo, data.home, 'piecemaker-plugin/agents/analyse.md'), /introuvable/);
+});
+
+test('renommer un skill/agent déplace son dossier ou son fichier vers le nouveau slug', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+
+  // Un skill : le dossier entier suit le nouveau nom, ses annexes comprises.
+  const skillDir = path.join(data.repo, 'piecemaker-plugin', 'skills', 'redaction');
+  fs.writeFileSync(path.join(skillDir, 'gabarit.md'), '# annexe\n');
+  const skill = renameManagedFile(data.repo, data.home, 'piecemaker-plugin/skills/redaction/SKILL.md', 'redaction-juridique');
+  assert.equal(skill.renamed, true);
+  assert.equal(skill.path, 'piecemaker-plugin/skills/redaction-juridique/SKILL.md');
+  assert.equal(skill.previous, 'piecemaker-plugin/skills/redaction/SKILL.md');
+  assert.ok(!fs.existsSync(skillDir));
+  const movedDir = path.join(data.repo, 'piecemaker-plugin', 'skills', 'redaction-juridique');
+  assert.ok(fs.existsSync(path.join(movedDir, 'SKILL.md')));
+  assert.ok(fs.existsSync(path.join(movedDir, 'gabarit.md')));
+
+  // Un agent : le seul fichier .md est renommé.
+  const agent = renameManagedFile(data.repo, data.home, 'piecemaker-plugin/agents/analyse.md', 'analyste-piece');
+  assert.equal(agent.path, 'piecemaker-plugin/agents/analyste-piece.md');
+  assert.ok(!fs.existsSync(path.join(data.repo, 'piecemaker-plugin', 'agents', 'analyse.md')));
+  assert.ok(fs.existsSync(path.join(data.repo, 'piecemaker-plugin', 'agents', 'analyste-piece.md')));
+
+  // Un nom inchangé ne renomme rien ; un slug invalide ou une cible déjà prise
+  // sont refusés.
+  assert.equal(renameManagedFile(data.repo, data.home, 'piecemaker-plugin/agents/analyste-piece.md', 'analyste-piece').renamed, false);
+  assert.throws(() => renameManagedFile(data.repo, data.home, 'piecemaker-plugin/agents/analyste-piece.md', 'Analyste Pièce'), /minuscules/);
+  createManagedFile(data.repo, data.home, { kind: 'agent', slug: 'occupe', name: 'x', description: 'x' });
+  assert.throws(() => renameManagedFile(data.repo, data.home, 'piecemaker-plugin/agents/analyste-piece.md', 'occupe'), /existe déjà/);
 });
 
 test('un enregistrement crée une sauvegarde et refuse la traversée de dossiers', (t) => {

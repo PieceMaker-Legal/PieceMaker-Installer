@@ -1232,24 +1232,6 @@ async function controlTelegram(role, action, button) {
   }
 }
 
-const CLAUDE_ASSET_BADGES = {
-  linked: { text: 'Claude Code', className: 'ok', title: 'Enregistré dans Claude Code (lien vers le dépôt).' },
-  copied: { text: 'Claude Code', className: 'ok', title: 'Enregistré dans Claude Code (copie synchronisée à chaque enregistrement).' },
-  stale: { text: 'À réenregistrer', className: 'warn', title: 'Enregistrement PieceMaker périmé (autre installation) — « ⟳ Claude Code » le reprend.' },
-  conflict: { text: 'Conflit', className: 'warn', title: 'Un fichier personnel du même nom existe déjà dans ~/.claude — il n’a pas été remplacé.' },
-  missing: { text: 'Non enregistré', className: 'warn', title: 'Pas encore visible par Claude Code — utilisez « ⟳ Claude Code ».' },
-};
-
-function claudeAssetBadge(file) {
-  const state = file.claudeCode?.state;
-  if (!state || !file.exists) return null;
-  const badge = CLAUDE_ASSET_BADGES[state];
-  if (!badge) return null;
-  const element = makeElement('span', `asset-badge ${badge.className}`, badge.text);
-  element.title = badge.title;
-  return element;
-}
-
 async function syncClaudeAssets() {
   const button = byId('syncClaudeAssets');
   const message = byId('claudeAssetsMessage');
@@ -1562,7 +1544,7 @@ function openPluginComponentsDialog() {
 }
 
 function fileGroupLabel(kind) {
-  return { instructions: 'Instructions', agent: 'Collabs IA (Agents)', skill: 'Compétences', 'official-skill': 'Compétences officielles' }[kind] || kind;
+  return { instructions: 'Instructions', agent: 'Collabs IA (Agents)', skill: 'Compétences (skills PieceMaker)', 'official-skill': 'Compétences (Skills Marketplace Claude)' }[kind] || kind;
 }
 
 async function loadFiles({ selectPath = null } = {}) {
@@ -1577,7 +1559,19 @@ async function loadFiles({ selectPath = null } = {}) {
         if (!groupFiles.length) continue;
         const heading = document.createElement('div');
         heading.className = 'file-group';
-        heading.textContent = fileGroupLabel(kind);
+        heading.append(makeElement('span', 'file-group-title', fileGroupLabel(kind)));
+        if (kind === 'skill' || kind === 'agent') {
+          const createLabel = kind === 'agent' ? 'Créer un agent' : 'Créer un skill';
+          const createButton = document.createElement('button');
+          createButton.type = 'button';
+          createButton.className = 'file-group-add';
+          createButton.dataset.createKind = kind;
+          createButton.textContent = '+';
+          createButton.title = createLabel;
+          createButton.setAttribute('aria-label', createLabel);
+          createButton.addEventListener('click', () => openCreateDialog(kind));
+          heading.append(createButton);
+        }
         list.append(heading);
         for (const file of groupFiles) {
           const button = document.createElement('button');
@@ -1592,10 +1586,58 @@ async function loadFiles({ selectPath = null } = {}) {
             badge.title = file.marketplace ? `${file.plugin} · ${file.marketplace}` : file.plugin || 'Plugin installé';
             button.append(badge);
           }
-          const registration = claudeAssetBadge(file);
-          if (registration) button.append(registration);
           button.addEventListener('click', () => selectFile(file, button));
-          list.append(button);
+
+          if (file.kind !== 'skill') {
+            list.append(button);
+            continue;
+          }
+
+          // Un skill obtient une rangée dédiée (bouton + suppression du skill
+          // entier) : le contrôle de suppression est un élément frère du
+          // bouton, jamais imbriqué dedans (bouton dans bouton = HTML invalide).
+          const row = document.createElement('div');
+          row.className = 'file-row';
+          row.append(button);
+          if (file.exists) {
+            const removeSkill = document.createElement('button');
+            removeSkill.type = 'button';
+            removeSkill.className = 'file-row-delete';
+            removeSkill.textContent = '×';
+            removeSkill.title = 'Supprimer ce skill';
+            removeSkill.setAttribute('aria-label', 'Supprimer ce skill');
+            removeSkill.addEventListener('click', (event) => {
+              event.stopPropagation();
+              deleteSkillFromPanel(file);
+            });
+            row.append(removeSkill);
+          }
+          list.append(row);
+
+          // Annexes (assets/scripts) du skill, indentées en dessous — nom
+          // seul affiché, le chemin ne sert qu'à l'appel de suppression.
+          if (Array.isArray(file.assets) && file.assets.length) {
+            const assetList = document.createElement('div');
+            assetList.className = 'file-assets';
+            for (const asset of file.assets) {
+              const assetRow = document.createElement('div');
+              assetRow.className = 'file-asset';
+              assetRow.append(makeElement('span', 'file-asset-name', asset.name));
+              const removeAsset = document.createElement('button');
+              removeAsset.type = 'button';
+              removeAsset.className = 'file-asset-delete';
+              removeAsset.textContent = '×';
+              removeAsset.title = 'Supprimer ce fichier';
+              removeAsset.setAttribute('aria-label', 'Supprimer ce fichier');
+              removeAsset.addEventListener('click', (event) => {
+                event.stopPropagation();
+                deleteSkillAsset(asset);
+              });
+              assetRow.append(removeAsset);
+              assetList.append(assetRow);
+            }
+            list.append(assetList);
+          }
         }
       }
       filesLoaded = true;
@@ -1651,6 +1693,7 @@ async function selectFile(file, button) {
       currentFrontMatter = documentParts.frontMatter;
       editorTouched = false;
       editor.innerHTML = markdownToHtml(documentParts.body);
+      byId('editorToolbar').classList.remove('is-floating');
       editor.contentEditable = String(!data.readonly);
       editor.classList.toggle('empty', !documentParts.body.trim());
       byId('editorToolbar').hidden = data.readonly;
@@ -1662,7 +1705,7 @@ async function selectFile(file, button) {
       // Suppression réservée aux skills et agents du dépôt qui existent déjà —
       // ni instructions, ni skills officiels, ni fichiers en lecture seule.
       byId('deleteFile').hidden = !(data.exists && !data.readonly && (data.kind === 'skill' || data.kind === 'agent'));
-      byId('metadataEditor').hidden = !documentParts.frontMatter || data.readonly;
+      byId('metadataEditor').hidden = !documentParts.frontMatter || data.readonly || data.kind === 'instructions';
       byId('metadataName').value = documentParts.metadata.name || '';
       byId('metadataDescription').value = documentParts.metadata.description || '';
       const isAgent = data.kind === 'agent';
@@ -1700,13 +1743,39 @@ async function saveFile() {
     });
     editorTouched = false;
     byId('dirtyBadge').hidden = true;
-    setMessage(byId('fileMessage'), result.backup ? 'Enregistré avec sauvegarde.' : 'Fichier créé.', 'success');
-    toast('Fichier Markdown enregistré');
+    // Changer le champ « nom » renomme le dossier/fichier côté serveur : on
+    // adopte le nouveau chemin (sinon un second enregistrement écrirait vers
+    // l'ancien emplacement, désormais absent) et on rafraîchit la liste.
+    const renamed = result.path && result.path !== selectedFile.path;
+    if (result.path) {
+      selectedFile.path = result.path;
+      selectedFile.exists = true;
+      byId('filePath').textContent = result.path;
+    }
+    setMessage(byId('fileMessage'), renamed ? 'Renommé et enregistré.' : result.backup ? 'Enregistré avec sauvegarde.' : 'Fichier créé.', 'success');
+    toast(renamed ? 'Skill/agent renommé' : 'Fichier Markdown enregistré');
+    if (renamed) await loadFiles({ selectPath: result.path });
   } catch (error) {
     setMessage(byId('fileMessage'), error.message, 'error');
   } finally {
     button.disabled = false;
   }
+}
+
+// Ramène le panneau d'édition à son état vide (« aucun fichier sélectionné ») —
+// factorisé pour être partagé entre la suppression depuis l'éditeur
+// (deleteFile) et celle depuis le panneau de gauche (deleteSkillFromPanel),
+// qui peut viser un skill non sélectionné.
+function resetFileEditor() {
+  byId('fileTitle').textContent = 'Sélectionnez un fichier';
+  byId('filePath').textContent = '';
+  byId('fileEditor').innerHTML = '';
+  byId('fileEditor').contentEditable = 'false';
+  byId('editorToolbar').hidden = true;
+  byId('metadataEditor').hidden = true;
+  byId('saveFile').disabled = true;
+  byId('deleteFile').hidden = true;
+  byId('dirtyBadge').hidden = true;
 }
 
 async function deleteFile() {
@@ -1722,21 +1791,45 @@ async function deleteFile() {
     editorTouched = false;
     selectedFile = null;
     toast('Fichier supprimé');
-    byId('fileTitle').textContent = 'Sélectionnez un fichier';
-    byId('filePath').textContent = '';
-    byId('fileEditor').innerHTML = '';
-    byId('fileEditor').contentEditable = 'false';
-    byId('editorToolbar').hidden = true;
-    byId('metadataEditor').hidden = true;
-    byId('saveFile').disabled = true;
-    button.hidden = true;
-    byId('dirtyBadge').hidden = true;
+    resetFileEditor();
     await loadFiles();
     setMessage(byId('fileMessage'), 'Fichier supprimé.', 'success');
   } catch (error) {
     setMessage(byId('fileMessage'), error.message, 'error');
   } finally {
     button.disabled = false;
+  }
+}
+
+// Suppression d'un skill directement depuis le panneau « Skills et agents »,
+// indépendamment du fichier actuellement ouvert dans l'éditeur (contrairement
+// à deleteFile(), qui n'agit que sur selectedFile).
+async function deleteSkillFromPanel(file) {
+  if (!confirm(`Supprimer définitivement ce skill « ${file.name || file.path} » ?\nUne sauvegarde est conservée, mais le fichier disparaît de Claude Code.`)) return;
+  try {
+    await api(`/api/admin/file?path=${encodeURIComponent(file.path)}`, { method: 'DELETE' });
+    toast('Skill supprimé');
+    if (selectedFile?.path === file.path) {
+      editorTouched = false;
+      selectedFile = null;
+      resetFileEditor();
+    }
+    await loadFiles();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+// Suppression d'une seule annexe (asset/script) d'un skill, sans toucher au
+// reste du dossier ni à la sélection courante dans l'éditeur.
+async function deleteSkillAsset(asset) {
+  if (!confirm(`Supprimer définitivement le fichier « ${asset.name} » ?\nUne sauvegarde est conservée.`)) return;
+  try {
+    await api(`/api/admin/asset?path=${encodeURIComponent(asset.path)}`, { method: 'DELETE' });
+    toast('Fichier supprimé');
+    await loadFiles({ selectPath: selectedFile?.path || null });
+  } catch (error) {
+    toast(error.message);
   }
 }
 
@@ -3233,6 +3326,7 @@ function renderTimelineRow(doc) {
   if (doc.codes.length) {
     const chips = document.createElement('div');
     chips.className = 'chronology-chips';
+    chips.title = 'Cliquer pour corriger les entités détectées';
     for (const entity of doc.codes) {
       const chip = document.createElement('span');
       chip.className = `entity-chip cat-${entity.category}`;
@@ -3240,6 +3334,7 @@ function renderTimelineRow(doc) {
       chip.title = `${CATEGORY_LABELS[entity.category] || entity.category} · ${entity.code}`;
       chips.append(chip);
     }
+    chips.addEventListener('click', () => openChronologyEntityDialog(doc));
     card.append(chips);
   } else if (doc.indexed) {
     const none = document.createElement('div');
@@ -3248,8 +3343,51 @@ function renderTimelineRow(doc) {
     card.append(none);
   }
 
+  const actions = document.createElement('div');
+  actions.className = 'chronology-card-actions';
+
+  const correctButton = document.createElement('button');
+  correctButton.type = 'button';
+  correctButton.className = 'button ghost compact';
+  correctButton.textContent = '📝 Corriger / contenu';
+  correctButton.title = 'Voir le Markdown converti et corriger les entités détectées';
+  correctButton.disabled = !doc.indexed;
+  correctButton.addEventListener('click', () => openChronologyEntityDialog(doc));
+  actions.append(correctButton);
+
+  const revealButton = document.createElement('button');
+  revealButton.type = 'button';
+  revealButton.className = 'button ghost compact';
+  revealButton.textContent = '📂 Afficher l’original';
+  revealButton.title = 'Révéler la pièce originale dans le gestionnaire de fichiers du poste';
+  revealButton.addEventListener('click', () => revealChronologyPiece(doc, revealButton));
+  actions.append(revealButton);
+
+  card.append(actions);
+
   row.append(card);
   return row;
+}
+
+// Révèle la pièce ORIGINALE (pas son Markdown) dans le Finder/Explorateur du
+// poste — jamais de contenu affiché dans le navigateur, donc sûr même pour une
+// pièce protégée : `/api/admin/reveal` ouvre un outil du système, il ne
+// renvoie aucun texte de la pièce.
+async function revealChronologyPiece(doc, button) {
+  const previous = button.textContent;
+  button.disabled = true;
+  try {
+    const result = await api('/api/admin/reveal', {
+      method: 'POST',
+      body: JSON.stringify({ target: 'files', case: selectedFolder, path: doc.path }),
+    });
+    toast(`Pièce révélée · ${result.path}`);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = previous;
+  }
 }
 
 // Graphify produit lui-même le document interactif (clustering Leiden, moteur
@@ -3271,6 +3409,7 @@ function renderChronologyGraph(data) {
     return empty;
   }
   const wrapper = document.createElement('div');
+  wrapper.className = 'graphify-viewer-wrap';
   const meta = document.createElement('p');
   meta.className = 'chronology-graph-meta';
   meta.textContent = 'Visualiseur officiel Graphify · résultats GLiNER locaux · sans LLM (0 token)';
@@ -3280,8 +3419,209 @@ function renderChronologyGraph(data) {
   frame.setAttribute('sandbox', 'allow-scripts');
   frame.referrerPolicy = 'no-referrer';
   frame.srcdoc = graphData.viewerHtml;
-  wrapper.append(meta, frame);
+
+  // Bascule plein écran CSS (pas la Fullscreen API : l'iframe, en sandbox
+  // `allow-scripts` seul, ne peut pas fiablement la demander). L'écouteur
+  // Escape n'est posé que pendant le plein écran et retiré à la sortie — sinon
+  // rouvrir la chronologie plusieurs fois empilerait un écouteur par graphe.
+  const fullscreenButton = document.createElement('button');
+  fullscreenButton.type = 'button';
+  fullscreenButton.className = 'button ghost compact graphify-fullscreen-toggle';
+  const setFullscreenLabel = (active) => {
+    fullscreenButton.textContent = active ? '⤡ Réduire' : '⤢ Plein écran';
+    fullscreenButton.title = active ? 'Revenir à l’affichage normal' : 'Agrandir le graphe en plein écran';
+  };
+  const onEscape = (event) => {
+    if (event.key === 'Escape') setFullscreen(false);
+  };
+  const setFullscreen = (active) => {
+    wrapper.classList.toggle('graphify-fullscreen', active);
+    setFullscreenLabel(active);
+    document.removeEventListener('keydown', onEscape);
+    if (active) document.addEventListener('keydown', onEscape);
+  };
+  fullscreenButton.addEventListener('click', () => setFullscreen(!wrapper.classList.contains('graphify-fullscreen')));
+  setFullscreenLabel(false);
+
+  wrapper.append(meta, fullscreenButton, frame);
   return wrapper;
+}
+
+// ---------------------------------------------------------------------------
+// Correction des entités détectées (chronologie) — popup à deux colonnes :
+// les entités de la pièce à gauche (éditables), son Markdown converti à
+// droite pour le contexte. Toute modification passe par les MÊMES helpers que
+// l'éditeur de mapping (`groupMappingByCode` / `buildMappingDocument`) et le
+// même endpoint `PUT /api/admin/mapping` — jamais de substitution maison.
+// `chronologyEntityContext.groups` porte TOUT le mapping du dossier : seuls
+// les groupes des codes de cette pièce sont montrés/édités, les autres sont
+// renvoyés inchangés pour ne rien perdre du reste du dossier.
+let chronologyEntityDoc = null;
+let chronologyEntityContext = null;
+
+function closeChronologyEntityDialog() {
+  chronologyEntityDoc = null;
+  chronologyEntityContext = null;
+  byId('chronologyEntityDialog').close();
+}
+
+async function openChronologyEntityDialog(doc) {
+  if (!selectedFolder || !doc.indexed) return;
+  chronologyEntityDoc = doc;
+  chronologyEntityContext = null;
+  byId('chronologyEntityTitle').textContent = doc.name;
+  byId('chronologyEntityRows').textContent = '';
+  byId('chronologyEntityPreview').textContent = 'Chargement…';
+  setMessage(byId('chronologyEntityMessage'), 'Chargement…');
+  byId('chronologyEntityDialog').showModal();
+  try {
+    const [mappingData, documentData] = await Promise.all([
+      api(`/api/admin/mapping?${new URLSearchParams({ case: selectedFolder })}`),
+      api(`/api/admin/repository/document?${new URLSearchParams({ case: selectedFolder, path: doc.path })}`),
+    ]);
+    chronologyEntityContext = {
+      groups: groupMappingByCode(mappingData.mapping, mappingData.reverse_mapping),
+      informations_dossier: mappingData.informations_dossier,
+    };
+    renderChronologyEntityRows(doc);
+    renderChronologyEntityPreview(documentData.content);
+    setMessage(byId('chronologyEntityMessage'), '');
+  } catch (error) {
+    setMessage(byId('chronologyEntityMessage'), error.message, 'error');
+  }
+}
+
+function chronologyEntityRowsList() {
+  return byId('chronologyEntityRows').querySelectorAll('.chronology-entity-row');
+}
+
+function showChronologyEntityEmptyState() {
+  const rows = byId('chronologyEntityRows');
+  const empty = document.createElement('p');
+  empty.className = 'chronology-entity-empty';
+  empty.textContent = 'Toutes les entités de cette pièce ont été écartées.';
+  rows.append(empty);
+}
+
+function renderChronologyEntityRows(doc) {
+  const rows = byId('chronologyEntityRows');
+  rows.textContent = '';
+  const codes = [...new Set(doc.codes.map((entity) => entity.code))];
+  if (!codes.length) {
+    const empty = document.createElement('p');
+    empty.className = 'chronology-entity-empty';
+    empty.textContent = 'Aucune entité détectée dans cette pièce.';
+    rows.append(empty);
+    return;
+  }
+  for (const code of codes) {
+    const entity = doc.codes.find((item) => item.code === code);
+    const group = chronologyEntityContext.groups.find((candidate) => candidate.code === code);
+    const row = document.createElement('div');
+    row.className = 'chronology-entity-row';
+    row.dataset.code = code;
+
+    const badge = document.createElement('span');
+    badge.className = `entity-chip cat-${entity.category}`;
+    badge.textContent = CATEGORY_LABELS[entity.category] || entity.category;
+
+    const field = document.createElement('div');
+    const input = document.createElement('input');
+    input.className = 'chronology-entity-label';
+    input.value = group?.principal || entity.label || '';
+    input.setAttribute('aria-label', `Libellé de ${code}`);
+    input.addEventListener('input', () => {
+      input.classList.remove('invalid');
+      setMessage(byId('chronologyEntityMessage'), '');
+    });
+    const codeLabel = document.createElement('span');
+    codeLabel.className = 'chronology-entity-code';
+    codeLabel.textContent = code;
+    field.append(input, codeLabel);
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'remove-chronology-entity';
+    remove.title = 'Écarter cette entité (fausse détection) — ses variants iront dans les entrées ignorées';
+    remove.textContent = '×';
+    remove.addEventListener('click', () => {
+      row.remove();
+      if (!chronologyEntityRowsList().length) showChronologyEntityEmptyState();
+    });
+
+    row.append(badge, field, remove);
+    rows.append(row);
+  }
+}
+
+function renderChronologyEntityPreview(content) {
+  const preview = byId('chronologyEntityPreview');
+  const text = String(content || '');
+  if (!text.trim()) {
+    preview.textContent = 'Contenu vide.';
+    return;
+  }
+  preview.innerHTML = markdownToHtml(text);
+}
+
+// Reconstruit un groupe édité pour `buildMappingDocument` : le nouveau
+// libellé devient le variant principal, mais l'ancien texte détecté (et les
+// autres variants déjà connus) restent dans le mapping — renommer l'affichage
+// ne doit pas faire disparaître une écriture réellement présente dans les
+// pièces, sous peine de fuite au prochain scan (le texte redeviendrait en
+// clair, non substitué). Écarter une variante précise reste le rôle du bouton
+// « × » (toute l'entrée) ou de l'éditeur de mapping complet (variant par
+// variant).
+function chronologyRelabeledGroup(group, code, rawLabel) {
+  const label = String(rawLabel || '').trim();
+  const known = group ? [group.principal, ...group.variants] : [];
+  const variants = known.filter((variant) => variant && variant !== label);
+  return { code, principal: label, variants };
+}
+
+async function saveChronologyEntityChanges(event) {
+  event.preventDefault();
+  if (!chronologyEntityDoc || !chronologyEntityContext) return;
+  const button = byId('saveChronologyEntity');
+  button.disabled = true;
+  try {
+    const editedCodes = new Set(chronologyEntityDoc.codes.map((entity) => entity.code));
+    const kept = [...chronologyEntityRowsList()].map((row) => {
+      const code = row.dataset.code;
+      const group = chronologyEntityContext.groups.find((candidate) => candidate.code === code);
+      return chronologyRelabeledGroup(group, code, row.querySelector('.chronology-entity-label').value);
+    });
+    const untouched = chronologyEntityContext.groups.filter((group) => !editedCodes.has(group.code));
+    const nextGroups = [...untouched, ...kept];
+    let document;
+    try {
+      // eslint-disable-next-line no-shadow -- même convention que saveMapping() : `document` désigne ici le document de mapping envoyé au serveur, pas le DOM.
+      document = {
+        ...buildMappingDocument(nextGroups),
+        informations_dossier: chronologyEntityContext.informations_dossier,
+      };
+    } catch (validationError) {
+      // Le libellé en cause est forcément un des groupes édités dans cette
+      // popup (les groupes intouchés viennent du mapping déjà valide) —
+      // on retrouve la ligne par son code pour la mettre en évidence.
+      const offending = nextGroups[validationError.rowIndex];
+      const input = offending && byId('chronologyEntityRows').querySelector(`[data-code="${CSS.escape(offending.code)}"] .chronology-entity-label`);
+      input?.classList.add('invalid');
+      input?.focus();
+      throw validationError;
+    }
+    const data = await api('/api/admin/mapping', {
+      method: 'PUT',
+      body: JSON.stringify({ case: selectedFolder, ...document }),
+    });
+    toast(`Entités mises à jour${data.commit?.created ? ' et commitées' : ''}`);
+    closeChronologyEntityDialog();
+    await loadChronology();
+  } catch (error) {
+    setMessage(byId('chronologyEntityMessage'), error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function setHistoryView(view) {
@@ -3508,6 +3848,9 @@ byId('addAdverseParty').addEventListener('click', () => addProcedureParty('adver
 byId('closeProcedureParties').addEventListener('click', closeProcedurePartiesDialog);
 byId('cancelProcedureParties').addEventListener('click', closeProcedurePartiesDialog);
 byId('procedurePartiesForm').addEventListener('submit', saveProcedureParties);
+byId('closeChronologyEntity').addEventListener('click', closeChronologyEntityDialog);
+byId('cancelChronologyEntity').addEventListener('click', closeChronologyEntityDialog);
+byId('chronologyEntityForm').addEventListener('submit', saveChronologyEntityChanges);
 byId('caseTelegramCard').addEventListener('click', openCaseTelegramEditor);
 byId('telegramCaseView').addEventListener('submit', saveCaseTelegramBot);
 
@@ -3671,6 +4014,9 @@ byId('stopMonitor').addEventListener('click', (event) => controlTelegram('monito
 byId('saveFile').addEventListener('click', saveFile);
 byId('deleteFile').addEventListener('click', deleteFile);
 byId('fileEditor').addEventListener('input', markEditorDirty);
+byId('fileEditor').addEventListener('scroll', (event) => {
+  byId('editorToolbar').classList.toggle('is-floating', event.currentTarget.scrollTop > 4);
+});
 document.querySelectorAll('#metadataEditor input').forEach((input) => input.addEventListener('input', markEditorDirty));
 document.querySelectorAll('#editorToolbar button').forEach((button) => {
   button.addEventListener('mousedown', (event) => event.preventDefault());
@@ -3686,7 +4032,6 @@ byId('blockFormat').addEventListener('change', (event) => {
   document.execCommand('formatBlock', false, event.currentTarget.value);
   markEditorDirty();
 });
-document.querySelectorAll('[data-create-kind]').forEach((button) => button.addEventListener('click', () => openCreateDialog(button.dataset.createKind)));
 byId('createFileForm').addEventListener('submit', createFile);
 byId('syncClaudeAssets').addEventListener('click', syncClaudeAssets);
 byId('cancelCreateFile').addEventListener('click', () => byId('createFileDialog').close());

@@ -28,6 +28,7 @@ const {
   resolveCommitIdentity,
   restoreRevision,
   revisionDetails,
+  safeCaseFiles,
   worktreeDetails,
 } = require('../piecemaker-plugin/scripts/lib/commits.cjs');
 const {
@@ -41,6 +42,7 @@ const {
   writeCaseMapping,
 } = require('./originals-pipeline.cjs');
 const {
+  documentKey,
   readProtection,
   writeProtection,
 } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
@@ -1044,6 +1046,48 @@ function installedPluginSkills(runCommand = captureCommand) {
   return skills.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// Nombre maximal d'annexes listées pour un skill (panneau « Skills et
+// agents ») — borne défensive contre un dossier de skill pathologique.
+const MAX_SKILL_ASSETS = 200;
+
+// Les fichiers annexes (assets/scripts) d'un skill, pour l'affichage
+// indenté sous son bouton dans le panneau « Skills et agents ». `skillRelPath`
+// est le chemin relatif de son SKILL.md ; on recurse dans les sous-dossiers
+// (ex. `scripts/`) mais `name` reste le seul basename — jamais le chemin — et
+// `path` est le chemin relatif au dépôt utilisé pour la suppression. Les
+// fichiers cachés et les dossiers cachés sont ignorés, SKILL.md n'est jamais
+// listé comme une annexe, et la liste est triée par nom puis plafonnée.
+function listSkillAssets(repoRoot, skillRelPath) {
+  const normalized = normalizeManagedPath(skillRelPath);
+  if (!/^piecemaker-plugin\/skills\/[^/]+\/SKILL\.md$/.test(normalized)) return [];
+  const skillDirRel = normalized.replace(/\/SKILL\.md$/, '');
+  const skillDir = path.resolve(repoRoot, ...skillDirRel.split('/'));
+  const assets = [];
+  const walk = (dir, relDir) => {
+    if (assets.length >= MAX_SKILL_ASSETS) return;
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
+      if (assets.length >= MAX_SKILL_ASSETS) return;
+      if (entry.name.startsWith('.')) continue;
+      const entryRel = relDir ? `${relDir}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        walk(path.join(dir, entry.name), entryRel);
+      } else if (entry.isFile()) {
+        if (relDir === '' && entry.name === 'SKILL.md') continue;
+        assets.push({ name: entry.name, path: `${skillDirRel}/${entryRel}` });
+      }
+    }
+  };
+  walk(skillDir, '');
+  assets.sort((a, b) => a.name.localeCompare(b.name));
+  return assets.slice(0, MAX_SKILL_ASSETS);
+}
+
 // Les instructions, skills et agents du dépôt, plus les skills des plugins de
 // marketplace installés (groupe « Skills officiels », lecture seule) : les
 // aperçus de facturation vivent dans ~/.piecemaker/billing, une hiérarchie
@@ -1082,6 +1126,9 @@ function listManagedFiles(repoRoot, homeDir = path.join(os.homedir(), '.piecemak
       // Visibilité côté Claude Code (voir claude-assets.cjs) — null pour les
       // fichiers qui ne sont pas des composants de plugin.
       claudeCode: claudeAssetStatus(repoRoot, userHome, normalized),
+      // Fichiers annexes (assets/scripts) — seuls les skills en ont un
+      // dossier propre ; un agent n'a jamais d'annexes.
+      assets: kind === 'skill' ? listSkillAssets(repoRoot, normalized) : [],
     };
   });
 
@@ -1110,24 +1157,27 @@ function listManagedFiles(repoRoot, homeDir = path.join(os.homedir(), '.piecemak
 // admin/markdown.mjs#parseMetadata (module navigateur, non réutilisable
 // ici — server.cjs ne charge pas de modules ES du dossier admin/), réduite
 // aux deux clés affichées.
+function parseFrontMatter(raw) {
+  const match = String(raw || '').match(/^---\n([\s\S]*?)\n---(?:\n|$)/);
+  if (!match) return {};
+  const values = {};
+  for (const line of match[1].split('\n')) {
+    const lineMatch = line.match(/^([A-Za-z][A-Za-z0-9_-]*):\s*(.*)$/);
+    if (!lineMatch) continue;
+    let value = lineMatch[2];
+    if (value.startsWith('"')) {
+      try { value = JSON.parse(value); } catch { value = value.replace(/^"|"$/g, ''); }
+    } else if (value.startsWith("'") && value.endsWith("'")) {
+      value = value.slice(1, -1).replaceAll("''", "'");
+    }
+    values[lineMatch[1]] = value;
+  }
+  return values;
+}
+
 function pluginComponentFrontMatter(absolutePath) {
   try {
-    const raw = fs.readFileSync(absolutePath, 'utf8');
-    const match = raw.match(/^---\n([\s\S]*?)\n---(?:\n|$)/);
-    if (!match) return {};
-    const values = {};
-    for (const line of match[1].split('\n')) {
-      const lineMatch = line.match(/^([A-Za-z][A-Za-z0-9_-]*):\s*(.*)$/);
-      if (!lineMatch) continue;
-      let value = lineMatch[2];
-      if (value.startsWith('"')) {
-        try { value = JSON.parse(value); } catch { value = value.replace(/^"|"$/g, ''); }
-      } else if (value.startsWith("'") && value.endsWith("'")) {
-        value = value.slice(1, -1).replaceAll("''", "'");
-      }
-      values[lineMatch[1]] = value;
-    }
-    return values;
+    return parseFrontMatter(fs.readFileSync(absolutePath, 'utf8'));
   } catch {
     return {};
   }
@@ -1393,6 +1443,40 @@ function saveManagedAsset(repoRoot, homeDir, skillRelPath, filename, buffer) {
 }
 
 /**
+ * Supprime un unique fichier annexe (asset ou script) d'un skill, sans toucher
+ * au reste du dossier. `managedAbsolutePath` ne reconnaît pas un chemin
+ * d'annexe (`managedFileKind` renvoie `null` dessus), donc on ne peut pas le
+ * réutiliser tel quel : cette fonction reprend la même vérification de
+ * confinement (chemin résolu sous le dépôt, puis realpath contre un lien
+ * symbolique) directement contre `piecemaker-plugin/skills/<slug>/`.
+ * `SKILL.md` n'est jamais une « annexe » — sa suppression passe par
+ * `deleteManagedFile` (suppression du skill entier).
+ */
+function deleteManagedAsset(repoRoot, homeDir, assetRelPath) {
+  const normalized = normalizeManagedPath(assetRelPath);
+  if (!/^piecemaker-plugin\/skills\/[^/]+\/.+/.test(normalized) || normalized.endsWith('/SKILL.md')) {
+    throw new Error('Ce chemin ne correspond pas à un fichier annexe de skill.');
+  }
+  const root = path.resolve(repoRoot);
+  const absolute = path.resolve(root, ...normalized.split('/'));
+  if (absolute !== root && !absolute.startsWith(`${root}${path.sep}`)) {
+    throw new Error('Chemin de fichier invalide.');
+  }
+  const existing = nearestExistingPath(absolute);
+  const realRoot = fs.realpathSync(nearestExistingPath(root));
+  const realExisting = fs.realpathSync(existing);
+  if (realExisting !== realRoot && !realExisting.startsWith(`${realRoot}${path.sep}`)) {
+    throw new Error('Le fichier résout vers un emplacement extérieur au dépôt.');
+  }
+  if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) {
+    throw new Error('Fichier annexe introuvable.');
+  }
+  backupFile(absolute, normalized, homeDir);
+  fs.rmSync(absolute);
+  return { path: normalized, deletedAt: new Date().toISOString() };
+}
+
+/**
  * Supprime un skill ou un agent du dépôt : seuls ces deux types sont
  * effaçables ici — instructions (CLAUDE.md/AGENTS.md), skills officiels et
  * aperçus de facturation ne le sont jamais. Le contenu est sauvegardé avant
@@ -1414,6 +1498,50 @@ function deleteManagedFile(repoRoot, homeDir, relativePath) {
   const target = kind === 'skill' ? path.dirname(absolute) : absolute;
   fs.rmSync(target, { recursive: true, force: true });
   return { path: normalized, kind, deletedAt: new Date().toISOString() };
+}
+
+// Le slug qui identifie un skill/agent sur le disque : le dossier pour un
+// skill (`piecemaker-plugin/skills/<slug>/SKILL.md`), le basename du `.md` pour
+// un agent (`piecemaker-plugin/agents/<slug>.md`).
+function managedSlug(normalized) {
+  const kind = managedFileKind(normalized);
+  if (kind === 'skill') return normalized.split('/')[2];
+  if (kind === 'agent') return path.basename(normalized, '.md');
+  return null;
+}
+
+/**
+ * Renomme un skill/agent quand le champ `name:` de son front matter ne
+ * correspond plus au slug de son emplacement. Ce nom sert de nom de dossier
+ * (skill) ou de fichier (agent) et doit rester en accord avec ce que Claude
+ * Code découvre. Pour un skill on déplace le dossier
+ * `piecemaker-plugin/skills/<slug>/` entier (SKILL.md et ses annexes suivent) ;
+ * pour un agent, le seul fichier `.md`. Renvoie `{ renamed, path, previous }`,
+ * ou `{ renamed: false }` si le nom est inchangé.
+ */
+function renameManagedFile(repoRoot, homeDir, relativePath, newSlug) {
+  const { absolute, normalized } = managedAbsolutePath(repoRoot, relativePath, homeDir);
+  const kind = managedFileKind(normalized);
+  if (!['skill', 'agent'].includes(kind)) {
+    throw new Error('Seuls un skill ou un agent peuvent être renommés.');
+  }
+  const slug = String(newSlug || '').trim();
+  if (!slug || slug === managedSlug(normalized)) return { renamed: false, path: normalized };
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
+    throw new Error('Le nom sert de nom de dossier : uniquement minuscules, chiffres et tirets.');
+  }
+  const targetRelative = kind === 'skill'
+    ? `piecemaker-plugin/skills/${slug}/SKILL.md`
+    : `piecemaker-plugin/agents/${slug}.md`;
+  const { absolute: targetAbsolute, normalized: targetNormalized } = managedAbsolutePath(repoRoot, targetRelative, homeDir);
+  const source = kind === 'skill' ? path.dirname(absolute) : absolute;
+  const destination = kind === 'skill' ? path.dirname(targetAbsolute) : targetAbsolute;
+  if (!fs.existsSync(source)) throw new Error('Fichier introuvable — enregistrez-le avant de le renommer.');
+  if (fs.existsSync(destination)) {
+    throw new Error(`Un ${kind === 'skill' ? 'skill' : 'agent'} nommé « ${slug} » existe déjà.`);
+  }
+  fs.renameSync(source, destination);
+  return { renamed: true, path: targetNormalized, previous: normalized };
 }
 
 function isLocalOrigin(origin) {
@@ -1476,6 +1604,38 @@ async function listDossiers(repoRoot, homeDir) {
 }
 
 const REVEAL_TARGETS = new Set(['files', 'terminal']);
+
+/**
+ * Résout un chemin reçu du navigateur (relatif à la racine d'un dossier
+ * juridique) vers un chemin absolu, sans jamais remonter hors de cette
+ * racine. Même garde que `startOriginalsJob` (originals-pipeline.cjs) pour
+ * les pièces sélectionnées : `path.resolve` puis vérification du préfixe.
+ */
+function resolveCasePath(caseRoot, relativePath) {
+  const relative = String(relativePath || '').replaceAll('\\', '/').replace(/^\.\//, '');
+  if (!relative) throw new Error('Chemin de pièce manquant.');
+  const absolute = path.resolve(caseRoot, ...relative.split('/'));
+  if (absolute !== caseRoot && !absolute.startsWith(`${caseRoot}${path.sep}`)) {
+    throw new Error('Pièce hors du dossier juridique.');
+  }
+  if (!fs.existsSync(absolute)) throw new Error('Pièce introuvable.');
+  return absolute;
+}
+
+/**
+ * Le Markdown converti d'une pièce originale (chemin relatif à la racine du
+ * dossier). La chronologie ne connaît une pièce que par le chemin de son
+ * ORIGINAL (`document-index.cjs`, sur `originalFilesOverview`) ; retrouver son
+ * `.md` reprend la même clé de correspondance que `originalFilesOverview`
+ * (`documentKey` du basename), sans supposer d'emplacement fixe — le
+ * converti vit sous `Fichiers convertis PieceMaker/`, mais un `.md` migré
+ * depuis une version antérieure peut encore traîner à la racine.
+ */
+async function convertedMarkdownRelativePath(caseRoot, originalRelativePath) {
+  const key = documentKey(path.basename(String(originalRelativePath || '')));
+  const files = await safeCaseFiles(caseRoot);
+  return files.find((file) => path.extname(file).toLowerCase() === '.md' && documentKey(file) === key) || null;
+}
 
 /**
  * Commandes candidates pour montrer un dossier du poste de travail, essayées
@@ -1871,8 +2031,36 @@ function createAdminRouter({
 
   router.put('/file', (req, res) => {
     try {
-      const saved = saveManagedFile(repoRoot, homeDir, req.body?.path, req.body?.content);
-      res.json({ ok: true, ...saved, claudeCode: registerClaudeAsset(repoRoot, userHome, saved.path) });
+      const relativePath = req.body?.path;
+      const content = req.body?.content;
+      const normalized = normalizeManagedPath(relativePath || '');
+      const kind = managedFileKind(normalized);
+      let effectivePath = relativePath;
+      let previousPath = null;
+      // Le champ `name:` du front matter sert de nom de dossier (skill) ou de
+      // fichier (agent) : s'il change sur un fichier déjà présent, on renomme
+      // sur le disque pour que Claude Code retrouve l'asset sous son nouveau
+      // nom (un fichier pas encore créé garde le chemin de son slug initial).
+      if (['skill', 'agent'].includes(kind) && typeof content === 'string') {
+        const { absolute } = managedAbsolutePath(repoRoot, normalized, homeDir);
+        if (fs.existsSync(absolute)) {
+          const rename = renameManagedFile(repoRoot, homeDir, normalized, parseFrontMatter(content).name);
+          if (rename.renamed) {
+            effectivePath = rename.path;
+            previousPath = rename.previous;
+          }
+        }
+      }
+      const saved = saveManagedFile(repoRoot, homeDir, effectivePath, content);
+      // Un renommage laisse l'ancien lien Claude Code orphelin : on le retire
+      // avant d'enregistrer le nouveau.
+      if (previousPath) unregisterClaudeAsset(repoRoot, userHome, previousPath);
+      res.json({
+        ok: true,
+        ...saved,
+        renamedFrom: previousPath || undefined,
+        claudeCode: registerClaudeAsset(repoRoot, userHome, saved.path),
+      });
     } catch (error) {
       res.status(400).json({ error: error.message });
     }
@@ -1901,6 +2089,19 @@ function createAdminRouter({
       const filename = decodeURIComponent(req.get('X-Filename') || '');
       const saved = saveManagedAsset(repoRoot, homeDir, skillPath, filename, req.body);
       res.status(201).json({ ok: true, ...saved });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Supprime un unique fichier annexe d'un skill (pas le SKILL.md lui-même —
+  // voir DELETE /file pour supprimer le skill entier). Chemin en query
+  // (`?path=`) ou dans le corps.
+  router.delete('/asset', (req, res) => {
+    try {
+      const relativePath = req.query?.path || req.body?.path;
+      const deleted = deleteManagedAsset(repoRoot, homeDir, relativePath);
+      res.json({ ok: true, ...deleted });
     } catch (error) {
       res.status(400).json({ error: error.message });
     }
@@ -2016,6 +2217,29 @@ function createAdminRouter({
     }
   });
 
+  // Contenu en lecture seule du Markdown converti d'une pièce — la seule
+  // surface sûre : `path` est le chemin de la pièce ORIGINALE (comme partout
+  // ailleurs dans la chronologie/l'aperçu), jamais lu directement. Sert
+  // l'aperçu de la chronologie et le panneau droit de la correction d'entités ;
+  // le fichier original (PDF/DOCX/scan) n'est jamais renvoyé par cette route.
+  router.get('/repository/document', async (req, res) => {
+    try {
+      const legalCase = selectedCase(req.query.case);
+      const mdPath = await convertedMarkdownRelativePath(legalCase.root, req.query.path);
+      if (!mdPath) throw new Error('Cette pièce n’a pas encore de Markdown converti.');
+      const absolute = resolveCasePath(legalCase.root, mdPath);
+      const content = fs.readFileSync(absolute, 'utf8');
+      res.json({
+        path: mdPath,
+        content: Buffer.byteLength(content, 'utf8') > MAX_MARKDOWN_BYTES
+          ? `${content.slice(0, MAX_MARKDOWN_BYTES)}\n\n… (aperçu tronqué à 1 Mo)`
+          : content,
+      });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   router.post('/branches', async (req, res) => {
     try {
       const legalCase = selectedCase(req.body?.case);
@@ -2050,15 +2274,23 @@ function createAdminRouter({
 
   // Ouvre le dossier juridique sélectionné (ou, à défaut, le dossier personnel)
   // dans le gestionnaire de fichiers ou le terminal du poste. Le chemin est
-  // toujours résolu localement, jamais reçu du navigateur.
+  // toujours résolu localement, jamais reçu tel quel du navigateur : un `path`
+  // optionnel (target: 'files' seulement) désigne une pièce précise, relative à
+  // la racine du dossier — `resolveCasePath` refuse toute sortie de racine.
+  // Révéler dans le Finder n'affiche jamais de contenu dans le navigateur : sûr
+  // même pour une pièce protégée.
   router.post('/reveal', async (req, res) => {
     try {
       const target = String(req.body?.target || '');
       if (!REVEAL_TARGETS.has(target)) throw new Error('Action de dossier inconnue.');
       const caseName = String(req.body?.case || '').trim();
-      const absolute = caseName
-        ? selectedCase(caseName).root
-        : userHome;
+      const relativePath = target === 'files' ? String(req.body?.path || '').trim() : '';
+      let absolute;
+      if (caseName && relativePath) {
+        absolute = resolveCasePath(selectedCase(caseName).root, relativePath);
+      } else {
+        absolute = caseName ? selectedCase(caseName).root : userHome;
+      }
       await revealLocalFolder(process.platform, target, absolute);
       res.json({ ok: true, target, path: absolute });
     } catch (error) {
@@ -2355,6 +2587,7 @@ module.exports = {
   createLegalCase,
   createAdminRouter,
   createManagedFile,
+  deleteManagedAsset,
   deleteManagedFile,
   ensureClaudePluginActive,
   folderPickerCommands,
@@ -2366,12 +2599,14 @@ module.exports = {
   listMarketplaceConnectors,
   listPluginComponents,
   listRegisteredMarketplaces,
+  listSkillAssets,
   managedFileKind,
   normalizeAgentModel,
   normalizeAgentTools,
   readManagedFile,
   registerLegalCase,
   registerOfficialMarketplace,
+  renameManagedFile,
   revealCommands,
   saveManagedAsset,
   saveManagedFile,

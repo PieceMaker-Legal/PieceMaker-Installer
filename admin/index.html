@@ -572,8 +572,6 @@
           <aside class="file-sidebar">
             <div class="section-heading"><div><p class="eyebrow">MARKDOWN VISUEL</p><h2>Fichiers</h2></div></div>
             <div class="new-file-actions">
-              <button class="button secondary compact" type="button" data-create-kind="skill">+ Skill</button>
-              <button class="button secondary compact" type="button" data-create-kind="agent">+ Agent</button>
               <button id="syncClaudeAssets" class="button secondary compact" type="button" title="Réenregistrer tous les skills et agents auprès de Claude Code">⟳ Claude Code</button>
               <button id="addClaudePluginBtn" class="button secondary compact" type="button" title="Installer le plugin PieceMaker et choisir les skills/agents à activer dans Claude Code">+ Plugin Claude</button>
             </div>
@@ -735,6 +733,30 @@
       <div class="actions">
         <button id="cancelProcedureParties" class="button secondary" type="button">Annuler</button>
         <button id="saveProcedureParties" class="button primary" type="submit">Enregistrer les parties</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="chronologyEntityDialog" class="chronology-entity-dialog">
+    <form id="chronologyEntityForm" class="dialog-card chronology-entity-card">
+      <header class="procedure-dialog-header">
+        <div><p class="eyebrow">CHRONOLOGIE</p><h2 id="chronologyEntityTitle">Entités détectées</h2><p>Corrigez les entités trouvées par le scan PII ; une entrée supprimée est ignorée lors des prochains scans.</p></div>
+        <button id="closeChronologyEntity" class="dialog-close" type="button" aria-label="Fermer">×</button>
+      </header>
+      <div class="chronology-entity-columns">
+        <section class="chronology-entity-list-col">
+          <div class="chronology-entity-col-title">Entités de cette pièce</div>
+          <div id="chronologyEntityRows" class="chronology-entity-rows"></div>
+        </section>
+        <section class="chronology-entity-preview-col">
+          <div class="chronology-entity-col-title">Contenu (Markdown converti)</div>
+          <div id="chronologyEntityPreview" class="chronology-entity-preview"></div>
+        </section>
+      </div>
+      <span id="chronologyEntityMessage" class="message"></span>
+      <div class="actions">
+        <button id="cancelChronologyEntity" class="button secondary" type="button">Annuler</button>
+        <button id="saveChronologyEntity" class="button primary" type="submit">Enregistrer les corrections</button>
       </div>
     </form>
   </dialog>
