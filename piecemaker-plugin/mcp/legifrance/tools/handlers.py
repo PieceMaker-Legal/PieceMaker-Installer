@@ -1523,11 +1523,16 @@ def handle_download_query_results(args: Dict[str, Any], user_id: str) -> Dict[st
         f"(plafond max_results). Affinez la requête pour tout couvrir."
         if info["truncated"] else ""
     )
+    solution_note = (
+        f"**Solutions enrichies:** {info['solution_enriched']} (dispositif seul, sans motifs)\n"
+        if info.get("solution_enriched") else ""
+    )
     summary = (
         f"**📥 TÉLÉCHARGEMENT LEGIFRANCE — {info['juridiction']}**\n\n"
         f"**Requête:** {info['query']}\n"
         f"**Total API:** {info['total']}\n"
         f"**Téléchargés:** {info['downloaded']}\n"
+        f"{solution_note}"
         f"{truncated_note}\n\n"
         f"**Dossier:** {info['folder']}\n\n"
         f"Le dossier contient `index.md` (liste triable), un fichier `.md` par "

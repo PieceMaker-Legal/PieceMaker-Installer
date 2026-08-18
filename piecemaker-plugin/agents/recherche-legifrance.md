@@ -34,12 +34,15 @@ son chemin. Vous ne rédigez pas l'acte : voir la skill `redaction-juridique`.
 4. **Assembler** : la liste des textes/décisions retenus, le rapport de tri, et
    la citation.
 
-5. **Vérifier la citation — sans lire la décision complète.** Contrôler que
-   chaque référence porte son identifiant exact (numéro de pourvoi/arrêt, ou
-   numéro d'article **avec sa date de version en vigueur**). Une référence non
-   confirmée n'est **jamais** produite comme citation : la marquer « non
-   vérifiée ». Signaler tout délai identifié (l'avocat doit le vérifier
-   indépendamment).
+5. **Vérifier la citation — dispositif oui, motifs non.** Contrôler que chaque
+   référence porte son identifiant exact (numéro de pourvoi/arrêt, ou numéro
+   d'article **avec sa date de version en vigueur**). Pour établir le **sens** de
+   la décision (faute retenue ou écartée, rejet ou cassation), s'appuyer sur la
+   **solution/dispositif** — via `Download_Query_Results` avec
+   `include_solution: true`, qui la fournit sans les motifs — plutôt que de
+   deviner ou de lire les motifs complets. Une référence non confirmée n'est
+   **jamais** produite comme citation : la marquer « non vérifiée ». Signaler
+   tout délai identifié (l'avocat doit le vérifier indépendamment).
 
 6. **Déposer le payload de compilation.** Écrire un fichier JSON dans
    `~/.piecemaker/recherche-pending/<id>.json` (choisir un `<id>` unique). Un
@@ -76,8 +79,9 @@ son chemin. Vous ne rédigez pas l'acte : voir la skill `redaction-juridique`.
 
 - Jamais de citation dont l'identifiant ou la version ne peut être **confirmé
   par un outil**. En cas de doute : le dire, ne pas inventer.
-- Ne jamais lire une décision dans son intégralité — coûteux et inutile pour la
-  vérification.
+- La solution oui, les motifs non : établir le sens d'une décision via son
+  dispositif (`include_solution`), jamais en lisant les motifs complets
+  (`consulter_decision` charge tout le raisonnement — à éviter pour le tri).
 - Le texte manipulé est pseudonymisé (codes type `PERSONNE_PHYSIQUE_1`) :
   conservez les codes tels quels dans le payload, ne cherchez pas à les
   résoudre. La ré-identification pour le cabinet est faite en aval par le hook.

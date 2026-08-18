@@ -28,6 +28,7 @@ MARKER_NAME = ".legifrance-results.json"
 PAGE_SIZE = 100         # maximum accepté par l'API PISTE
 DEFAULT_MAX = 200       # plafond par défaut de décisions téléchargées
 HARD_MAX = 500          # plafond absolu (cohérent avec la garde des Search_*)
+SOLUTION_MAX = 50       # plafond d'enrichissements « solution » (1 appel API chacun)
 
 # Corpus supportés : (fond, filtres de juridiction, base de lien Legifrance).
 JURIDICTION_CONFIG = {
@@ -95,6 +96,70 @@ def _extract_entry(r, link_base):
     }
 
 
+# Ancres d'ouverture du DISPOSITIF (la solution), pour n'extraire que celle-ci et
+# jamais les motifs. Deux seules ancres fiables, confirmées par recherche sur les
+# trois ordres (civil/commercial, pénal, administratif) et les deux styles
+# rédactionnels (ancien « Attendu/Considérant que » vs style direct post-2019) :
+#   - judiciaire + pénal : « PAR CES MOTIFS »
+#   - administratif       : « DÉCIDE : » (dont la variante espacée « D E C I D E : »)
+# NB : « Attendu que » et « Considérant que » appartiennent aux MOTIFS et n'ancrent
+# donc jamais le dispositif. Insensible à la casse et aux accents. On prend la
+# PREMIÈRE occurrence — le bloc jusqu'à la fin capte toutes les branches du
+# dispositif (pourvois/parties multiples).
+DISPOSITIF_ANCHORS = re.compile(
+    r"PAR\s+CES\s+MOTIFS"
+    r"|D\s*[EÉ]\s*C\s*I\s*D\s*E\s*:",
+    re.IGNORECASE,
+)
+
+
+def _extract_dispositif(texte, max_len=1200):
+    """
+    Renvoie l'extrait du texte à partir de la première ancre de dispositif
+    rencontrée (motifs écartés), tronqué. Renvoie '' si aucune ancre.
+    """
+    if not texte:
+        return ""
+    match = DISPOSITIF_ANCHORS.search(texte)
+    if not match:
+        return ""
+    return texte[match.start():].strip()[:max_len].strip()
+
+
+def _fetch_solution(text_id):
+    """
+    Récupère UNIQUEMENT le dispositif/solution d'une décision (jamais les motifs) :
+    nature (Rejet/Cassation/…), décision attaquée, et l'extrait de dispositif.
+    Best-effort : renvoie None en cas d'échec.
+    """
+    if not text_id:
+        return None
+    try:
+        result = legifrance_client.get_decision_text(text_id)
+    except Exception:
+        return None
+    text = (result or {}).get("text", {}) or {}
+    nature = text.get("nature", "") or ""
+    da = text.get("decisionAttaquee", {}) or {}
+    da_formation = da.get("formation", "") or ""
+    da_date = ""
+    raw_date = da.get("date")
+    if isinstance(raw_date, (int, float)):
+        from datetime import datetime as _dt
+        try:
+            da_date = _dt.fromtimestamp(raw_date / 1000).strftime("%d/%m/%Y")
+        except Exception:
+            da_date = ""
+    dispositif = _extract_dispositif(text.get("texte", ""))
+    if not (nature or dispositif or da_formation):
+        return None
+    return {
+        "nature": nature,
+        "decision_attaquee": {"formation": da_formation, "date": da_date},
+        "dispositif": dispositif,
+    }
+
+
 def _entry_markdown(index, entry):
     lines = [f"# {index}. {entry['titre']}", ""]
     if entry["date"]:
@@ -106,6 +171,23 @@ def _entry_markdown(index, entry):
     if entry["articles"]:
         lines.append(f"- **Articles visés** : {', '.join(entry['articles'][:6])}")
     lines.append("")
+
+    solution = entry.get("solution")
+    if solution:
+        lines.append("## Solution (dispositif — sans les motifs)")
+        lines.append("")
+        if solution.get("nature"):
+            lines.append(f"- **Sens** : {solution['nature']}")
+        da = solution.get("decision_attaquee") or {}
+        if da.get("formation") or da.get("date"):
+            lines.append(f"- **Décision attaquée** : {da.get('formation', '')} {da.get('date', '')}".rstrip())
+        lines.append("")
+        if solution.get("dispositif"):
+            lines.append("```")
+            lines.append(solution["dispositif"])
+            lines.append("```")
+            lines.append("")
+
     lines.append("## Analyse / sommaire")
     lines.append("")
     lines.append(entry["analyse"] or "_Pas de sommaire renvoyé par l'API — décision probablement inédite._")
@@ -168,6 +250,20 @@ def download_query_results(args):
     collected = collected[:max_results]
     entries = [_extract_entry(r, config["link_base"]) for r in collected]
 
+    # Enrichissement optionnel : la solution/dispositif (rejet, cassation…), lue
+    # côté serveur et réduite au seul dispositif — jamais les motifs. Un appel API
+    # par décision, donc plafonné et à réserver à une liste déjà restreinte.
+    include_solution = bool(args.get("include_solution", False))
+    solution_enriched = 0
+    if include_solution:
+        for entry in entries[:SOLUTION_MAX]:
+            if not entry.get("id"):
+                continue
+            solution = _fetch_solution(entry["id"])
+            if solution:
+                entry["solution"] = solution
+                solution_enriched += 1
+
     # Écriture du dossier.
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     default_root = os.path.join(os.path.expanduser("~"), ".piecemaker", "legifrance-results")
@@ -209,6 +305,7 @@ def download_query_results(args):
         "total": total,
         "downloaded": len(entries),
         "truncated": truncated,
+        "solution_enriched": solution_enriched,
         "created": datetime.now().isoformat(timespec="seconds"),
         "files": ["index.md", "results.json"] + file_names,
     }
@@ -220,6 +317,7 @@ def download_query_results(args):
         "total": total,
         "downloaded": len(entries),
         "truncated": truncated,
+        "solution_enriched": solution_enriched,
         "juridiction": juridiction,
         "query": query,
     }

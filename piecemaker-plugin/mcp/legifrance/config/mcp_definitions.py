@@ -497,6 +497,11 @@ NOTE: Incluez le nom du code dans la query pour cibler un code spécifique (ex: 
                     "description": "Plafond de décisions téléchargées (défaut 200, maximum 500).",
                     "default": 200
                 },
+                "include_solution": {
+                    "type": "boolean",
+                    "description": "Si vrai, enrichit chaque décision (plafond 50) avec sa SOLUTION/dispositif seul — sens (rejet/cassation), décision attaquée, extrait du dispositif — SANS les motifs. Un appel API par décision : à réserver à une liste déjà restreinte (max_results bas). Défaut : faux.",
+                    "default": False
+                },
                 "output_dir": {
                     "type": "string",
                     "description": "Dossier racine où créer le sous-dossier de résultats. Défaut : ~/.piecemaker/legifrance-results/."
