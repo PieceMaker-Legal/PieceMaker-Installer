@@ -1099,12 +1099,6 @@ function renderDossierBots(dossiers, capabilities) {
       title.append(dossierBadge(label, 'protected'));
     }
     identity.append(title, makeElement('code', 'dossier-bot-path', dossier.workdir));
-    if (dossier.mappingConfigured && dossier.mappedOriginalNames?.length) {
-      const names = makeElement('ul', 'mapped-original-names');
-      for (const name of dossier.mappedOriginalNames) names.append(makeElement('li', '', name));
-      if (dossier.originalNamesTruncated) names.append(makeElement('li', 'muted', 'Liste limitée aux 100 premiers fichiers.'));
-      identity.append(names);
-    }
     const status = makeElement('span', `status-pill ${dossier.running ? 'ok' : dossier.linked ? 'pending' : 'error'}`);
     status.textContent = dossier.running
       ? `Actif · PID ${dossier.pid}`
@@ -1568,7 +1562,7 @@ function openPluginComponentsDialog() {
 }
 
 function fileGroupLabel(kind) {
-  return { instructions: 'Instructions', skill: 'Skills', agent: 'Agents', 'official-skill': 'Skills officiels' }[kind] || kind;
+  return { instructions: 'Instructions', agent: 'Collabs IA (Agents)', skill: 'Compétences', 'official-skill': 'Compétences officielles' }[kind] || kind;
 }
 
 async function loadFiles({ selectPath = null } = {}) {
@@ -1578,7 +1572,7 @@ async function loadFiles({ selectPath = null } = {}) {
     try {
       const { files } = await api('/api/admin/files');
       list.textContent = '';
-      for (const kind of ['instructions', 'skill', 'agent', 'official-skill']) {
+      for (const kind of ['instructions', 'agent', 'skill', 'official-skill']) {
         const groupFiles = files.filter((file) => file.kind === kind);
         if (!groupFiles.length) continue;
         const heading = document.createElement('div');
