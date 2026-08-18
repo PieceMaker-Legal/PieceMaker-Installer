@@ -1660,6 +1660,10 @@ async function selectFile(file, button) {
       editor.contentEditable = String(!data.readonly);
       editor.classList.toggle('empty', !documentParts.body.trim());
       byId('editorToolbar').hidden = data.readonly;
+      // L'ajout d'un fichier annexe (asset/script) suppose un dossier propre :
+      // seuls les skills en ont un. Instructions, agents et fichiers en lecture
+      // seule n'exposent pas le bouton.
+      byId('insertAssetBtn').hidden = data.readonly || data.kind !== 'skill' || !data.exists;
       byId('saveFile').disabled = data.readonly;
       // Suppression réservée aux skills et agents du dépôt qui existent déjà —
       // ni instructions, ni skills officiels, ni fichiers en lecture seule.
@@ -3514,8 +3518,14 @@ byId('caseTelegramCard').addEventListener('click', openCaseTelegramEditor);
 byId('telegramCaseView').addEventListener('submit', saveCaseTelegramBot);
 
 function applyEditorCommand(button) {
-  byId('fileEditor').focus();
   const command = button.dataset.command;
+  if (command === 'insertAsset') {
+    // Le clic sur l'input fichier ouvre le sélecteur système ; l'insertion se
+    // fait au retour, dans le listener 'change' (uploadAsset).
+    byId('assetInput').click();
+    return;
+  }
+  byId('fileEditor').focus();
   if (command === 'createLink') {
     const url = prompt('Adresse du lien (https://…)');
     if (url) document.execCommand('createLink', false, url);
@@ -3525,6 +3535,52 @@ function applyEditorCommand(button) {
     document.execCommand('formatBlock', false, button.dataset.block);
   }
   markEditorDirty();
+}
+
+// Insère du HTML au curseur, en repositionnant la sélection à la fin de
+// l'éditeur si le focus l'avait quitté (retour du sélecteur de fichier).
+function insertHtmlIntoEditor(html) {
+  const editor = byId('fileEditor');
+  editor.focus();
+  const selection = window.getSelection();
+  if (!selection.rangeCount || !editor.contains(selection.anchorNode)) {
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+  document.execCommand('insertHTML', false, html);
+  editor.classList.remove('empty');
+  markEditorDirty();
+}
+
+// Téléverse le fichier choisi dans le dossier du skill sélectionné et insère un
+// lien Markdown relatif vers lui. Réservé aux skills — un agent n'a pas de
+// dossier propre pour ses annexes.
+async function uploadAsset(file) {
+  if (!file) return;
+  if (!selectedFile || selectedFile.kind !== 'skill') {
+    toast('Un fichier annexe ne s’ajoute qu’à un skill.');
+    return;
+  }
+  try {
+    const buffer = await file.arrayBuffer();
+    const result = await api('/api/admin/asset', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-Skill-Path': selectedFile.path,
+        'X-Filename': encodeURIComponent(file.name),
+      },
+      body: buffer,
+    });
+    const name = escapeHtml(result.name);
+    insertHtmlIntoEditor(`<a href="${name}">${name}</a>&nbsp;`);
+    toast(`« ${result.name} » ajouté au skill et inséré`);
+  } catch (error) {
+    toast(error.message || 'Échec de l’ajout du fichier');
+  }
 }
 
 function openCreateDialog(kind) {
@@ -3625,6 +3681,11 @@ document.querySelectorAll('#metadataEditor input').forEach((input) => input.addE
 document.querySelectorAll('#editorToolbar button').forEach((button) => {
   button.addEventListener('mousedown', (event) => event.preventDefault());
   button.addEventListener('click', () => applyEditorCommand(button));
+});
+byId('assetInput').addEventListener('change', (event) => {
+  const [file] = event.currentTarget.files;
+  uploadAsset(file);
+  event.currentTarget.value = '';
 });
 byId('blockFormat').addEventListener('change', (event) => {
   byId('fileEditor').focus();

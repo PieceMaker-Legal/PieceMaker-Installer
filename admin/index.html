@@ -616,7 +616,9 @@
               <button type="button" data-block="blockquote" title="Citation">Citation</button>
               <button type="button" data-block="pre" title="Bloc de code">Code</button>
               <button type="button" data-command="createLink" title="Lien">Lien</button>
+              <button id="insertAssetBtn" type="button" data-command="insertAsset" title="Insérer un fichier annexe (asset ou script) dans le skill">Fichier</button>
             </div>
+            <input id="assetInput" type="file" hidden>
             <div id="fileEditor" class="visual-editor empty" contenteditable="false" role="textbox" aria-multiline="true" data-placeholder="Choisissez un skill, un agent ou un fichier d’instructions."></div>
             <div class="actions">
               <span id="fileMessage" class="message"></span>

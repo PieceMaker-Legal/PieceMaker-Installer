@@ -26,3 +26,12 @@ test('le rendu visuel transforme les marqueurs Markdown et échappe le HTML acti
   assert.doesNotMatch(html, /<script>/);
   assert.match(html, /&lt;script&gt;/);
 });
+
+test('les liens relatifs vers les fichiers annexes d’un skill survivent, les schémas dangereux non', () => {
+  // Un asset/script référencé par son chemin relatif dans le SKILL.md reste tel quel.
+  assert.match(markdownToHtml('[script](analyse.py)'), /href="analyse\.py"/);
+  assert.match(markdownToHtml('[sous](scripts/run.py)'), /href="scripts\/run\.py"/);
+  // Toujours bloqués : schéma actif et remontée de dossier.
+  assert.match(markdownToHtml('[x](javascript:alert)'), /href="#"/);
+  assert.match(markdownToHtml('[z](../secret)'), /href="#"/);
+});

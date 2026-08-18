@@ -1365,6 +1365,34 @@ function createManagedFile(repoRoot, homeDir, { kind, slug, name, description, t
 }
 
 /**
+ * Écrit un fichier annexe (asset ou script) dans le dossier d'un skill —
+ * `piecemaker-plugin/skills/<slug>/`. Seuls les skills ont un dossier propre :
+ * un agent est un fichier `.md` isolé, sans annexes. Le nom est réduit à son
+ * basename (aucune remontée de dossier), `SKILL.md` ne peut pas être écrasé, et
+ * la cible est revérifiée à l'intérieur du dossier du skill avant écriture.
+ * Renvoie le nom retenu et son chemin relatif au dépôt.
+ */
+function saveManagedAsset(repoRoot, homeDir, skillRelPath, filename, buffer) {
+  const { absolute, normalized } = managedAbsolutePath(repoRoot, skillRelPath, homeDir);
+  if (managedFileKind(normalized) !== 'skill') {
+    throw new Error('Un fichier annexe ne peut être ajouté qu’à un skill.');
+  }
+  const safeName = path.basename(String(filename || '').trim());
+  if (!safeName || safeName.startsWith('.')) throw new Error('Nom de fichier invalide.');
+  if (safeName === 'SKILL.md') throw new Error('SKILL.md ne peut pas être remplacé ainsi.');
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) throw new Error('Fichier vide.');
+  const skillDir = path.dirname(absolute);
+  const target = path.resolve(skillDir, safeName);
+  if (target !== path.join(skillDir, safeName)) throw new Error('Chemin de fichier invalide.');
+  fs.mkdirSync(skillDir, { recursive: true });
+  const temp = path.join(skillDir, `.${safeName}.${process.pid}.${Date.now()}.tmp`);
+  fs.writeFileSync(temp, buffer);
+  fs.renameSync(temp, target);
+  const slugDir = normalized.replace(/\/SKILL\.md$/, '');
+  return { name: safeName, path: `${slugDir}/${safeName}` };
+}
+
+/**
  * Supprime un skill ou un agent du dépôt : seuls ces deux types sont
  * effaçables ici — instructions (CLAUDE.md/AGENTS.md), skills officiels et
  * aperçus de facturation ne le sont jamais. Le contenu est sauvegardé avant
@@ -1863,6 +1891,21 @@ function createAdminRouter({
     }
   });
 
+  // Ajoute un fichier annexe (asset ou script) au dossier du skill sélectionné
+  // et renvoie son nom, que l'éditeur insère comme lien Markdown relatif. Corps
+  // brut (octet-stream) ; nom dans l'en-tête X-Filename (encodeURIComponent),
+  // SKILL.md cible dans X-Skill-Path.
+  router.post('/asset', express.raw({ type: 'application/octet-stream', limit: '100mb' }), (req, res) => {
+    try {
+      const skillPath = req.get('X-Skill-Path');
+      const filename = decodeURIComponent(req.get('X-Filename') || '');
+      const saved = saveManagedAsset(repoRoot, homeDir, skillPath, filename, req.body);
+      res.status(201).json({ ok: true, ...saved });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   router.get('/dossiers', async (req, res) => {
     try {
       res.json({
@@ -2330,6 +2373,7 @@ module.exports = {
   registerLegalCase,
   registerOfficialMarketplace,
   revealCommands,
+  saveManagedAsset,
   saveManagedFile,
   selectLocalFolder,
   updateEnvFile,

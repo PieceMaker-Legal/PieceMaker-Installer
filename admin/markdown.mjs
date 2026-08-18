@@ -120,6 +120,17 @@ export function joinMarkdownDocument(frontMatter, metadata, body) {
 function safeUrl(raw) {
   const value = String(raw || '').trim();
   if (/^(https?:|mailto:|\/|#)/i.test(value)) return value;
+  // Références relatives aux fichiers annexes d'un skill (scripts, assets) :
+  // aucun schéma (bloque javascript:…), pas de protocole-relatif (//host), pas
+  // de remontée de dossier (..).
+  if (
+    value
+    && !/^[a-z][a-z0-9+.-]*:/i.test(value)
+    && !value.startsWith('//')
+    && !value.split('/').includes('..')
+  ) {
+    return value;
+  }
   return '#';
 }
 

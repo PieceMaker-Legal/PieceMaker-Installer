@@ -25,6 +25,7 @@ const {
   readManagedFile,
   registerOfficialMarketplace,
   revealCommands,
+  saveManagedAsset,
   saveManagedFile,
   updateEnvFile,
 } = require('../websocket-server/admin-routes.cjs');
@@ -236,6 +237,35 @@ test('un nouvel agent reçoit ses propres réglages : outils et modèle', (t) =>
   assert.throws(() => createManagedFile(data.repo, data.home, {
     kind: 'agent', slug: 'x-y', name: 'x', description: 'x', model: 'inconnu',
   }), /Modèle inconnu/);
+});
+
+test('un fichier annexe s’écrit dans le dossier du skill, jamais ailleurs', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+
+  const saved = saveManagedAsset(
+    data.repo,
+    data.home,
+    'piecemaker-plugin/skills/redaction/SKILL.md',
+    'scripts/../analyse.py',
+    Buffer.from('print("ok")\n'),
+  );
+  // Le nom est réduit à son basename : pas de sous-dossier, pas de remontée.
+  assert.equal(saved.name, 'analyse.py');
+  assert.equal(saved.path, 'piecemaker-plugin/skills/redaction/analyse.py');
+  const onDisk = path.join(data.repo, 'piecemaker-plugin', 'skills', 'redaction', 'analyse.py');
+  assert.equal(fs.readFileSync(onDisk, 'utf8'), 'print("ok")\n');
+
+  // Un binaire est écrit tel quel (pas de réencodage utf8).
+  const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
+  const png = saveManagedAsset(data.repo, data.home, 'piecemaker-plugin/skills/redaction/SKILL.md', 'logo.png', bytes);
+  assert.deepEqual(fs.readFileSync(path.join(data.repo, 'piecemaker-plugin', 'skills', 'redaction', png.name)), bytes);
+
+  // Un agent n'a pas de dossier d'annexes ; SKILL.md n'est jamais écrasé ; un
+  // corps vide est refusé.
+  assert.throws(() => saveManagedAsset(data.repo, data.home, 'piecemaker-plugin/agents/analyse.md', 'x.txt', Buffer.from('x')), /skill/);
+  assert.throws(() => saveManagedAsset(data.repo, data.home, 'piecemaker-plugin/skills/redaction/SKILL.md', 'SKILL.md', Buffer.from('x')), /SKILL\.md/);
+  assert.throws(() => saveManagedAsset(data.repo, data.home, 'piecemaker-plugin/skills/redaction/SKILL.md', 'vide.txt', Buffer.alloc(0)), /vide/i);
 });
 
 test('la suppression retire skill/agent avec sauvegarde, mais jamais les instructions', (t) => {
