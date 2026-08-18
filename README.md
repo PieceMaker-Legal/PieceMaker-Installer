@@ -146,7 +146,9 @@ et le serveur MCP Légifrance. Voir
 - `mcp-server/` — serveur MCP exposant les outils document
 - `electron/` — ancien client de bureau, conservé comme archive mais désactivé
 
-Les repères d'architecture pour contribuer sont dans [`CLAUDE.md`](./CLAUDE.md).
+Le [`CLAUDE.md`](./CLAUDE.md) est destiné à l'utilisateur qui installe
+PieceMaker. Les repères d'architecture pour contribuer à la code base sont dans
+`CLAUDE.local.md` (non versionné, à l'usage des développeurs uniquement).
 
 ## Licence
 
