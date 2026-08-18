@@ -846,3 +846,162 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 @media (prefers-reduced-motion: reduce) {
   .configuration-node, .configuration-node-action span { transition: none; }
 }
+
+/* Apparence — le choix est enregistré dans la configuration PieceMaker. */
+.appearance-heading { margin-bottom: 8px; }
+.appearance-hint { margin: 0 0 9px; font-size: .78rem; }
+.appearance-card > .message:empty { display: none; }
+label.theme-switch { position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; gap: 10px; cursor: pointer; }
+.theme-switch input { position: absolute; width: 1px; height: 1px; min-height: 0; overflow: hidden; margin: -1px; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.theme-switch-track { position: relative; display: inline-flex; width: 48px; height: 27px; flex: 0 0 48px; align-items: center; border: 1px solid #b9c7c4; border-radius: 999px; background: #dce4e3; padding: 3px; transition: background-color .18s ease, border-color .18s ease; }
+.theme-switch-thumb { width: 19px; height: 19px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(23, 34, 38, .24); transition: transform .18s ease; }
+.theme-switch input:checked + .theme-switch-track { border-color: var(--brand); background: var(--brand); }
+.theme-switch input:checked + .theme-switch-track .theme-switch-thumb { transform: translateX(21px); }
+.theme-switch input:focus-visible + .theme-switch-track { outline: 3px solid rgba(0, 108, 98, .2); outline-offset: 2px; }
+.theme-switch input:disabled + .theme-switch-track { opacity: .55; cursor: wait; }
+.theme-switch-value { min-width: 78px; color: var(--ink); font-size: .8rem; font-weight: 750; }
+
+/* Mode sombre — palette commune puis surfaces spécialisées de l’administration. */
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #e6edf3;
+  --muted: #9da7b3;
+  --line: #30363d;
+  --paper: #0d1117;
+  --card: #161b22;
+  --brand: #49cfc0;
+  --brand-dark: #9ce9df;
+  --accent: #123c37;
+  --warn: #e3b341;
+  --danger: #ff7b72;
+  --dark-surface: #161b22;
+  --dark-surface-muted: #21262d;
+  --dark-surface-raised: #252c35;
+  --dark-border: #3d444d;
+  --dark-blue: #58a6ff;
+  --dark-blue-muted: #172f4d;
+  --dark-green-muted: #163b27;
+  --dark-red-muted: #442126;
+  --dark-yellow-muted: #3d3218;
+}
+
+html[data-theme="dark"] :is(input, select, textarea) { border-color: var(--dark-border); background: var(--paper); color: var(--ink); }
+html[data-theme="dark"] :is(input, textarea)::placeholder { color: #7d8590; }
+html[data-theme="dark"] label { color: #c7d0d9; }
+html[data-theme="dark"] code { background: var(--dark-surface-muted); color: #b7dcd6; }
+html[data-theme="dark"] :is(dialog, .dialog-card) { background: var(--dark-surface); color: var(--ink); }
+html[data-theme="dark"] dialog::backdrop { background: rgba(1, 4, 9, .72); }
+html[data-theme="dark"] .button.primary { background: #147d73; color: #fff; }
+html[data-theme="dark"] .button.primary:hover { background: #1c9185; }
+html[data-theme="dark"] .button.ghost { border-color: var(--dark-border); background: var(--dark-surface-muted); color: var(--ink); }
+html[data-theme="dark"] .button.ghost:hover { background: var(--dark-surface-raised); }
+html[data-theme="dark"] .button.danger-outline { border-color: #9e4b4b; background: var(--dark-surface); color: #ff938a; }
+html[data-theme="dark"] .button.danger-outline:hover { background: var(--dark-red-muted); }
+html[data-theme="dark"] .button.subtle-danger { border-color: #62343a; background: #301c20; }
+html[data-theme="dark"] :is(.status-pill.pending, .mini-badge, .asset-badge, .image-placeholder, .component-state) { background: var(--dark-surface-raised); }
+html[data-theme="dark"] :is(.status-pill.error, .component-state.error, .file-row-delete:hover, .file-asset-delete:hover, .term-chip button:hover) { background: var(--dark-red-muted); }
+html[data-theme="dark"] :is(.asset-badge.warn, .dirty-badge, .component-state.warn) { background: var(--dark-yellow-muted); }
+html[data-theme="dark"] .mini-badge.protected { background: #272e49; color: #b6c2ee; }
+html[data-theme="dark"] .card { box-shadow: 0 8px 28px rgba(0, 0, 0, .2); }
+
+html[data-theme="dark"] :is(.dossier-bot, .agent-fields, .metadata-editor, .term-chip) { background: var(--dark-surface-muted); }
+html[data-theme="dark"] .term-chip button { background: var(--dark-border); }
+html[data-theme="dark"] .file-asset:hover { background: var(--dark-surface-raised); }
+html[data-theme="dark"] .metadata-editor :is(input, textarea) { background: var(--paper); }
+html[data-theme="dark"] .editor-toolbar { background: var(--dark-surface-muted); }
+html[data-theme="dark"] .editor-toolbar button:hover { border-color: var(--dark-border); background: var(--dark-surface-raised); }
+html[data-theme="dark"] .visual-editor { border-color: var(--dark-border); background: var(--dark-surface); }
+html[data-theme="dark"] .visual-editor[contenteditable="false"] { background: #11161d; }
+html[data-theme="dark"] .visual-editor blockquote { color: #b1bbc5; }
+html[data-theme="dark"] .visual-editor th { background: var(--dark-surface-raised); }
+html[data-theme="dark"] :is(.plugin-component-list, .original-row) { border-color: var(--line); background: var(--dark-surface); }
+html[data-theme="dark"] .plugin-dialog-tabs { border-color: var(--line); }
+html[data-theme="dark"] .plugin-dialog-tab.active { color: var(--ink); }
+html[data-theme="dark"] .plugin-tree-node { border-color: var(--line); }
+html[data-theme="dark"] .plugin-tree-summary { background: var(--dark-surface-muted); color: var(--muted); }
+html[data-theme="dark"] .plugin-tree-summary .count-badge { background: var(--dark-border); }
+
+html[data-theme="dark"] :is(.desktop-card, #history .desktop-card) { border-color: #075d55; background: var(--dark-surface); box-shadow: 0 14px 38px rgba(0, 0, 0, .32); }
+html[data-theme="dark"] #history .repository-toolbar { border-bottom-color: #075d55; background: #075d55; }
+html[data-theme="dark"] #history .toolbar-select-row select { border-color: rgba(255, 255, 255, .38); background: #0d3f3a; color: #e6fffb; color-scheme: dark; }
+html[data-theme="dark"] #history .toolbar-select-row select option { background: var(--dark-surface); color: var(--ink); }
+html[data-theme="dark"] #history .history-column { border-right-color: var(--dark-border); background: var(--dark-surface-muted); }
+html[data-theme="dark"] :is(.protected-tools, #history .originals-note, #history .manual-commit) { background: var(--dark-surface-muted); }
+html[data-theme="dark"] :is(#history .history-summary, .protected-navigation-button, #history .revision-column, .inline-detail, .history-column, .revision-column, .diff-pane, .diff-content) { background: var(--dark-surface); }
+html[data-theme="dark"] :is(.protected-navigation-button, .inline-detail-toolbar, .history-switch, .history-summary, .manual-commit, .revision-header, .changed-files-pane, .diff-toolbar, .mapping-editor, .mapping-editor-head, .originals-scope) { border-color: var(--line); }
+html[data-theme="dark"] :is(.protected-navigation-button, .inline-detail-toolbar, .commit-row, .change-row, .history-date, .changed-file-row, .changed-files-more, .original-mosaic-heading) { border-color: var(--line); }
+html[data-theme="dark"] :is(.protected-navigation-button, .commit-row, .change-row, .changed-files-more, .piece-row, .original-card, .original-mosaic-heading) { background: var(--dark-surface); color: var(--ink); }
+html[data-theme="dark"] :is(.history-switch button, .history-date, .manual-commit, .changed-files-pane, .diff-toolbar, .inline-detail-toolbar, .mapping-editor-head, .original-mosaic-column) { background: var(--dark-surface-muted); }
+html[data-theme="dark"] :is(.history-switch button.active, .history-summary) { background: var(--dark-surface); color: var(--dark-blue); }
+html[data-theme="dark"] :is(.protected-navigation-button:hover:not(:disabled), .commit-row:hover, .change-row:hover, .changed-file-row:hover, .changed-files-more:hover, .piece-row:hover) { background: var(--dark-surface-raised); }
+html[data-theme="dark"] :is(.protected-navigation-button.active, .commit-row.active, .change-row.active, .changed-file-row.active, .original-card.selected, .original-row.selected) { background: var(--dark-blue-muted); color: #79c0ff; }
+html[data-theme="dark"] :is(.protected-navigation-button, .inline-detail-toolbar strong, .original-body strong, .history-empty strong, .changed-file-row) { color: var(--ink); }
+html[data-theme="dark"] :is(.protected-navigation-button small, .inline-detail-toolbar span, .inline-detail-hint, .telegram-inline-fields label, .manual-commit-field, .history-empty, .sha, .commit-marker, .commit-meta, .commit-file-count, .mapping-editor-head, .mapping-entry button, .mapping-empty, .original-body span, .original-column-empty) { color: var(--muted); }
+html[data-theme="dark"] :is(.manual-commit-field input, .manual-commit-field textarea, .telegram-inline-fields input, .mapping-entry input:focus) { background: var(--paper); }
+html[data-theme="dark"] .changed-files-pane { background: var(--dark-surface-muted); }
+html[data-theme="dark"] .diff-segment.addition { background: #163b27; color: #7ee787; }
+html[data-theme="dark"] .diff-segment.deletion { background: #442126; color: #ff938a; }
+html[data-theme="dark"] .diff-segment.hunk { background: #172f4d; color: #79c0ff; }
+html[data-theme="dark"] .diff-segment.header { color: var(--muted); }
+html[data-theme="dark"] .diff-stats { color: #7ee787; }
+html[data-theme="dark"] :is(.original-mosaic-column, .original-card, .procedure-summary, .procedure-party-column, .procedure-party-item) { border-color: var(--line); }
+html[data-theme="dark"] .original-card:hover { border-color: #768390; }
+html[data-theme="dark"] :is(.procedure-summary, .procedure-party-item) { background: var(--dark-surface); color: var(--ink); }
+html[data-theme="dark"] .procedure-summary-side.client { background: #132b1d; }
+html[data-theme="dark"] .procedure-summary-side.adverse { background: #321b20; }
+html[data-theme="dark"] :is(.procedure-summary-side small, .procedure-dialog-header p:last-child, .procedure-party-item label, .procedure-party-fields label, .procedure-party-column-title small) { color: var(--muted); }
+html[data-theme="dark"] .procedure-summary-separator { border-color: var(--line); color: var(--muted); }
+html[data-theme="dark"] :is(.procedure-party-column, .chronology-entity-list-col, .chronology-entity-preview-col) { border-color: var(--line); background: var(--dark-surface-muted); }
+html[data-theme="dark"] :is(.procedure-party-column-title, .chronology-entity-col-title) { border-color: var(--line); }
+html[data-theme="dark"] :is(.procedure-party-item input, .procedure-party-item select, .chronology-entity-row input) { border-color: var(--dark-border); background: var(--paper); color: var(--ink); }
+html[data-theme="dark"] :is(.procedure-party-item input.invalid, .mapping-entry input.invalid, .chronology-entity-row input.invalid) { background: var(--dark-red-muted); }
+html[data-theme="dark"] :is(.dialog-close:hover, .remove-procedure-party:hover, .remove-chronology-entity:hover, .mapping-entry button:hover) { background: var(--dark-red-muted); color: #ff938a; }
+
+html[data-theme="dark"] .tampon-preview { border-color: var(--dark-border); background: var(--dark-surface-muted); }
+html[data-theme="dark"] .chronology-summary span { background: var(--dark-surface-raised); color: var(--brand-dark); }
+html[data-theme="dark"] .chronology-dot { border-color: var(--paper); }
+html[data-theme="dark"] .chronology-entity-row { border-color: var(--line); background: var(--dark-surface); }
+html[data-theme="dark"] .chronology-entity-col-title { color: var(--muted); }
+html[data-theme="dark"] .entity-chip.cat-personne { background: #172f4d; color: #79c0ff; }
+html[data-theme="dark"] .entity-chip.cat-societe { background: #30264d; color: #d2a8ff; }
+html[data-theme="dark"] .entity-chip.cat-adresse { background: #123c37; color: #79e2d2; }
+html[data-theme="dark"] .entity-chip.cat-siren { background: #3d3218; color: #e3b341; }
+html[data-theme="dark"] .entity-chip.cat-autre { background: var(--dark-surface-raised); }
+
+html[data-theme="dark"] .configuration-intro { border-color: #294841; background: linear-gradient(120deg, #151d1d 0%, #102823 100%); }
+html[data-theme="dark"] .configuration-map { background-color: #11161d; background-image: radial-gradient(#303840 1px, transparent 1px); }
+html[data-theme="dark"] .configuration-node { border-color: var(--dark-border); background: rgba(22, 27, 34, .97); box-shadow: 0 9px 28px rgba(0, 0, 0, .24); }
+html[data-theme="dark"] .configuration-node:hover { border-color: #527c75; box-shadow: 0 12px 32px rgba(0, 0, 0, .34); }
+html[data-theme="dark"] .configuration-node.installed { border-color: #2d645a; }
+html[data-theme="dark"] .configuration-node.missing { border-color: #73433f; }
+html[data-theme="dark"] .configuration-node.optional-off { border-color: #715c31; }
+html[data-theme="dark"] .configuration-list-card { background: var(--dark-surface); box-shadow: 0 8px 28px rgba(0, 0, 0, .2); }
+html[data-theme="dark"] :is(.configuration-model-row, .configuration-folder-row) { border-color: var(--line); background: var(--dark-surface); }
+html[data-theme="dark"] :is(.configuration-model-row:hover, .configuration-folder-row:hover) { background: var(--dark-surface-muted); }
+html[data-theme="dark"] :is(.configuration-count, .folder-bot) { background: var(--dark-surface-raised); }
+html[data-theme="dark"] .model-mark { background: #080b10; }
+html[data-theme="dark"] .configuration-dialog { background: var(--dark-surface); }
+html[data-theme="dark"] .configuration-detail-header { background: linear-gradient(120deg, #161b22 0%, #132823 100%); }
+html[data-theme="dark"] .configuration-detail-close { border-color: var(--dark-border); background: var(--dark-surface-muted); }
+html[data-theme="dark"] .configuration-detail-close:hover { border-color: #59636e; background: var(--dark-surface-raised); }
+html[data-theme="dark"] :is(.configuration-detail-status, .configuration-install-progress) { border-color: var(--line); background: var(--dark-surface-muted); }
+html[data-theme="dark"] .configuration-detail-section { background: var(--dark-surface); }
+html[data-theme="dark"] .configuration-detail-list li { border-color: var(--line); }
+html[data-theme="dark"] .configuration-detail-actions { background: #11161d; }
+html[data-theme="dark"] .cfg-boundary { border-color: #315f55; background: linear-gradient(180deg, #102a25 0%, #12231f 100%); box-shadow: inset 0 0 0 4px rgba(0, 0, 0, .14); }
+html[data-theme="dark"] .cfg-boundary .hooks-node { border-color: #39796d; background: var(--dark-surface); }
+html[data-theme="dark"] .cfg-transform-row { background: rgba(13, 17, 23, .58); }
+html[data-theme="dark"] .cfg-chip.name { background: #172f4d; color: #79c0ff; }
+html[data-theme="dark"] .cfg-chip.code { background: var(--dark-surface-raised); color: #c2ccd6; }
+html[data-theme="dark"] :is(.configuration-node-icon, .configuration-node-icon.hooks, .configuration-node-icon.gliner) { background: #123c37; color: #79e2d2; }
+html[data-theme="dark"] :is(.configuration-node-icon.terminal, .configuration-node-icon.telegram) { background: #172f4d; color: #79c0ff; }
+html[data-theme="dark"] :is(.configuration-node-icon.mcp, .configuration-node-icon.ollama) { background: #30264d; color: #d2a8ff; }
+html[data-theme="dark"] .configuration-node-icon.mineru { background: #3d3218; color: #e3b341; }
+html[data-theme="dark"] .configuration-node-icon.docs { background: var(--dark-surface-raised); color: #c2ccd6; }
+html[data-theme="dark"] .configuration-install-progress.running { color: var(--brand-dark); }
+html[data-theme="dark"] .configuration-install-progress.ok { background: var(--dark-green-muted); color: #7ee787; }
+html[data-theme="dark"] .configuration-install-progress.error { background: var(--dark-red-muted); color: #ff938a; }
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-switch-track, .theme-switch-thumb { transition: none; }
+}

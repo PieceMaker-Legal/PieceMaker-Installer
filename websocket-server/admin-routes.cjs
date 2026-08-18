@@ -279,7 +279,14 @@ function defaultConfig(repoRoot, homeDir = path.join(os.homedir(), '.piecemaker'
     port: 43098,
     pythonPath: null,
     venvPath: path.join(homeDir, 'venv'),
+    adminTheme: 'light',
   };
+}
+
+function validateAdminTheme(value) {
+  const theme = String(value || '');
+  if (theme !== 'light' && theme !== 'dark') throw new Error('Le thème doit être « light » ou « dark ».');
+  return theme;
 }
 
 function readJson(file, fallback) {
@@ -1895,10 +1902,14 @@ function createAdminRouter({
         next.port = port;
       }
       if (patch.pythonPath !== undefined) next.pythonPath = String(patch.pythonPath || '').trim() || null;
+      if (patch.adminTheme !== undefined) next.adminTheme = validateAdminTheme(patch.adminTheme);
 
       atomicWrite(configFile, `${JSON.stringify(next, null, 2)}\n`);
       updateEnvFile(envFile, req.body?.env || {}, req.body?.clearSecrets || []);
-      res.json({ ok: true, restartRequired: true });
+      res.json({
+        ok: true,
+        restartRequired: patch.port !== undefined || patch.pythonPath !== undefined,
+      });
     } catch (error) {
       res.status(400).json({ error: error.message });
     }
@@ -2612,4 +2623,5 @@ module.exports = {
   saveManagedFile,
   selectLocalFolder,
   updateEnvFile,
+  validateAdminTheme,
 };

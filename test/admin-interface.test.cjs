@@ -82,6 +82,23 @@ test('les paramètres permettent de modifier le nom appliqué à chaque commit',
   assert.doesNotMatch(app, /PIECEMAKER_USER_EMAIL/);
 });
 
+test('le mode sombre se configure, s’applique immédiatement et persiste côté serveur', () => {
+  const html = read('admin/index.html');
+  const app = read('admin/app.js');
+  const css = read('admin/styles.css');
+  const routes = read('websocket-server/admin-routes.cjs');
+
+  assert.match(html, /id="adminDarkMode"[^>]*type="checkbox"[^>]*role="switch"/);
+  assert.match(html, /localStorage\.getItem\('piecemaker-admin-theme'\)/);
+  assert.match(app, /document\.documentElement\.dataset\.theme = theme/);
+  assert.match(app, /config: \{ adminTheme: theme \}/);
+  assert.match(app, /data\.config\.adminTheme/);
+  assert.match(css, /html\[data-theme="dark"\] \{/);
+  assert.match(css, /color-scheme: dark/);
+  assert.match(routes, /adminTheme: 'light'/);
+  assert.match(routes, /next\.adminTheme = validateAdminTheme\(patch\.adminTheme\)/);
+});
+
 test('les formulaires asynchrones conservent leur cible après la propagation de l\'événement', () => {
   const app = read('admin/app.js');
 

@@ -106,6 +106,7 @@ const api = async (url, options = {}) => {
 };
 
 const byId = (id) => document.getElementById(id);
+const ADMIN_THEME_STORAGE_KEY = 'piecemaker-admin-theme';
 let selectedFile = null;
 let currentFrontMatter = '';
 let editorTouched = false;
@@ -136,6 +137,55 @@ let procedurePartyCounter = 0;
 let detailView = 'diff';
 let caseTelegram = null;
 let caseTelegramFolder = '';
+
+function normalizedAdminTheme(value) {
+  return value === 'dark' ? 'dark' : 'light';
+}
+
+function applyAdminTheme(value, { cache = true } = {}) {
+  const theme = normalizedAdminTheme(value);
+  document.documentElement.dataset.theme = theme;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#0d1117' : '#ffffff');
+  const toggle = byId('adminDarkMode');
+  if (toggle) toggle.checked = theme === 'dark';
+  const label = byId('adminThemeValue');
+  if (label) label.textContent = theme === 'dark' ? 'Mode sombre' : 'Mode clair';
+  if (cache) {
+    try { localStorage.setItem(ADMIN_THEME_STORAGE_KEY, theme); } catch {}
+  }
+  return theme;
+}
+
+async function loadAdminTheme() {
+  try {
+    const data = await api('/api/admin/settings');
+    applyAdminTheme(data.config.adminTheme);
+  } catch {
+    // Le thème mis en cache reste utilisable si le serveur redémarre.
+  }
+}
+
+async function saveAdminTheme(event) {
+  const toggle = event.currentTarget;
+  const previous = normalizedAdminTheme(document.documentElement.dataset.theme);
+  const theme = toggle.checked ? 'dark' : 'light';
+  const message = byId('adminThemeMessage');
+  applyAdminTheme(theme);
+  toggle.disabled = true;
+  setMessage(message, 'Enregistrement…');
+  try {
+    await api('/api/admin/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ config: { adminTheme: theme } }),
+    });
+    setMessage(message, 'Thème enregistré.', 'success');
+  } catch (error) {
+    applyAdminTheme(previous);
+    setMessage(message, error.message, 'error');
+  } finally {
+    toggle.disabled = false;
+  }
+}
 
 function toast(message) {
   const element = byId('toast');
@@ -412,6 +462,7 @@ async function loadSettings() {
       const data = await api('/api/admin/settings');
       byId('port').value = data.config.port || 43098;
       byId('pythonPath').value = data.config.pythonPath || data.env.PYTHON_PATH || '';
+      applyAdminTheme(data.config.adminTheme);
       byId('commitUserName').value = data.env.PIECEMAKER_USER_NAME || '';
       byId('legifranceEnv').value = 'production';
       document.querySelectorAll('[data-secret-state]').forEach((element) => {
@@ -450,6 +501,7 @@ async function saveSettings(event) {
         config: {
           port: Number(form.get('port')),
           pythonPath: form.get('pythonPath'),
+          adminTheme: byId('adminDarkMode').checked ? 'dark' : 'light',
         },
         env,
       }),
@@ -1073,6 +1125,26 @@ function makeElement(tag, className = '', text = '') {
 
 function dossierBadge(text, kind = '') {
   return makeElement('span', `mini-badge ${kind}`.trim(), text);
+}
+
+/**
+ * Sépare les trailers techniques `PieceMaker-*` du corps d'un commit.
+ * Renvoie le commentaire nettoyé, l'identifiant de session et le temps de
+ * session écoulé sous sa forme lisible (ex. « 5 min 07 s »).
+ */
+function parsePieceMakerTrailers(body) {
+  const lines = String(body || '').split('\n');
+  const kept = [];
+  let sessionId = '';
+  let elapsed = '';
+  for (const line of lines) {
+    const session = line.match(/^PieceMaker-Session:\s*(.+)$/);
+    if (session) { sessionId = session[1].trim(); continue; }
+    const time = line.match(/^PieceMaker-Temps-Session:\s*(.+?)(?:\s*\(\d+\s*ms\))?\s*$/);
+    if (time) { elapsed = time[1].trim(); continue; }
+    kept.push(line);
+  }
+  return { comment: kept.join('\n').trim(), sessionId, elapsed };
 }
 
 function renderDossierBots(dossiers, capabilities) {
@@ -2908,12 +2980,17 @@ async function loadRevision(hash, filePath = '') {
       byId('revisionKind').textContent = revision.kind === 'worktree' ? 'Modifications locales' : 'Commit';
       byId('revisionSha').textContent = revision.shortHash || '';
       byId('revisionTitle').textContent = revision.subject;
+      // Les trailers techniques (PieceMaker-Session, PieceMaker-Temps-Session)
+      // sont extraits du corps : le temps passé enrichit la ligne de méta, et les
+      // lignes brutes sont retirées du commentaire affiché au cabinet.
+      const trailers = parsePieceMakerTrailers(revision.body);
+      const timeMeta = trailers.elapsed ? ` · ⏱ ${trailers.elapsed}` : '';
       byId('revisionMeta').textContent = revision.kind === 'worktree'
         ? `${revision.filesCount} fichier${revision.filesCount > 1 ? 's' : ''} modifié${revision.filesCount > 1 ? 's' : ''}`
-        : `${revision.author} · ${new Date(revision.timestamp).toLocaleString('fr-FR')} · ${revision.filesCount} fichier${revision.filesCount > 1 ? 's' : ''}`;
+        : `${revision.author} · ${new Date(revision.timestamp).toLocaleString('fr-FR')} · ${revision.filesCount} fichier${revision.filesCount > 1 ? 's' : ''}${timeMeta}`;
       const comment = byId('revisionComment');
-      comment.textContent = revision.body || '';
-      comment.hidden = !revision.body;
+      comment.textContent = trailers.comment;
+      comment.hidden = !trailers.comment;
       if (revision.kind === 'commit') renderRevisionFiles(revision.files, hash, revision.selectedPath);
       else setChangedFilesPane(false);
       byId('diffFile').textContent = revision.selectedPath || 'Sélectionnez un fichier';
@@ -3981,6 +4058,7 @@ byId('configurationDetail').addEventListener('click', (event) => {
   if (event.target === event.currentTarget) closeConfigurationDetail();
 });
 byId('settingsForm').addEventListener('submit', saveSettings);
+byId('adminDarkMode').addEventListener('change', saveAdminTheme);
 byId('addInstitutionalTerm').addEventListener('click', addInstitutionalTermFromInput);
 byId('institutionalTermInput').addEventListener('keydown', (event) => {
   if (event.key === 'Enter') {
@@ -4051,6 +4129,7 @@ window.addEventListener('beforeunload', (event) => {
 
 initLogViewer();
 initPerformanceMonitoring();
+loadAdminTheme();
 
 const requestedTab = location.hash.slice(1);
 setActiveTab(['history', 'configuration', 'pieces', 'files'].includes(requestedTab) ? requestedTab : 'history');

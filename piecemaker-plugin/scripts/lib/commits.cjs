@@ -21,6 +21,7 @@ const {
   readAnonymizationState,
   stateKey,
 } = require('./anonymization-state.cjs');
+const { formatDurationFr } = require('./session-timing.cjs');
 
 const fsp = fs.promises;
 
@@ -1083,6 +1084,27 @@ async function workingState(casesRoot, homeDir, caseName) {
   return state;
 }
 
+/**
+ * Structured git trailers appended at the end of a commit message.
+ *
+ * `PieceMaker-Session` is the durable join key between a case's commits and the
+ * billing ledger (which records the authoritative final duration at session
+ * Stop). `PieceMaker-Temps-Session` is the session time elapsed at the instant
+ * of the commit — so the last commit of a session carries ~its full duration,
+ * and every commit is self-documenting without needing the ledger. Both stay
+ * parseable (`Clé: valeur`) and are read back by `listHistory` via `%b`.
+ */
+function buildCommitTrailers({ sessionId, durationMs }) {
+  const trailers = [];
+  const session = String(sessionId || '').replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 120);
+  if (session) trailers.push(`PieceMaker-Session: ${session}`);
+  if (Number.isFinite(durationMs) && durationMs >= 0) {
+    const human = formatDurationFr(durationMs);
+    if (human) trailers.push(`PieceMaker-Temps-Session: ${human} (${Math.round(durationMs)} ms)`);
+  }
+  return trailers;
+}
+
 async function createCommit({
   casesRoot,
   caseName,
@@ -1090,6 +1112,7 @@ async function createCommit({
   label = 'Commit PieceMaker',
   description = '',
   sessionId = null,
+  durationMs = null,
   event = 'manual',
   paths = null,
   waitForLockMs = 0,
@@ -1120,7 +1143,8 @@ async function createCommit({
     }
 
     const timestamp = new Date().toISOString();
-    const message = `${safeLabel || 'Commit PieceMaker'}\n${safeDescription ? `\n${safeDescription}\n` : ''}`;
+    const trailers = buildCommitTrailers({ sessionId, durationMs });
+    const message = `${safeLabel || 'Commit PieceMaker'}\n${safeDescription ? `\n${safeDescription}\n` : ''}${trailers.length ? `\n${trailers.join('\n')}\n` : ''}`;
     const commitIdentity = resolveCommitIdentity({ identity, envFile });
     const gitIdentity = {
       GIT_AUTHOR_NAME: commitIdentity.name,
@@ -1147,6 +1171,7 @@ async function createCommit({
       timestamp,
       label: safeLabel || 'Commit PieceMaker',
       sessionId,
+      durationMs: Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : null,
       event,
       author: commitIdentity.name,
       caseName: legalCase.name,

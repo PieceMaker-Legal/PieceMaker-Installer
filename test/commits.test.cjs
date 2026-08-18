@@ -523,3 +523,61 @@ test('le garde-fou refuse une originale et autorise le Markdown converti', async
   assert.equal(allowed.status, 0, allowed.stderr);
   assert.equal(allowed.stdout, '');
 });
+
+test('le commit porte le session_id et le temps de session écoulé en trailers', async (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+
+  const commit = await createCommit({
+    casesRoot: data.casesRoot,
+    caseName: 'Dossier Beta',
+    homeDir: data.home,
+    label: 'État Beta',
+    sessionId: 'sess-XYZ-001',
+    durationMs: 5 * 60 * 1000 + 7 * 1000, // 5 min 07 s
+  });
+  assert.equal(commit.created, true);
+  assert.equal(commit.durationMs, 307000);
+
+  const betaCase = resolveCase(data.casesRoot, 'Dossier Beta');
+  const betaGit = historyRepo(data.home, betaCase);
+  const body = git(betaGit, data.caseB, ['log', '-1', '--pretty=%b', commit.commit]);
+  assert.match(body, /^PieceMaker-Session: sess-XYZ-001$/m);
+  assert.match(body, /^PieceMaker-Temps-Session: 5 min 07 s \(307000 ms\)$/m);
+
+  // Le trailer reste lisible dans le corps renvoyé par listHistory (%b).
+  const [entry] = await listHistory(data.casesRoot, data.home, { caseName: 'Dossier Beta', limit: 1 });
+  assert.match(entry.body, /PieceMaker-Session: sess-XYZ-001/);
+});
+
+test('sans sessionId ni durationMs, le commit reste sans trailer PieceMaker', async (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const commit = await createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Beta', homeDir: data.home, label: 'État Beta' });
+  const betaCase = resolveCase(data.casesRoot, 'Dossier Beta');
+  const body = git(historyRepo(data.home, betaCase), data.caseB, ['log', '-1', '--pretty=%b', commit.commit]);
+  assert.doesNotMatch(body, /PieceMaker-Session|PieceMaker-Temps/);
+});
+
+test('session-timing dérive le début de session et met en forme la durée', () => {
+  const { formatDurationFr, readSessionStartTimestamp, sessionElapsedMs } = require('../piecemaker-plugin/scripts/lib/session-timing.cjs');
+  assert.equal(formatDurationFr(8_000), '8 s');
+  assert.equal(formatDurationFr(307_000), '5 min 07 s');
+  assert.equal(formatDurationFr(3_900_000), '1 h 05 min');
+  assert.equal(formatDurationFr(-1), null);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-timing-'));
+  try {
+    const transcript = path.join(dir, 't.jsonl');
+    const start = new Date(Date.now() - 90_000).toISOString(); // il y a 90 s
+    fs.writeFileSync(transcript, `${JSON.stringify({ type: 'user', timestamp: start })}\n${JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString() })}\n`);
+    assert.equal(readSessionStartTimestamp(transcript), start);
+    const elapsed = sessionElapsedMs(transcript);
+    assert.ok(elapsed >= 89_000 && elapsed <= 120_000, `elapsed inattendu: ${elapsed}`);
+
+    assert.equal(readSessionStartTimestamp(path.join(dir, 'absent.jsonl')), null);
+    assert.equal(sessionElapsedMs(null), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

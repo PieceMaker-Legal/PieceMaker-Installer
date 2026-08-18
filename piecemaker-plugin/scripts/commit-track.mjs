@@ -22,6 +22,7 @@ const require = createRequire(import.meta.url);
 const { createCommit, locateCaseFile } = require('./lib/commits.cjs');
 const { locateConfiguredCase } = require('./lib/case-folders.cjs');
 const { resolveConfiguredCaseMapping, revertMapping } = require('./lib/mapping.cjs');
+const { sessionElapsedMs } = require('./lib/session-timing.cjs');
 
 async function main() {
   const payload = await readHookPayload(2000);
@@ -51,12 +52,19 @@ async function main() {
   const legalCase = resolveConfiguredCaseMapping(config, absolute);
   const relative = legalCase ? revertMapping(located.relative, legalCase.reverse_mapping) : located.relative;
 
+  // Le transcript est la seule horloge de la session : son premier enregistrement
+  // date le début, d'où le temps écoulé au moment de ce commit. Le dernier commit
+  // d'une session porte donc ~sa durée totale, cohérente avec le ledger de
+  // facturation (billing-track), les deux partageant la clé session_id.
+  const durationMs = sessionElapsedMs(payload.transcript_path);
+
   await createCommit({
     casesRoot: located.casesRoot,
     caseName: located.name,
     homeDir: HOME_DIR,
     label: `${payload.tool_name === 'Write' ? 'Création' : 'Modification'} de ${relative}`,
     sessionId: payload.session_id || null,
+    durationMs,
     event: 'PostToolUse',
     paths: [located.relative],
     waitForLockMs: 4000,

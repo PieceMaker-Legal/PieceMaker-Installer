@@ -31,7 +31,14 @@ const {
   saveManagedAsset,
   saveManagedFile,
   updateEnvFile,
+  validateAdminTheme,
 } = require('../websocket-server/admin-routes.cjs');
+
+test('le thème de l’administration accepte uniquement les deux modes pris en charge', () => {
+  assert.equal(validateAdminTheme('light'), 'light');
+  assert.equal(validateAdminTheme('dark'), 'dark');
+  assert.throws(() => validateAdminTheme('system'), /light.*dark/);
+});
 
 test('la vérification Ollama compare le digest local au manifeste distant sans télécharger le modèle', async () => {
   const manifest = Buffer.from('{"schemaVersion":2,"layers":[]}');

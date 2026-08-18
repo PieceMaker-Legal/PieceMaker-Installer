@@ -1,9 +1,16 @@
 <!doctype html>
-<html lang="fr">
+<html lang="fr" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
   <title>PieceMaker — Administration</title>
+  <script>
+    try {
+      const theme = localStorage.getItem('piecemaker-admin-theme');
+      if (theme === 'dark') document.documentElement.dataset.theme = theme;
+    } catch {}
+  </script>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -362,6 +369,19 @@
         </article>
 
         <form id="settingsForm">
+          <article class="card form-card appearance-card">
+            <div class="section-heading appearance-heading">
+              <div><p class="eyebrow">APPARENCE</p><h2>Thème de l’administration</h2></div>
+              <label class="theme-switch" for="adminDarkMode">
+                <input id="adminDarkMode" name="adminDarkMode" type="checkbox" role="switch" aria-describedby="adminThemeHint">
+                <span class="theme-switch-track" aria-hidden="true"><span class="theme-switch-thumb"></span></span>
+                <span id="adminThemeValue" class="theme-switch-value">Mode clair</span>
+              </label>
+            </div>
+            <p id="adminThemeHint" class="muted appearance-hint">Le thème sombre s’applique immédiatement et reste actif au prochain démarrage.</p>
+            <span id="adminThemeMessage" class="message" aria-live="polite"></span>
+          </article>
+
           <article class="card form-card">
             <div class="section-heading">
               <div><p class="eyebrow">SIGNATURE</p><h2>Identité des tâches</h2></div>
