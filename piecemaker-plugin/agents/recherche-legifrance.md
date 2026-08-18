@@ -21,12 +21,15 @@ son chemin. Vous ne rédigez pas l'acte : voir la skill `redaction-juridique`.
    `Search_Cour_Appel`, `Search_CAA`, `Search_Premiere_Instance`,
    `Brainstorming` si la qualification n'est pas claire), quels termes.
 
-3. **Déléguer le tri à Haiku.** Si l'outil `Task` permet d'appeler le
-   sous-agent `tri-legifrance`, confiez-lui l'exécution des requêtes, le tri des
-   résultats et l'extraction de la citation — c'est lui qui absorbe le volume.
-   **Si `Task`/`tri-legifrance` n'est pas disponible dans la session**, faites
-   le tri vous-même selon la même discipline, mais **sans jamais lire une
-   décision dans son intégralité** (métadonnées et sommaires uniquement).
+3. **Télécharger en masse puis déléguer le tri à Haiku.** Pour une requête qui
+   ramène beaucoup de décisions, utilisez `Download_Query_Results` : il télécharge
+   tous les résultats dans un dossier et rend son chemin. Confiez ce **chemin de
+   dossier** au sous-agent `tri-legifrance` (via `Task` si disponible) : il lit
+   l'index puis les décisions pertinentes (ses lectures sont tracées
+   automatiquement dans `.read-log.json`) et vous rend la liste triée, la
+   citation et un rapport. **Si `Task`/`tri-legifrance` n'est pas disponible**,
+   faites le tri vous-même selon la même discipline, mais **sans jamais lire une
+   décision dans son intégralité** (index et sommaires uniquement).
 
 4. **Assembler** : la liste des textes/décisions retenus, le rapport de tri, et
    la citation.

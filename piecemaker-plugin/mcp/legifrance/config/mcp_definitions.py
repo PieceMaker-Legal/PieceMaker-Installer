@@ -468,7 +468,44 @@ NOTE: Incluez le nom du code dans la query pour cibler un code spécifique (ex: 
             "required": ["siren"]
         }
     },
-    
+    {
+        "name": "Download_Query_Results",
+        "description": "Télécharge TOUS les résultats d'une requête de jurisprudence (dans la limite d'un plafond) dans un dossier local — un fichier Markdown par décision, plus un index et le JSON brut — et rend le CHEMIN du dossier. À utiliser pour le tri en masse : l'agent lit ensuite l'index puis les décisions pertinentes au lieu de paginer. Les lectures du dossier sont tracées automatiquement.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Requête (même syntaxe que les outils Search_* : mots-clés, ET/OU, \"expression exacte\", référence d'article)."
+                },
+                "juridiction": {
+                    "type": "string",
+                    "enum": ["cassation", "appel", "premiere_instance", "administratif"],
+                    "description": "Corpus à interroger. 'administratif' couvre Conseil d'État et cours administratives d'appel.",
+                    "default": "cassation"
+                },
+                "date_debut": {
+                    "type": "string",
+                    "description": "Date de début (AAAA-MM-JJ). Défaut : il y a 5 ans."
+                },
+                "date_fin": {
+                    "type": "string",
+                    "description": "Date de fin (AAAA-MM-JJ). Défaut : aujourd'hui."
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Plafond de décisions téléchargées (défaut 200, maximum 500).",
+                    "default": 200
+                },
+                "output_dir": {
+                    "type": "string",
+                    "description": "Dossier racine où créer le sous-dossier de résultats. Défaut : ~/.piecemaker/legifrance-results/."
+                }
+            },
+            "required": ["query"]
+        }
+    },
+
 ]
 
 # ============================================================================

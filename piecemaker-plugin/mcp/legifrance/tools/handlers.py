@@ -13,6 +13,7 @@ from tools.legifrance_client import legifrance_client
 from tools.bodacc_client import bodacc_client
 from tools.query_parser import parse_query
 from tools.code_parser import parse_code_query
+from tools.bulk_download import download_query_results
 LEGIFRANCE_BASE_URL = "https://www.legifrance.gouv.fr"
 
 def create_response(text: str, resource: Dict = None, is_error: bool = False) -> Dict[str, Any]:
@@ -1510,6 +1511,33 @@ def handle_search_code(args: Dict[str, Any], user_id: str) -> Dict[str, Any]:
 # ROUTER PRINCIPAL
 # ============================================================================
 
+def handle_download_query_results(args: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+    """Télécharge tous les résultats d'une requête dans un dossier et rend son chemin."""
+    try:
+        info = download_query_results(args)
+    except ValueError as e:
+        return create_response(f"❌ {e}", is_error=True)
+
+    truncated_note = (
+        f"\n⚠️ Tronqué à {info['downloaded']} sur {info['total']} résultats "
+        f"(plafond max_results). Affinez la requête pour tout couvrir."
+        if info["truncated"] else ""
+    )
+    summary = (
+        f"**📥 TÉLÉCHARGEMENT LEGIFRANCE — {info['juridiction']}**\n\n"
+        f"**Requête:** {info['query']}\n"
+        f"**Total API:** {info['total']}\n"
+        f"**Téléchargés:** {info['downloaded']}\n"
+        f"{truncated_note}\n\n"
+        f"**Dossier:** {info['folder']}\n\n"
+        f"Le dossier contient `index.md` (liste triable), un fichier `.md` par "
+        f"décision et `results.json` (données brutes). Lisez `index.md` d'abord, "
+        f"puis seulement les décisions pertinentes — ne lisez jamais une décision "
+        f"intégrale. Les lectures sont tracées automatiquement."
+    )
+    return create_response(summary)
+
+
 TOOL_HANDLERS = {
     # Nouveaux outils optimisés
     "Search_Cour_Cassation": handle_search_cour_cassation,
@@ -1518,6 +1546,7 @@ TOOL_HANDLERS = {
     "Search_CAA": handle_search_caa,
     "Search_Premiere_Instance": handle_search_premiere_instance,
     "Search_Code": handle_search_code,
+    "Download_Query_Results": handle_download_query_results,
 
     # mcp_definitions.py annonce « Tracking_BODACC » (T majuscule) alors que la
     # table ne contenait que « tracking_BODACC » : l'outil annoncé tombait donc
