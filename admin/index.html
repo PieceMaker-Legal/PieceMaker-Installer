@@ -627,6 +627,7 @@
               <button type="button" data-block="blockquote" title="Citation">Citation</button>
               <button type="button" data-block="pre" title="Bloc de code">Code</button>
               <button type="button" data-command="createLink" title="Lien">Lien</button>
+              <button id="insertTableBtn" type="button" data-command="insertTable" title="Insérer un tableau Markdown">Tableau</button>
               <button id="insertAssetBtn" type="button" data-command="insertAsset" title="Insérer un fichier annexe (asset ou script) dans le skill">Fichier</button>
             </div>
             <input id="assetInput" type="file" hidden>
@@ -672,6 +673,21 @@
       <div class="actions">
         <button id="cancelCreateFile" class="button secondary" type="button">Annuler</button>
         <button class="button primary" type="submit">Créer et rédiger</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="insertTableDialog" aria-labelledby="insertTableTitle">
+    <form id="insertTableForm" class="dialog-card">
+      <div><p class="eyebrow">MISE EN FORME</p><h2 id="insertTableTitle">Insérer un tableau</h2></div>
+      <div class="form-grid">
+        <label>Colonnes<input id="insertTableColumns" name="columns" type="number" min="1" max="8" value="3" required></label>
+        <label>Lignes de contenu<input id="insertTableRows" name="rows" type="number" min="1" max="30" value="2" required></label>
+      </div>
+      <p class="hint">La première ligne sert d’en-tête. Vous pourrez modifier chaque cellule directement dans l’éditeur.</p>
+      <div class="actions">
+        <button id="cancelInsertTable" class="button secondary" type="button">Annuler</button>
+        <button class="button primary" type="submit">Insérer</button>
       </div>
     </form>
   </dialog>

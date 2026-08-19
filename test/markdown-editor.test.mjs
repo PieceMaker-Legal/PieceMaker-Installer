@@ -35,3 +35,10 @@ test('les liens relatifs vers les fichiers annexes d’un skill survivent, les s
   assert.match(markdownToHtml('[x](javascript:alert)'), /href="#"/);
   assert.match(markdownToHtml('[z](../secret)'), /href="#"/);
 });
+
+test('les tableaux Markdown sont rendus avec un en-tête et des cellules éditables', () => {
+  const html = markdownToHtml('| Nom | Statut |\n| --- | --- |\n| Contrat | Signé |');
+
+  assert.match(html, /<table><thead><tr><th>Nom<\/th><th>Statut<\/th><\/tr><\/thead>/);
+  assert.match(html, /<tbody><tr><td>Contrat<\/td><td>Signé<\/td><\/tr><\/tbody><\/table>/);
+});

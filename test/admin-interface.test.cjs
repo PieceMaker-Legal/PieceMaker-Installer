@@ -253,6 +253,33 @@ test('l’administration reste claire, tient dans le viewport et conserve les do
   assert.match(app, /for \(const folder of folders\)[\s\S]*select\.append\(option\);[\s\S]*select\.value = selectedFolder;/);
 });
 
+test('la barre des fichiers enveloppe les libellés sans masquer ses boutons', () => {
+  const css = read('admin/styles.css');
+
+  assert.match(css, /\.editor-layout \{[^}]*grid-template-columns: minmax\(0, 280px\)/);
+  assert.match(css, /\.file-sidebar \{[^}]*min-width: 0;[^}]*overflow: hidden/);
+  assert.match(css, /\.file-list \{[^}]*width: 100%;[^}]*min-width: 0/);
+  assert.match(css, /\.file-button-label \{[^}]*white-space: normal;[^}]*overflow-wrap: anywhere/);
+  assert.match(css, /\.file-asset-name \{[^}]*white-space: normal;[^}]*overflow-wrap: anywhere/);
+  assert.match(css, /\.file-group-add \{ flex: none;/);
+  assert.match(css, /\.file-row-delete \{ flex: none;/);
+  assert.match(css, /\.file-asset-delete \{ flex: none;/);
+});
+
+test('l’éditeur Markdown permet de configurer puis insérer un tableau', () => {
+  const html = read('admin/index.html');
+  const app = read('admin/app.js');
+  const css = read('admin/styles.css');
+
+  assert.match(html, /id="insertTableBtn"[^>]*data-command="insertTable"/);
+  assert.match(html, /id="insertTableDialog"[\s\S]*name="columns"[\s\S]*name="rows"/);
+  assert.match(app, /function editorTableHtml\(rows, columns\)/);
+  assert.match(app, /<table><thead><tr>\$\{heading\}<\/tr><\/thead><tbody>\$\{body\}<\/tbody><\/table>/);
+  assert.match(app, /insertHtmlIntoEditor\(editorTableHtml\(rows, columns\)\)/);
+  assert.match(css, /\.visual-editor table \{[^}]*max-width: 100%;[^}]*table-layout: fixed/);
+  assert.match(css, /\.visual-editor th, \.visual-editor td \{[^}]*overflow-wrap: anywhere/);
+});
+
 test('les écritures automatiques déclarent des commits limités à leurs chemins', () => {
   const routes = read('websocket-server/admin-routes.cjs');
   const pipeline = read('websocket-server/originals-pipeline.cjs');

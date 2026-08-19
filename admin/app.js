@@ -4061,6 +4061,52 @@ byId('chronologyMetaForm').addEventListener('submit', saveChronologyMeta);
 byId('caseTelegramCard').addEventListener('click', openCaseTelegramEditor);
 byId('telegramCaseView').addEventListener('submit', saveCaseTelegramBot);
 
+let tableInsertionRange = null;
+
+function openInsertTableDialog() {
+  const editor = byId('fileEditor');
+  const selection = window.getSelection();
+  tableInsertionRange = selection.rangeCount && editor.contains(selection.anchorNode)
+    ? selection.getRangeAt(0).cloneRange()
+    : null;
+  byId('insertTableDialog').showModal();
+  byId('insertTableColumns').select();
+}
+
+function tableDimension(value, maximum) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? Math.min(maximum, Math.max(1, parsed)) : 1;
+}
+
+function editorTableHtml(rows, columns) {
+  const heading = Array.from({ length: columns }, (_unused, index) => `<th>Colonne ${index + 1}</th>`).join('');
+  const cells = Array.from({ length: columns }, () => '<td><br></td>').join('');
+  const body = Array.from({ length: rows }, () => `<tr>${cells}</tr>`).join('');
+  return `<table><thead><tr>${heading}</tr></thead><tbody>${body}</tbody></table><p><br></p>`;
+}
+
+function insertTable(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const columns = tableDimension(new FormData(form).get('columns'), 8);
+  const rows = tableDimension(new FormData(form).get('rows'), 30);
+  const range = tableInsertionRange;
+  tableInsertionRange = null;
+  byId('insertTableDialog').close();
+
+  if (range) {
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+  insertHtmlIntoEditor(editorTableHtml(rows, columns));
+}
+
+function cancelInsertTable() {
+  tableInsertionRange = null;
+  byId('insertTableDialog').close();
+}
+
 function applyEditorCommand(button) {
   const command = button.dataset.command;
   if (command === 'insertAsset') {
@@ -4070,7 +4116,10 @@ function applyEditorCommand(button) {
     return;
   }
   byId('fileEditor').focus();
-  if (command === 'createLink') {
+  if (command === 'insertTable') {
+    openInsertTableDialog();
+    return;
+  } else if (command === 'createLink') {
     const url = prompt('Adresse du lien (https://…)');
     if (url) document.execCommand('createLink', false, url);
   } else if (command) {
@@ -4240,6 +4289,9 @@ byId('blockFormat').addEventListener('change', (event) => {
   document.execCommand('formatBlock', false, event.currentTarget.value);
   markEditorDirty();
 });
+byId('insertTableForm').addEventListener('submit', insertTable);
+byId('cancelInsertTable').addEventListener('click', cancelInsertTable);
+byId('insertTableDialog').addEventListener('close', () => { tableInsertionRange = null; });
 byId('createFileForm').addEventListener('submit', createFile);
 byId('cancelCreateFile').addEventListener('click', () => byId('createFileDialog').close());
 byId('addClaudePluginBtn').addEventListener('click', () => openPluginComponentsDialog('legal'));
