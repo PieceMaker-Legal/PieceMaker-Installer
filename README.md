@@ -146,9 +146,11 @@ et le serveur MCP Légifrance. Voir
 - `mcp-server/` — serveur MCP exposant les outils document
 - `electron/` — ancien client de bureau, conservé comme archive mais désactivé
 
-Le [`CLAUDE.md`](./CLAUDE.md) est destiné à l'utilisateur qui installe
-PieceMaker. Les repères d'architecture pour contribuer à la code base sont dans
-`CLAUDE.local.md` (non versionné, à l'usage des développeurs uniquement).
+Le `CLAUDE.md` racine contient les repères d'architecture pour contribuer à la
+code base : il est gitignoré et vit dans le clone de développement, jamais
+poussé. La persona destinée à l'utilisateur qui installe PieceMaker est le
+gabarit versionné `installer/templates/root-CLAUDE.md`, déposé à la racine du
+clone d'exécution par l'étape d'installation 09.
 
 ## Licence
 

@@ -39,6 +39,7 @@ import {
   checkForUpdate,
   updateRepository,
   refreshClaudePlugin,
+  depositRootClaudeMd,
 } from '../lib/service.mjs';
 
 const STEPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'steps');
@@ -328,6 +329,15 @@ async function runOperationalCommand(command, knownUpdate = null) {
     try {
       const result = updateRepository(pending);
       log.ok(`PieceMaker mis à jour (${result.ref}, ${result.target.slice(0, 7)}).`);
+
+      // CLAUDE.md racine est gitignoré : « git reset --hard » ci-dessus le
+      // supprime dès qu'un clone récupère le commit qui l'a dé-versionné. On
+      // redépose donc la persona utilisateur depuis le gabarit (absent → écrit,
+      // présent → intact), même source que l'étape d'installation 09.
+      if (depositRootClaudeMd().status === 'deposited') {
+        log.ok('CLAUDE.md (persona utilisateur) redéposé depuis le gabarit.');
+      }
+
       if (result.pythonChanged) {
         log.warn('requirements.txt a changé : relancez « piecemaker install » puis l’étape 03 — Python & GLiNER.');
       }

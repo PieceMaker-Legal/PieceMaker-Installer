@@ -8,7 +8,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { refreshClaudePlugin } from '../installer/lib/service.mjs';
+import { refreshClaudePlugin, depositRootClaudeMd, ROOT_CLAUDE_MD } from '../installer/lib/service.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cli = path.join(root, 'installer', 'bin', 'piecemaker.mjs');
@@ -209,5 +209,21 @@ test(
     assert.equal(result.refreshed, false);
     assert.equal(result.ok, true, 'les commandes ont bien réussi (code 0) — seule la convergence a échoué');
     assert.match(result.reason, /cache Claude Code reste périmé/);
+  },
+);
+
+test(
+  'depositRootClaudeMd ne réécrit jamais un CLAUDE.md racine déjà présent ' +
+  '(protège les repères d’architecture d’un clone de développement)',
+  () => {
+    // REPO_ROOT est figé au chargement du module : ce test s’exécute donc sur
+    // le vrai CLAUDE.md racine. Il ne teste que la branche « présent → intact »,
+    // sûre car non destructive ; la branche « absent → dépôt » supprimerait le
+    // fichier réel et n’est pas exercée ici.
+    if (!fs.existsSync(ROOT_CLAUDE_MD)) return; // clone sans CLAUDE.md : rien à garantir
+    const before = fs.readFileSync(ROOT_CLAUDE_MD, 'utf8');
+    const result = depositRootClaudeMd();
+    assert.equal(result.status, 'kept');
+    assert.equal(fs.readFileSync(ROOT_CLAUDE_MD, 'utf8'), before, 'le fichier ne doit pas être modifié');
   },
 );

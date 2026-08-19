@@ -6,9 +6,10 @@
  * Code's default component auto-discovery — installing it is what delivers
  * requirement #7 ("root CLAUDE.md + skills + agents"). CLAUDE.md itself is
  * NOT a plugin component (plugin.json only supports skills/commands/agents/
- * hooks/mcpServers/outputStyles) — it is a git-tracked file at the repo
- * root that Claude Code auto-discovers per-project, handled separately
- * below via reconcileClaudeMd().
+ * hooks/mcpServers/outputStyles). It is also NOT git-tracked: the repo-root
+ * CLAUDE.md is gitignored (it holds architecture notes in a dev clone), so
+ * for the user's runtime clone reconcileClaudeMd() deposits the user persona
+ * from the versioned gabarit installer/templates/root-CLAUDE.md.
  *
  * Subcommands verified live against `claude` 2.1.222 (`claude plugin --help`,
  * `claude plugin marketplace --help`, `claude plugin install --help`,
@@ -44,9 +45,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { log, spinner } from '../lib/ui.mjs';
-import { confirm } from '../lib/prompt.mjs';
 import { REPO_ROOT, commandExists, run, runCapture } from '../lib/platform.mjs';
 import { MARKETPLACE_NAME, PLUGIN_NAME, REFRESH_REASON_LABEL, pluginRefreshStatus } from '../lib/plugin-refresh.mjs';
+import { depositRootClaudeMd } from '../lib/service.mjs';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -65,6 +66,11 @@ const REPO_SLUG = 'PieceMaker-Legal/PieceMaker-Installer';
 const PLUGIN_SPEC = `${PLUGIN_NAME}@${MARKETPLACE_NAME}`;
 const PLUGIN_DIR = path.join(REPO_ROOT, 'piecemaker-plugin');
 const CLAUDE_MD = path.join(REPO_ROOT, 'CLAUDE.md');
+// La persona utilisateur (« Avocat ») n'est plus versionnée à la racine : le
+// CLAUDE.md racine est désormais gitignoré et sert de repères d'architecture
+// dans le clone de développement. Pour le clone d'exécution (utilisateur), on
+// dépose la persona depuis ce gabarit versionné.
+const CLAUDE_MD_TEMPLATE = path.join(REPO_ROOT, 'installer', 'templates', 'root-CLAUDE.md');
 
 function parseJson(str) {
   try {
@@ -168,52 +174,20 @@ async function ensurePlugin() {
 }
 
 /**
- * CLAUDE.md is git-tracked, not plugin-delivered. This never fabricates
- * content: it only ever restores from `git show HEAD:CLAUDE.md`, and only
- * with explicit confirmation, defaulting to keeping whatever is on disk.
+ * CLAUDE.md racine — persona utilisateur déposée depuis le gabarit versionné,
+ * via depositRootClaudeMd() (installer/lib/service.mjs), source unique partagée
+ * avec `piecemaker update`. Absent → on écrit la persona ; présent → jamais
+ * écrasé (préserve aussi le CLAUDE.md d'architecture d'un clone de dev).
  */
-async function reconcileClaudeMd() {
-  const existsOnDisk = fs.existsSync(CLAUDE_MD);
-
-  if (!commandExists('git', ['--version'])) {
-    if (existsOnDisk) return { status: 'done', note: '' };
-    return { status: 'partial', note: 'CLAUDE.md absent et git indisponible pour le restaurer.' };
+function reconcileClaudeMd() {
+  const result = depositRootClaudeMd();
+  if (result.status === 'missing-template') {
+    return { status: 'partial', note: `CLAUDE.md absent et gabarit introuvable (${CLAUDE_MD_TEMPLATE}).` };
   }
-
-  const tracked = runCapture('git', ['show', 'HEAD:CLAUDE.md'], { cwd: REPO_ROOT });
-
-  if (tracked.code !== 0) {
-    // Not committed at HEAD (e.g. on a feature branch not yet merged) —
-    // the working-tree copy, if present, is all we can go by.
-    if (existsOnDisk) return { status: 'done', note: '' };
-    return { status: 'partial', note: 'CLAUDE.md absent (ni sur le disque ni encore versionné) — rien à installer automatiquement.' };
+  if (result.status === 'deposited') {
+    return { status: 'done', note: 'CLAUDE.md (persona utilisateur) déposé depuis le gabarit.' };
   }
-
-  if (!existsOnDisk) {
-    const restore = await confirm('CLAUDE.md est absent mais présent dans git. Le restaurer ?', true);
-    if (!restore) return { status: 'partial', note: 'CLAUDE.md non restauré (choix utilisateur).' };
-    const code = await run('git', ['checkout', '--', 'CLAUDE.md'], { cwd: REPO_ROOT });
-    return code === 0
-      ? { status: 'done', note: 'CLAUDE.md restauré depuis git.' }
-      : { status: 'failed', note: 'Échec de "git checkout -- CLAUDE.md".' };
-  }
-
-  const onDisk = fs.readFileSync(CLAUDE_MD, 'utf8');
-  const trackedContent = tracked.stdout.endsWith('\n') ? tracked.stdout : `${tracked.stdout}\n`;
-  if (onDisk === trackedContent || onDisk === tracked.stdout) {
-    return { status: 'done', note: '' };
-  }
-
-  // Existing file differs from the versioned one — never overwrite silently.
-  log.warn('CLAUDE.md local diffère de la version versionnée dans git (modifications locales détectées).');
-  const keepLocal = await confirm('Conserver votre version locale de CLAUDE.md ?', true);
-  if (keepLocal) {
-    return { status: 'done', note: 'Version locale de CLAUDE.md conservée (diffère de git).' };
-  }
-  const code = await run('git', ['checkout', '--', 'CLAUDE.md'], { cwd: REPO_ROOT });
-  return code === 0
-    ? { status: 'done', note: 'CLAUDE.md réinitialisé à la version versionnée dans git.' }
-    : { status: 'failed', note: 'Échec de "git checkout -- CLAUDE.md".' };
+  return { status: 'done', note: '' };
 }
 
 export async function install(ctx) {
@@ -228,7 +202,7 @@ export async function install(ctx) {
     log.info(`[simulation] claude plugin marketplace add ${REPO_SLUG} (repli local : ${REPO_ROOT})`);
     log.info(`[simulation] claude plugin install ${PLUGIN_SPEC}`);
     log.info('[simulation] enregistrement des skills/agents locaux dans ~/.claude');
-    log.info('[simulation] vérification de CLAUDE.md (racine)');
+    log.info('[simulation] dépôt de CLAUDE.md (racine) depuis le gabarit si absent');
     return { status: 'skipped', note: 'Mode simulation — aucune modification effectuée.' };
   }
 
@@ -247,7 +221,7 @@ export async function install(ctx) {
   for (const conflict of assets.conflicts) {
     log.warn(`« ${conflict.slug} » existe déjà dans ~/.claude et n'a pas été remplacé.`);
   }
-  const claudeMdResult = await reconcileClaudeMd();
+  const claudeMdResult = reconcileClaudeMd();
 
   if (!pluginOk) {
     return {

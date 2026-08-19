@@ -492,6 +492,33 @@ export function checkForUpdate() {
   };
 }
 
+export const ROOT_CLAUDE_MD = path.join(REPO_ROOT, 'CLAUDE.md');
+const ROOT_CLAUDE_MD_TEMPLATE = path.join(REPO_ROOT, 'installer', 'templates', 'root-CLAUDE.md');
+
+/**
+ * Deposit the user persona at the repo-root CLAUDE.md, from the versioned
+ * gabarit installer/templates/root-CLAUDE.md.
+ *
+ * The root CLAUDE.md is gitignored: in a dev clone it holds architecture notes,
+ * and a fresh runtime clone doesn't ship it at all. So it can't be delivered by
+ * git — the installer deposits it. `git reset --hard` during an update also
+ * deletes the working-tree file the moment a clone pulls the commit that
+ * untracked it, so `piecemaker update` must redeposit it too, not just
+ * `piecemaker install` (step 09).
+ *
+ * Rule: absent → write the persona; present → never overwrite. That single rule
+ * protects both a freshly deposited persona and a dev clone's architecture
+ * notes (which stay untouched).
+ *
+ * Returns { status: 'kept' | 'deposited' | 'missing-template' }.
+ */
+export function depositRootClaudeMd() {
+  if (fs.existsSync(ROOT_CLAUDE_MD)) return { status: 'kept' };
+  if (!fs.existsSync(ROOT_CLAUDE_MD_TEMPLATE)) return { status: 'missing-template' };
+  fs.copyFileSync(ROOT_CLAUDE_MD_TEMPLATE, ROOT_CLAUDE_MD);
+  return { status: 'deposited' };
+}
+
 /**
  * Apply a pending update: move the working tree to the fetched revision, then
  * reconcile node_modules with the new package.json. `git` handles both halves
