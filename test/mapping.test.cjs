@@ -144,3 +144,32 @@ test('les orthographes piégeuses sont substituées comme les autres', () => {
     assert.match(coded, new RegExp(code));
   }
 });
+
+test('une entité ≥ 3 caractères est codée même soudée à d’autres caractères (noms de fichiers)', () => {
+  // Le cas réel de la fuite : le nom des parties survit dans les noms de fichiers,
+  // collé à une lettre (« d'ZORLON » → « dZORLON ») ou soudé par un underscore.
+  const mapping = { ZORLON: 'SOCIETE_01' };
+  const text = 'Fichier 01_Kbis_dZORLON_SA.pdf, puis ZORLON_SA et xZORLONx.';
+  const coded = applyMapping(text, mapping);
+  assert.ok(!/ZORLON/.test(coded), `nom laissé en clair : ${coded}`);
+  assert.equal(coded, 'Fichier 01_Kbis_dSOCIETE_01_SA.pdf, puis SOCIETE_01_SA et xSOCIETE_01x.');
+});
+
+test('le masquage empêche une entité de réécrire l’intérieur d’un code déjà posé', () => {
+  // « Moral » est une sous-chaîne de « PERSONNE_MORALE_01 » : sans masquage, la
+  // substitution en sous-chaîne corromprait le code et perdrait l’idempotence.
+  const mapping = { Moral: 'PERSONNE_MORALE_01', 'Jean Moral': 'PERSONNE_PHYSIQUE_01' };
+  const text = 'PERSONNE_MORALE_01 concerne Jean Moral et M. Moral.';
+  const coded = applyMapping(text, mapping);
+  assert.equal(coded, 'PERSONNE_MORALE_01 concerne PERSONNE_PHYSIQUE_01 et M. PERSONNE_MORALE_01.');
+  assert.equal(applyMapping(coded, mapping), coded, 'idempotent malgré la sous-chaîne');
+});
+
+test('un acronyme de 2 lettres : underscore délimiteur, casse respectée, jamais dans un mot ni un code', () => {
+  const mapping = { US: 'PAYS_01' };
+  assert.equal(applyMapping('US_SA', mapping), 'PAYS_01_SA');        // l’underscore délimite
+  assert.equal(applyMapping('US puis us', mapping), 'PAYS_01 puis us'); // casse respectée
+  assert.equal(applyMapping('business', mapping), 'business');        // pas au milieu d’un mot
+  // Le code déjà présent contient « US » : le masquage l’épargne.
+  assert.equal(applyMapping('ETAT_US_01', { US: 'ETAT_US_01' }), 'ETAT_US_01');
+});

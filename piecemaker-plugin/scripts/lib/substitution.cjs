@@ -26,17 +26,25 @@ function escapeRegex(string) {
 }
 
 /**
- * Longueur en deçà de laquelle une entité n'est jamais substituée, sauf
- * acronyme tout en capitales (voir `buildEntityRegex`). Mesuré sur GENSIGHT_URD :
- * des entités de 2-3 caractères ("CA", "us", "AU", "RU", "ZA") déclenchaient
- * 10 000+ substitutions dont >99 % à l'intérieur de mots sans rapport
- * (capital, business, Faubourg, rue, organization).
+ * Longueur à partir de laquelle une entité est substituée EN SOUS-CHAÎNE, où
+ * qu'elle apparaisse — même collée à d'autres lettres (« dURGOT ») ou soudée par
+ * un underscore (« URGOT_SA », forme des noms de fichiers). Sous ce seuil (2
+ * caractères), une sous-chaîne réécrirait l'intérieur d'un mot sur sept ("CA"
+ * dans "capital", "us" dans "business") : on retombe alors sur un acronyme
+ * délimité (voir `buildEntityRegex`). Les codes déjà posés sont protégés en
+ * amont par `applyMapping`, donc une sous-chaîne ne peut jamais corrompre un code.
  */
-const MIN_ENTITY_LENGTH = 4;
+const MIN_ENTITY_LENGTH = 3;
 
-/** Caractères de mot, Unicode : le \b de JS est ASCII et casse sur « Motté ». */
-const WORD_BOUNDARY_BEFORE = '(?<![\\p{L}\\p{N}_])';
-const WORD_BOUNDARY_AFTER = '(?![\\p{L}\\p{N}_])';
+/**
+ * Caractères de mot, Unicode : le \b de JS est ASCII et casse sur « Motté ».
+ * L'underscore n'en fait PAS partie : il délimite (« US_SA » → « US » est isolé),
+ * car les noms de fichiers soudent les termes par « _ ». La protection des codes
+ * contre une réécriture interne ne repose plus sur « _ » (il séparait les
+ * segments d'un code) mais sur le masquage préalable des codes dans `applyMapping`.
+ */
+const WORD_BOUNDARY_BEFORE = '(?<![\\p{L}\\p{N}])';
+const WORD_BOUNDARY_AFTER = '(?![\\p{L}\\p{N}])';
 
 /**
  * Ponctuations à plusieurs orthographes Unicode, ramenées à une classe qui les
@@ -72,15 +80,20 @@ function escapeWithVariants(token) {
 /**
  * Construit la regex qui retrouve une entité dans le texte.
  *
- * Trois propriétés qu'un simple `new RegExp(escapeRegex(x), 'gi')` n'a pas :
- *  1. des frontières de mots — sans elles, une entité de 2 lettres réécrit un
- *     septième du document depuis l'intérieur d'autres mots ;
- *  2. la tolérance aux espaces — les entités extraites du Markdown converti
+ *  - ≥ 3 caractères → substitution EN SOUS-CHAÎNE, sans frontière : c'est la
+ *    seule façon d'attraper le nom soudé à d'autres caractères, notamment dans
+ *    les noms de fichiers (« dURGOT_SA », « CAITLYN_SA »). Sur-coder n'expose
+ *    rien ; sous-coder laisse un nom en clair — on penche du côté sûr.
+ *  - 2 caractères → acronyme seulement, délimité des deux côtés (un « CA » nu
+ *    réécrirait un septième du document depuis l'intérieur d'autres mots).
+ *
+ * Deux propriétés qu'un simple `new RegExp(escapeRegex(x), 'gi')` n'a pas :
+ *  1. la tolérance aux espaces — les entités extraites du Markdown converti
  *     portent des retours à la ligne, doubles espaces et espaces insécables
- *     (« Board\nof  Directors ») ; échappés littéralement, l'entité ne
- *     correspondait presque nulle part ;
- *  3. la sensibilité à la casse pour les acronymes courts — « EDF »/« BNP »
- *     doivent matcher, mais sans casse « US » attrape aussi le pronom « us ».
+ *     (« Board\nof  Directors ») ; échappées littéralement, elles ne
+ *     correspondaient presque nulle part ;
+ *  2. la sensibilité à la casse pour les acronymes de 2 lettres — « US » ne doit
+ *     pas attraper le pronom « us ».
  *
  * @returns {RegExp|null} null quand l'entité est trop ambiguë pour être substituée.
  */
@@ -93,19 +106,27 @@ function buildEntityRegex(entity) {
   // Au moins une lettre ou un chiffre : de la ponctuation pure n'est pas une entité.
   if (!/[\p{L}\p{N}]/u.test(trimmed)) return null;
 
-  const isShort = trimmed.length < MIN_ENTITY_LENGTH;
-  const isAcronym = /^[\p{Lu}\p{N}][\p{Lu}\p{N}.&-]*$/u.test(trimmed);
-
-  // Court et pas acronyme → trop ambigu, on saute.
-  if (isShort && (!isAcronym || trimmed.length < 2)) return null;
-
   const pattern = trimmed
     .split(/\s+/)
     .map(escapeWithVariants)
     .join('\\s+');
 
-  const flags = isShort ? 'gu' : 'giu';
-  return new RegExp(WORD_BOUNDARY_BEFORE + pattern + WORD_BOUNDARY_AFTER, flags);
+  // ≥ 3 caractères : substitué en sous-chaîne, où qu'il apparaisse. Casse ignorée,
+  // car le Markdown converti change la casse d'un même nom. La protection contre
+  // la réécriture de l'intérieur d'un code est assurée par le masquage préalable
+  // dans applyMapping, pas par des frontières.
+  if (trimmed.length >= MIN_ENTITY_LENGTH) {
+    return new RegExp(pattern, 'giu');
+  }
+
+  // 2 caractères : trop court pour une sous-chaîne. Acronyme seulement, délimité
+  // par un non-alphanumérique (espace, underscore, ponctuation ou bord de texte)
+  // des deux côtés, et sensible à la casse pour ne pas confondre « US »/« us ».
+  const isAcronym = /^[\p{Lu}\p{N}][\p{Lu}\p{N}.&-]*$/u.test(trimmed);
+  if (trimmed.length === 2 && isAcronym) {
+    return new RegExp(WORD_BOUNDARY_BEFORE + pattern + WORD_BOUNDARY_AFTER, 'gu');
+  }
+  return null;
 }
 
 /**
@@ -134,12 +155,35 @@ function applyMapping(text, mapping) {
   const entries = Object.entries(mapping || {});
   if (!entries.length) return text;
 
-  let output = text;
+  // Masquage préalable des codes déjà présents dans le texte. La substitution en
+  // sous-chaîne (≥ 3 car.) et l'underscore-séparateur (acronymes 2 car.)
+  // pourraient sinon réécrire l'intérieur d'un code — « SA » dans « URGOT SA »,
+  // « Moral » dans « PERSONNE_MORALE_01 » — et le corrompre. Chaque code distinct
+  // est remplacé par un caractère de zone privée (ni lettre ni chiffre, absent des
+  // documents, jamais matché par une regex d'entité), on anonymise, puis on
+  // restaure. C'est aussi ce qui garantit l'idempotence : réappliquer le mapping à
+  // un texte déjà codé masque ses codes et ne touche à rien. Codes triés du plus
+  // long au plus court pour qu'un code contenu dans un autre ne soit pas masqué
+  // en premier.
+  const codes = [...new Set(entries.map(([, code]) => String(code)).filter(Boolean))]
+    .sort((a, b) => b.length - a.length);
+  const restore = [];
+  let masked = text;
+  codes.forEach((code, idx) => {
+    if (!masked.includes(code)) return;
+    const token = String.fromCodePoint(0xE000 + idx);
+    restore.push([token, code]);
+    masked = masked.split(code).join(token);
+  });
+
+  let output = masked;
   for (const [entity, code] of entries.sort(byDescendingEntityLength(([key]) => key))) {
     const regex = buildEntityRegex(entity);
     if (!regex) continue;
     output = output.replace(regex, code);
   }
+
+  for (const [token, code] of restore) output = output.split(token).join(code);
   return output;
 }
 
