@@ -1304,26 +1304,11 @@ async function controlTelegram(role, action, button) {
   }
 }
 
-async function syncClaudeAssets() {
-  const button = byId('syncClaudeAssets');
-  const message = byId('claudeAssetsMessage');
-  button.disabled = true;
-  setMessage(message, 'Enregistrement auprès de Claude Code…');
-  try {
-    const result = await api('/api/admin/files/sync', { method: 'POST', body: '{}' });
-    await loadFiles({ selectPath: selectedFile?.path || null });
-    const conflicts = result.conflicts?.length
-      ? ` — ${result.conflicts.length} conflit(s) de nom dans ~/.claude`
-      : '';
-    const adopted = result.adopted ? `, dont ${result.adopted} repris d’une autre installation` : '';
-    setMessage(message, `${result.registered} skill(s)/agent(s) enregistré(s)${adopted}${conflicts}.`, conflicts ? 'error' : 'success');
-    toast('Skills et agents synchronisés avec Claude Code');
-  } catch (error) {
-    setMessage(message, error.message, 'error');
-  } finally {
-    button.disabled = false;
-  }
-}
+// L'enregistrement auprès de Claude Code est désormais automatique : le serveur
+// lie (ou copie) chaque skill/agent dans ~/.claude à chaque création, chaque
+// enregistrement et chaque renommage (registerClaudeAsset dans admin-routes),
+// et réconcilie l'ensemble au démarrage. Plus de bouton de synchronisation
+// manuelle.
 
 // ---------------------------------------------------------------------------
 // Pop-up « Ajouter le plugin legal Claude » (bouton de l'onglet Skills et
@@ -1605,13 +1590,13 @@ function switchPluginTab(tab) {
   (isOfficial ? officialMarketplace : legalMarketplace).ensureLoaded();
 }
 
-function openPluginComponentsDialog() {
+function openPluginComponentsDialog(tab = 'legal') {
   const dialog = byId('pluginComponentsDialog');
   legalMarketplace.reset();
   officialMarketplace.reset();
   byId('pluginDialogStatus').textContent = 'Installez les plugins juridiques Claude ou parcourez le marketplace officiel.';
   setMessage(byId('pluginComponentsMessage'));
-  switchPluginTab('legal');
+  switchPluginTab(tab);
   dialog.showModal();
 }
 
@@ -1643,6 +1628,19 @@ async function loadFiles({ selectPath = null } = {}) {
           createButton.setAttribute('aria-label', createLabel);
           createButton.addEventListener('click', () => openCreateDialog(kind));
           heading.append(createButton);
+        } else if (kind === 'official-skill') {
+          // Le groupe « Skills Marketplace Claude » n'accueille pas de création
+          // locale : son bouton ouvre le marketplace (onglet officiel) pour
+          // installer d'autres skills fournis par un plugin.
+          const browseLabel = 'Parcourir le marketplace de skills Claude';
+          const browseButton = document.createElement('button');
+          browseButton.type = 'button';
+          browseButton.className = 'file-group-add';
+          browseButton.textContent = '+';
+          browseButton.title = browseLabel;
+          browseButton.setAttribute('aria-label', browseLabel);
+          browseButton.addEventListener('click', () => openPluginComponentsDialog('official'));
+          heading.append(browseButton);
         }
         list.append(heading);
         for (const file of groupFiles) {
@@ -4243,9 +4241,8 @@ byId('blockFormat').addEventListener('change', (event) => {
   markEditorDirty();
 });
 byId('createFileForm').addEventListener('submit', createFile);
-byId('syncClaudeAssets').addEventListener('click', syncClaudeAssets);
 byId('cancelCreateFile').addEventListener('click', () => byId('createFileDialog').close());
-byId('addClaudePluginBtn').addEventListener('click', openPluginComponentsDialog);
+byId('addClaudePluginBtn').addEventListener('click', () => openPluginComponentsDialog('legal'));
 byId('cancelPluginComponents').addEventListener('click', () => byId('pluginComponentsDialog').close());
 byId('closePluginComponentsDialog').addEventListener('click', () => byId('pluginComponentsDialog').close());
 document.querySelectorAll('[data-plugin-tab]').forEach((button) => button.addEventListener('click', () => switchPluginTab(button.dataset.pluginTab)));
