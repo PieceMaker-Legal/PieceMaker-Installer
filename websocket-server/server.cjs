@@ -260,6 +260,18 @@ try {
   console.warn('Enregistrement des skills/agents auprès de Claude Code impossible :', error.message);
 }
 
+// Hook central global : installé dans ~/.claude et câblé dans settings.json, il
+// applique le mapping central (fusion dé-conflictée de tous les dossiers) à toute
+// lecture/écriture de toute session Claude. Reconstruit le central au passage.
+try {
+  const { installCentralHook } = require('./central-hook-install.cjs');
+  const central = installCentralHook();
+  const entities = central.central && typeof central.central.entities === 'number' ? central.central.entities : 0;
+  console.log(`Hook central : mapping central reconstruit (${entities} entité(s)), hook ${central.hook ? 'installé' : 'non installé'}`);
+} catch (error) {
+  console.warn('Installation du hook central impossible :', error.message);
+}
+
 // LibreOffice sert à convertir les pièces Excel/Word en PDF avant tamponnage.
 // La détection lance un processus : on ne la fait qu'une fois.
 let sofficeAvailable;
