@@ -1,81 +1,48 @@
 ---
 name: word-taskpane
-description: Ouvrir Microsoft Word sur un document depuis une session extérieure (Claude Code) avec le volet PieceMaker déjà affiché, puis y lire et écrire directement. À utiliser dès qu'il faut ouvrir un .docx dans Word, faire apparaître le volet sans clic, ou écrire/modifier le contenu d'un document Word via read_doc / edit_doc.
+description: Lire et écrire dans un document Word (.docx) — soit via le volet PieceMaker (Word ouvert, read_doc/edit_doc, suivi des modifications + anonymisation), soit en éditant directement l'OOXML du fichier. À utiliser dès qu'il faut ouvrir, lire ou modifier un .docx.
 ---
 
-# Ouvrir Word et écrire dans le document (volet PieceMaker)
+# Lire et écrire dans Word
 
-Pour agir sur un document Word — le lire, y insérer ou modifier du texte — il
-faut trois choses réunies : Word ouvert sur **ce** document, le **volet
-PieceMaker** chargé (c'est lui qui exécute Office.js), et sa connexion WebSocket
-au serveur local (`wss://localhost:43098`). L'outil `open_doc` réunit les trois
-automatiquement. Ne demandez plus à l'utilisateur d'ouvrir le volet à la main.
+Deux voies. **Volet** = édition interactive dans Word ouvert (suivi des
+modifications + anonymisation transparente). **OOXML** = édition directe du
+`.docx` sur disque, sans Word.
 
-## 1. Ouvrir le document + le volet : `open_doc`
+## Voie volet — Word ouvert
 
-Toujours commencer par là, avec le chemin **absolu** d'un `.docx` :
+Sur un document précis (chemin absolu, `.docx` uniquement) :
 
 ```
-open_doc { "path": "/chemin/absolu/vers/document.docx" }
+open_doc { "path": "/abs/…/doc.docx" }   # ouvre Word + volet sur ce doc
+read_doc {}                              # relève les index de paragraphes
+edit_doc { "operation": "insert_after", "target_index": 12, "text": "## Titre\nTexte" }
 ```
 
-Ce que fait l'outil :
-1. enregistre l'add-in sur le poste si nécessaire (une fois, idempotent) ;
-2. injecte dans le `.docx` la référence qui fait apparaître le volet à
-   l'ouverture — **le contenu visible du document n'est pas modifié** ;
-3. lance Word sur ce document (macOS et Windows) et le met au premier plan ;
-4. attend que le volet s'annonce.
+- `read_doc` **obligatoire avant** `edit_doc` (imposé côté serveur).
+- Texte = Markdown → mise en forme Word (titres, gras, listes, `[^footnote: …]`).
+- Modifs en **suivi des modifications** ; mapping d'anonymisation appliqué
+  automatiquement (skill `anonymisation`).
+- Si le doc est déjà ouvert dans Word, le fermer d'abord (le fichier est réécrit).
 
-Réponse utile :
-- `paneReady: true` → le volet est connecté, on peut enchaîner `read_doc` /
-  `edit_doc`. Ils agissent sur le document **actif** de Word, c'est-à-dire
-  celui qu'`open_doc` vient d'ouvrir.
-- `paneReady: false` → Word a été lancé mais aucun volet ne s'est annoncé dans
-  le délai. Voir « Si le volet ne s'ouvre pas » plus bas.
+Ouvrir Word + volet en **une commande** (dev, serveur `43098` démarré) :
 
-Contraintes :
-- **`.docx` uniquement.** Un `.doc`, un PDF ou une image doivent d'abord passer
-  par la conversion (skill `conversion-md` / pipeline) — mais on écrit dans un
-  vrai document Word, pas dans le Markdown.
-- Si le document est **déjà ouvert** dans Word, le fermer d'abord : la
-  préparation réécrit le fichier sur le disque.
-
-## 2. Lire avant d'écrire : `read_doc` puis `edit_doc`
-
-L'écriture est indexée sur les paragraphes, donc **toujours `read_doc` avant
-`edit_doc`** (la règle est imposée côté serveur : un `edit_doc` sans `read_doc`
-préalable est refusé). Ordre type :
-
-```
-open_doc { "path": "…/conclusions.docx" }
-read_doc {}                      # relève les index des paragraphes
-edit_doc { "operation": "insert_after", "target_index": 12, "text": "## Titre\nTexte…" }
+```bash
+cd taskpane && npm start    # office-addin-debugging ; npm stop pour arrêter
 ```
 
-- Le texte est du Markdown converti en mise en forme Word (titres, gras, listes,
-  notes de bas de page `[^footnote: …]`).
-- Les modifications arrivent en **suivi des modifications** (track changes).
-- L'anonymisation reste transparente : si un mapping est actif pour le
-  document, `read_doc` code les entités et `edit_doc` les restaure — voir la
-  skill `anonymisation`.
+## Voie OOXML — fichier .docx, sans Word
 
-## Si le volet ne s'ouvre pas (`paneReady: false`)
+`.docx` = archive ZIP de XML ; le texte vit dans `word/document.xml`.
 
-Dans l'ordre :
-1. **Add-in non enregistré sur le poste** — relancer l'étape d'installation
-   « Ouverture automatique du volet Word » (`piecemaker`, étape
-   `12-word-taskpane`).
-2. **Serveur non démarré** — `piecemaker status` ; au besoin `piecemaker open`.
-3. **Repli manuel** — dans Word, onglet Accueil → bouton « Ouvrir PieceMaker »
-   du groupe PieceMaker. Le volet se connecte alors comme d'habitude, et
-   `read_doc` / `edit_doc` fonctionnent sur le document au premier plan.
+Le `.docx` original **reste dans son dossier** (jamais modifié en place). On
+dézippe une copie de travail dans `Fichiers convertis PieceMaker/` du dossier :
 
-## Sous le capot (pour situer)
+```bash
+unzip -d "Fichiers convertis PieceMaker/doc-ooxml" doc.docx
+```
 
-`open_doc` appelle `POST /api/word/open-doc` (server.cjs), qui s'appuie sur
-`websocket-server/lib/docx-autoopen.cjs` (injection webextension, storeType
-« Registry ») et `websocket-server/lib/word-launcher.cjs` (enregistrement +
-lancement multi-plateforme). Le volet (`taskpane/taskpane.js`) s'annonce par un
-message WebSocket `pane-hello` dès sa connexion ; c'est ce que `open_doc`
-attend. `read_doc` / `edit_doc` transitent ensuite par le relais MCP existant
-(serveur → WebSocket → Office.js dans le volet).
+- **Lire** : `word/document.xml` de la copie extraite.
+- **Écrire** : éditer `word/document.xml` (suivi des modifications = balises
+  `<w:ins>` / `<w:del>`) → rezipper vers un nouveau `.docx` (sans compresser
+  `[Content_Types].xml`) ; ou `python-docx` pour créer un document.

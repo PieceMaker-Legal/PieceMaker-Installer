@@ -1,0 +1,11 @@
+{
+  "name": "piecemaker-taskpane",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Volet Word PieceMaker — sideload développeur",
+  "scripts": {
+    "start": "office-addin-debugging start manifest.xml",
+    "stop": "office-addin-debugging stop manifest.xml",
+    "validate": "office-addin-manifest validate manifest.xml"
+  }
+}
