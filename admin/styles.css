@@ -37,7 +37,6 @@ h2 { margin-bottom: 8px; font-size: 1.15rem; }
 .panel { display: none; height: 100%; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .panel.active { display: block; }
 #history.panel { overflow: hidden; }
-#files.panel { overflow: hidden; }
 .card { border: 1px solid var(--line); border-radius: 16px; background: var(--card); box-shadow: 0 6px 24px rgba(21, 43, 39, .04); }
 .hero { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 26px; }
 .hero p:last-child { margin-bottom: 0; color: var(--muted); }
@@ -103,7 +102,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); outline:
 .dossier-link-editor label { font-size: .74rem; }
 .dossier-controls { display: flex; gap: 7px; }
 .empty-state { border: 1px dashed #cbd6d4; border-radius: 10px; padding: 22px; color: var(--muted); text-align: center; }
-.editor-layout { display: grid; height: 100%; min-height: 0; grid-template-columns: minmax(0, 280px) minmax(0, 1fr); overflow: hidden; }
+.editor-layout { display: grid; min-height: 650px; grid-template-columns: minmax(0, 280px) minmax(0, 1fr); overflow: hidden; }
 .file-sidebar { display: flex; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; border-right: 1px solid var(--line); padding: 22px 14px; }
 .file-sidebar .section-heading { flex: none; padding: 0 8px; }
 .new-file-actions { flex: none; display: flex; min-width: 0; flex-wrap: wrap; gap: 7px; padding: 0 8px 10px; }
@@ -144,7 +143,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); outline:
 .term-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; background: #f3f7f6; padding: 5px 6px 5px 12px; color: var(--ink); font-size: .82rem; font-weight: 600; }
 .term-chip button { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 999px; background: #e2e9e7; color: var(--muted); font-size: 1rem; line-height: 1; cursor: pointer; }
 .term-chip button:hover { background: #f8dfdc; color: var(--danger); }
-.editor-pane { display: flex; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; padding: 22px; }
+.editor-pane { display: flex; min-width: 0; flex-direction: column; padding: 22px; }
 .editor-header { display: flex; min-height: 55px; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .editor-header code { display: block; margin-top: 6px; background: transparent; padding: 0; color: var(--muted); font-size: .75rem; }
 .dirty-badge { border-radius: 999px; background: #fff0cc; padding: 5px 9px; color: var(--warn); font-size: .72rem; font-weight: 700; }
@@ -157,7 +156,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--brand); outline:
 .editor-toolbar.is-floating { border-bottom: 1px solid var(--line); box-shadow: 0 8px 18px -8px rgba(0, 0, 0, .3); }
 .editor-toolbar button, .editor-toolbar select { width: auto; min-height: 34px; border: 1px solid transparent; border-radius: 6px; background: transparent; padding: 5px 9px; color: var(--ink); cursor: pointer; }
 .editor-toolbar button:hover { border-color: #cbd6d4; background: white; }
-.visual-editor { min-height: 0; flex: 1; overflow: auto; border: 1px solid #cbd6d4; border-radius: 0 0 10px 10px; background: white; padding: 30px clamp(22px, 5vw, 64px); font: 16px/1.68 Georgia, "Times New Roman", serif; }
+.visual-editor { min-height: 500px; flex: 1; overflow: auto; border: 1px solid #cbd6d4; border-radius: 0 0 10px 10px; background: white; padding: 30px clamp(22px, 5vw, 64px); font: 16px/1.68 Georgia, "Times New Roman", serif; }
 .visual-editor:focus { border-color: var(--brand); outline: 3px solid rgba(0, 108, 98, .12); }
 .visual-editor.empty { border-radius: 10px; }
 .visual-editor.empty::before { color: #8a989b; content: attr(data-placeholder); font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
@@ -367,16 +366,13 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .diff-content.empty-state { display: grid; place-items: center; padding: 30px; color: #6e7781; font-family: inherit; font-size: .8rem; text-align: center; }
 
 @media (max-width: 800px) {
-  #files.panel { overflow: auto; }
   .metrics { grid-template-columns: repeat(2, 1fr); }
   .hero, .telegram-intro { align-items: flex-start; flex-direction: column; }
   .telegram-grid { grid-template-columns: 1fr; }
   .dossier-link-editor { grid-template-columns: 1fr; }
   .dossier-heading { flex-direction: column; }
   .dossier-heading code { max-width: 100%; text-align: left; }
-  .editor-layout { height: auto; min-height: 650px; grid-template-columns: 1fr; }
-  .editor-pane { overflow: visible; }
-  .visual-editor { min-height: 500px; }
+  .editor-layout { grid-template-columns: 1fr; }
   .file-sidebar { border-right: 0; border-bottom: 1px solid var(--line); }
   .file-list { max-height: 320px; }
   .repository-toolbar { grid-template-columns: 1fr 1fr; }
