@@ -256,14 +256,18 @@ test('l’administration reste claire, tient dans le viewport et conserve les do
 test('la barre des fichiers enveloppe les libellés sans masquer ses boutons', () => {
   const css = read('admin/styles.css');
 
-  assert.match(css, /\.editor-layout \{[^}]*grid-template-columns: minmax\(0, 280px\)/);
+  assert.match(css, /#files\.panel \{ overflow: hidden; \}/);
+  assert.match(css, /\.editor-layout \{[^}]*height: 100%;[^}]*min-height: 0;[^}]*grid-template-columns: minmax\(0, 280px\)/);
   assert.match(css, /\.file-sidebar \{[^}]*min-width: 0;[^}]*overflow: hidden/);
   assert.match(css, /\.file-list \{[^}]*width: 100%;[^}]*min-width: 0/);
+  assert.match(css, /\.editor-pane \{[^}]*min-height: 0;[^}]*overflow: hidden/);
+  assert.match(css, /\.visual-editor \{ min-height: 0;[^}]*overflow: auto/);
   assert.match(css, /\.file-button-label \{[^}]*white-space: normal;[^}]*overflow-wrap: anywhere/);
   assert.match(css, /\.file-asset-name \{[^}]*white-space: normal;[^}]*overflow-wrap: anywhere/);
   assert.match(css, /\.file-group-add \{ flex: none;/);
   assert.match(css, /\.file-row-delete \{ flex: none;/);
   assert.match(css, /\.file-asset-delete \{ flex: none;/);
+  assert.match(css, /@media \(max-width: 800px\) \{[\s\S]*#files\.panel \{ overflow: auto; \}[\s\S]*\.editor-layout \{ height: auto; min-height: 650px;/);
 });
 
 test('l’éditeur Markdown permet de configurer puis insérer un tableau', () => {
