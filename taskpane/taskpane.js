@@ -209,16 +209,11 @@ async function handleToolRequest(action, params) {
         return { error: error.message };
     }
 }
-async function minimizeInterface() {
-    try {
-        await Office.addin.hide();
-        console.log('✅ Interface masquée');
-    } catch (error) {
-        console.error('❌ Erreur:', error);
-    }
+function minimizeInterface() {
+    document.body.classList.add('minimized');
 }
 function restoreInterface() {
-    Office.addin.showAsTaskpane();
+    document.body.classList.remove('minimized');
 }
 
 // ============================================
@@ -540,6 +535,8 @@ Office.onReady(async (info) => {
         // Dans votre taskpane script
 
         document.getElementById('restoreBtn').addEventListener('click', restoreInterface);
+        // Démarrage réduit : le volet s'ouvre en barre compacte « PieceMaker »
+        document.body.classList.add('minimized');
         document.getElementById('sendBtn').onclick = sendMessage;
         document.getElementById('messageInput').onkeydown = handleKeyPress; // Détecter la sélection au focus
 
