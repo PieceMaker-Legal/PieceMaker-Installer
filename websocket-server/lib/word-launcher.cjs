@@ -1,24 +1,40 @@
 'use strict';
 
 /**
- * word-launcher.cjs — cross-platform helpers to (1) register the PieceMaker
- * add-in for Office *development* (the one-time step that lets an embedded
- * webextension reference resolve, see docx-autoopen.cjs and the
- * word-taskpane-autoopen mechanism) and (2) launch Microsoft Word on a given
- * document, bringing it to the front.
+ * word-launcher.cjs — deux responsabilités distinctes :
  *
- * Registration is done natively — no dependency on office-addin-dev-settings —
- * replicating exactly what that tool writes:
- *   - macOS:   a hard link (fallback: copy) of the manifest at
- *              ~/Library/Containers/com.microsoft.Word/Data/Documents/wef/
- *              <addinId>.<manifestBasename>
- *   - Windows: a REG_SZ value under
- *              HKCU\SOFTWARE\Microsoft\Office\16.0\Wef\Developer whose *name*
- *              and *data* are both the manifest path (that name==data shape is
- *              how the tooling recognises a manifest-path registration).
+ *  1. ENREGISTREMENT DÉVELOPPEUR de l'add-in PieceMaker sur le poste. C'est
+ *     l'étape unique qui permet à la référence webextension écrite dans un
+ *     .docx (store="developer" storeType="Registry", voir docx-autoopen.cjs)
+ *     de se résoudre, et donc au volet de s'ouvrir tout seul.
  *
- * Only "developer" registration is needed; storeType="Registry" in the embedded
- * doc resolves against it on both platforms.
+ *     Cet enregistrement est entièrement DÉLÉGUÉ à l'outillage officiel
+ *     `office-addin-dev-settings` — le même moteur que celui utilisé par
+ *     `office-addin-debugging start`, la commande que lance
+ *     `npm start --prefix taskpane`. Il n'y a plus de code d'écriture natif
+ *     (lien dans le dossier « wef » sur macOS, `reg add` sur Windows) : une
+ *     seule implémentation, celle de Microsoft, sert les deux chemins
+ *     (installeur / serveur d'un côté, CLI de développement de l'autre), ce qui
+ *     élimine toute divergence entre eux.
+ *
+ *     Ce que l'outil fait réellement, pour mémoire :
+ *       - macOS   : lien dur du manifeste dans
+ *                   ~/Library/Containers/com.microsoft.Word/Data/Documents/wef/
+ *                   sous le nom `<Id du manifeste>.<nom du manifeste>` ;
+ *       - Windows : valeur REG_SZ sous
+ *                   HKCU\SOFTWARE\Microsoft\Office\16.0\Wef\Developer, dont le
+ *                   NOM est l'<Id> du manifeste et la DONNÉE son chemin.
+ *                   (L'ancien code PieceMaker écrivait nom == donnée == chemin ;
+ *                   l'outil supprime explicitement cette forme héritée avant
+ *                   d'écrire la sienne. Word lit les deux.)
+ *
+ *  2. LANCEMENT DE WORD sur un document donné, et mise au premier plan.
+ *     Sans équivalent dans l'outillage Office (`office-addin-debugging
+ *     --document` copie le fichier dans un dossier temporaire), donc conservé
+ *     tel quel. Consommé par websocket-server/server.cjs (/api/word/open-doc).
+ *
+ * Les fonctions d'enregistrement sont ASYNCHRONES (l'API office-addin-dev-settings
+ * l'est) ; launchWord/activateWord restent synchrones.
  */
 
 const fs = require('fs');
@@ -27,92 +43,111 @@ const path = require('path');
 const { spawnSync, spawn } = require('child_process');
 
 const WORD_APP_MAC = 'Microsoft Word';
-const WIN_DEV_KEY = 'HKCU\\SOFTWARE\\Microsoft\\Office\\16.0\\Wef\\Developer';
 
+/**
+ * Dossier de sideload de Word sur macOS. Purement informatif (diagnostics,
+ * messages d'erreur) : plus rien n'y écrit ici, c'est office-addin-dev-settings
+ * qui le gère.
+ */
 function macWefDir() {
   return path.join(os.homedir(), 'Library/Containers/com.microsoft.Word/Data/Documents/wef');
 }
 
 /**
- * Ensure the add-in is registered for Office development on this machine.
- * Idempotent. Returns { registered:boolean, alreadyRegistered:boolean,
- * method:'wef'|'registry'|'unsupported', target?:string, error?:string }.
+ * Chargement paresseux de l'outillage Office. Paresseux à dessein : le module
+ * lit le registre / le système de fichiers à l'import, et le serveur doit
+ * pouvoir démarrer même si les dépendances de développement manquent.
  */
-function ensureDevRegistration(manifestPath, addinId) {
+function loadDevSettings() {
+  return require('office-addin-dev-settings');
+}
+
+function unsupportedPlatform() {
+  return process.platform !== 'darwin' && process.platform !== 'win32';
+}
+
+function methodForPlatform() {
+  return process.platform === 'darwin' ? 'wef' : 'registry';
+}
+
+/**
+ * Enregistre l'add-in pour le développement Office sur ce poste, si ce n'est
+ * pas déjà fait. Idempotent.
+ *
+ * @returns {Promise<{registered:boolean, alreadyRegistered?:boolean,
+ *                    method:'wef'|'registry'|'unsupported', target?:string,
+ *                    error?:string}>}
+ */
+async function ensureDevRegistration(manifestPath, addinId) {
   if (!fs.existsSync(manifestPath)) {
     return { registered: false, method: 'unsupported', error: `Manifest introuvable: ${manifestPath}` };
   }
-  if (process.platform === 'darwin') {
-    return registerMac(manifestPath, addinId);
+  if (unsupportedPlatform()) {
+    return {
+      registered: false,
+      method: 'unsupported',
+      error: `Plateforme non supportée pour Word: ${process.platform}`,
+    };
   }
-  if (process.platform === 'win32') {
-    return registerWindows(manifestPath);
-  }
-  return { registered: false, method: 'unsupported', error: `Plateforme non supportée pour Word: ${process.platform}` };
-}
 
-function registerMac(manifestPath, addinId) {
-  const wef = macWefDir();
+  const method = methodForPlatform();
   try {
-    fs.mkdirSync(wef, { recursive: true });
+    if (await isDevRegistered(manifestPath, addinId)) {
+      return { registered: true, alreadyRegistered: true, method, target: manifestPath };
+    }
+    await loadDevSettings().registerAddIn(manifestPath);
+    return { registered: true, alreadyRegistered: false, method, target: manifestPath };
   } catch (err) {
-    return { registered: false, method: 'wef', error: `Impossible de créer ${wef}: ${err.message}` };
+    return {
+      registered: false,
+      method,
+      error: `Enregistrement via office-addin-dev-settings impossible : ${err && err.message ? err.message : err}`,
+    };
   }
-  const target = path.join(wef, `${addinId}.${path.basename(manifestPath)}`);
-  if (fs.existsSync(target)) {
-    return { registered: true, alreadyRegistered: true, method: 'wef', target };
-  }
-  // Prefer a hard link (what the tooling does — later manifest edits stay in
-  // sync); fall back to a copy across filesystems or when linking is refused.
-  try {
-    fs.linkSync(manifestPath, target);
-  } catch {
-    try {
-      fs.copyFileSync(manifestPath, target);
-    } catch (err) {
-      return { registered: false, method: 'wef', error: `Échec de l'enregistrement wef: ${err.message}` };
-    }
-  }
-  return { registered: true, alreadyRegistered: false, method: 'wef', target };
-}
-
-function registerWindows(manifestPath) {
-  // Idempotent: `reg add … /f` overwrites without prompting. name==data==path.
-  const res = spawnSync('reg', ['add', WIN_DEV_KEY, '/v', manifestPath, '/t', 'REG_SZ', '/d', manifestPath, '/f'], {
-    encoding: 'utf8',
-  });
-  if (res.status === 0) {
-    return { registered: true, method: 'registry', target: `${WIN_DEV_KEY}\\${manifestPath}` };
-  }
-  return {
-    registered: false,
-    method: 'registry',
-    error: `reg add a échoué (code ${res.status}): ${(res.stderr || res.stdout || '').trim()}`,
-  };
 }
 
 /**
- * Non-mutating check: is the add-in already registered for development on this
- * machine? Used by the installer's check() and diagnostics. Returns a boolean;
- * on unsupported platforms returns false.
+ * Retire l'enregistrement développeur. Équivalent programmatique de
+ * `npm run stop --prefix taskpane`. Ne jette jamais.
  */
-function isDevRegistered(manifestPath, addinId) {
-  if (process.platform === 'darwin') {
-    try {
-      return fs.existsSync(path.join(macWefDir(), `${addinId}.${path.basename(manifestPath)}`));
-    } catch {
-      return false;
-    }
+async function removeDevRegistration(manifestPath) {
+  if (unsupportedPlatform()) return { unregistered: false, method: 'unsupported' };
+  try {
+    await loadDevSettings().unregisterAddIn(manifestPath);
+    return { unregistered: true, method: methodForPlatform() };
+  } catch (err) {
+    return {
+      unregistered: false,
+      method: methodForPlatform(),
+      error: err && err.message ? err.message : String(err),
+    };
   }
-  if (process.platform === 'win32') {
-    const res = spawnSync('reg', ['query', WIN_DEV_KEY, '/v', manifestPath], { encoding: 'utf8' });
-    return res.status === 0;
-  }
-  return false;
 }
 
 /**
- * Launch Word on `docPath`, bringing the app to the front. Non-blocking.
+ * Sonde en lecture seule : l'add-in est-il déjà enregistré pour le
+ * développement ? Utilisée par check() de l'installeur et par les diagnostics.
+ * Ne jette jamais — renvoie false en cas de doute.
+ *
+ * @returns {Promise<boolean>}
+ */
+async function isDevRegistered(manifestPath, addinId) {
+  if (unsupportedPlatform()) return false;
+  try {
+    const registered = await loadDevSettings().getRegisteredAddIns();
+    const wanted = path.resolve(manifestPath);
+    return registered.some((entry) => {
+      if (addinId && entry.id && entry.id.toLowerCase() === String(addinId).toLowerCase()) return true;
+      if (!entry.manifestPath) return false;
+      return path.resolve(entry.manifestPath) === wanted;
+    });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Lance Word sur `docPath` et met l'application au premier plan. Non bloquant.
  * Returns { launched:boolean, method:string, error?:string }.
  */
 function launchWord(docPath) {
@@ -156,4 +191,11 @@ function activateWord() {
   }
 }
 
-module.exports = { ensureDevRegistration, isDevRegistered, launchWord, activateWord, macWefDir };
+module.exports = {
+  ensureDevRegistration,
+  removeDevRegistration,
+  isDevRegistered,
+  launchWord,
+  activateWord,
+  macWefDir,
+};

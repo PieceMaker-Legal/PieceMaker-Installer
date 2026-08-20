@@ -605,8 +605,9 @@ app.post('/api/word/open-doc', async (req, res) => {
     activeWordDocPath = resolved;
 
     // 1. Enregistrement développeur (idempotent) — sans lui la référence
-    //    webextension (storeType="Registry") ne se résout pas.
-    const registration = ensureDevRegistration(MANIFEST_PATH, ADDIN_ID);
+    //    webextension (storeType="Registry") ne se résout pas. Délégué à
+    //    office-addin-dev-settings, donc asynchrone (voir lib/word-launcher.cjs).
+    const registration = await ensureDevRegistration(MANIFEST_PATH, ADDIN_ID);
 
     // 2. Injection des parties d'auto-ouverture dans le document (idempotent).
     let injection;

@@ -2,10 +2,17 @@
   "name": "piecemaker-taskpane",
   "version": "1.0.0",
   "private": true,
-  "description": "Volet Word PieceMaker — sideload développeur",
+  "description": "Volet Word PieceMaker — enregistrement et sideload développeur",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
-    "start": "office-addin-debugging start manifest.xml",
+    "predev": "node scripts/clear-sideload.js",
+    "dev": "office-addin-debugging start manifest.xml --dev-server \"node ../websocket-server/server.cjs\" --dev-server-port 43098",
+    "prestart": "node scripts/clear-sideload.js",
+    "start": "office-addin-debugging start manifest.xml --dev-server \"node ../websocket-server/server.cjs\" --dev-server-port 43098",
     "stop": "office-addin-debugging stop manifest.xml",
-    "validate": "office-addin-manifest validate manifest.xml"
+    "validate": "office-addin-manifest validate manifest.xml",
+    "build": "node scripts/build-manifest.js"
   }
 }
