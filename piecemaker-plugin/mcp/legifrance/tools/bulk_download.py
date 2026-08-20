@@ -6,10 +6,9 @@ Téléchargement en masse des résultats d'une requête Legifrance.
 L'outil MCP `Download_Query_Results` pagine une requête jusqu'à récupérer tous
 ses résultats (dans la limite d'un plafond), les écrit dans un dossier — un
 fichier Markdown par décision, plus un index et le JSON brut — et rend le
-CHEMIN du dossier à l'agent appelant. L'agent de tri (Haiku) lit ensuite ce
-dossier au lieu de paginer lui-même, et un hook déterministe
-(`track-legifrance-reads.mjs`) trace ce qu'il a réellement ouvert grâce au
-marqueur `.legifrance-results.json` déposé à la racine du dossier.
+CHEMIN du dossier au client appelant. Un agent bon marché peut ensuite lire ce
+dossier au lieu de paginer lui-même. Le marqueur `.legifrance-results.json`
+permet à tout client de reconnaître les résultats sans couplage à ce serveur.
 """
 
 import json
@@ -21,8 +20,7 @@ from datetime import datetime, timedelta
 from tools.legifrance_client import legifrance_client
 from tools.query_parser import parse_query
 
-# Marqueur reconnu par le hook de tracking de lecture. Ne pas renommer sans
-# mettre à jour piecemaker-plugin/scripts/track-legifrance-reads.mjs.
+# Contrat de fichier public et stable pour les clients externes.
 MARKER_NAME = ".legifrance-results.json"
 
 PAGE_SIZE = 100         # maximum accepté par l'API PISTE
@@ -266,7 +264,7 @@ def download_query_results(args):
 
     # Écriture du dossier.
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    default_root = os.path.join(os.path.expanduser("~"), ".piecemaker", "legifrance-results")
+    default_root = os.path.join(os.path.expanduser("~"), ".legifrance-mcp", "results")
     root = args.get("output_dir") or default_root
     folder = os.path.join(root, f"{timestamp}-{slugify(query)}")
     os.makedirs(folder, exist_ok=True)

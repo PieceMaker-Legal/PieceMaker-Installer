@@ -14,6 +14,7 @@ from tools.bodacc_client import bodacc_client
 from tools.query_parser import parse_query
 from tools.code_parser import parse_code_query
 from tools.bulk_download import download_query_results
+from tools.research_corpus import build_research_corpus, validate_research_cards
 LEGIFRANCE_BASE_URL = "https://www.legifrance.gouv.fr"
 
 def create_response(text: str, resource: Dict = None, is_error: bool = False) -> Dict[str, Any]:
@@ -1538,9 +1539,78 @@ def handle_download_query_results(args: Dict[str, Any], user_id: str) -> Dict[st
         f"Le dossier contient `index.md` (liste triable), un fichier `.md` par "
         f"décision et `results.json` (données brutes). Lisez `index.md` d'abord, "
         f"puis seulement les décisions pertinentes — ne lisez jamais une décision "
-        f"intégrale. Les lectures sont tracées automatiquement."
+        f"intégrale. Le marqueur local permet au client de tracer les lectures s'il le souhaite."
     )
     return create_response(summary)
+
+
+def handle_build_research_corpus(args: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+    """Fige et télécharge un corpus exhaustif, puis prépare les lots de cartographie."""
+    try:
+        info = build_research_corpus(args)
+    except ValueError as e:
+        return create_response(f"❌ {e}", is_error=True)
+
+    truncated_note = (
+        "\n⚠️ Le manifeste est tronqué par au moins un plafond explicite. "
+        "Augmentez le plafond ou resserrez les requêtes avant toute conclusion."
+        if info["truncated"] else ""
+    )
+    summary = (
+        "**📚 CORPUS JURISPRUDENTIEL EXHAUSTIF PRÉPARÉ**\n\n"
+        f"**Question:** {info['question']}\n"
+        f"**Requêtes:** {len(info['queries'])}\n"
+        f"**Décisions identifiées (dédupliquées):** {info['identified']}\n"
+        f"**Textes intégraux téléchargés et scannés:** {info['scanned']}\n"
+        f"**Échecs:** {info['failed']}\n"
+        f"**Hors champ fermés par filtre booléen:** {info['static_closed']}\n"
+        f"**Candidates à revoir par modèle économique:** {info['model_candidates']}\n"
+        f"**Lots candidats à cartographier:** {info['batches']}\n"
+        f"**Entrée LLM estimée:** {info['tokens_input_estimated']:,} tokens "
+        f"({info['token_estimation_method']}; ce n'est pas un relevé fournisseur)\n"
+        f"{truncated_note}\n\n"
+        f"**Dossier:** {info['folder']}\n"
+        f"**Plan des lots:** {info['batch_plan']}\n"
+        f"**Télémétrie:** {info['telemetry']}\n\n"
+        "Traitez chaque fichier `batches/lot-*.md` et écrivez exactement une "
+        "fiche JSON par candidate dans le fichier `cards/lot-*.jsonl` correspondant. "
+        "Appelez ensuite `Validate_Research_Cards`. Toutes les décisions doivent "
+        "recevoir une fiche : les incompatibilités lexicales certaines ont déjà "
+        "une fiche statique, sans appel modèle."
+    )
+    return create_response(summary)
+
+
+def handle_validate_research_cards(args: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+    """Contrôle la couverture des fiches et vérifie leurs citations dans les sources."""
+    try:
+        info = validate_research_cards(args)
+    except ValueError as e:
+        return create_response(f"❌ {e}", is_error=True)
+
+    usage = info.get("exact_usage")
+    usage_line = (
+        "Usage modèle exact: "
+        f"{usage.get('input_tokens', 0):,} entrée · {usage.get('output_tokens', 0):,} sortie"
+        if usage else
+        "Usage modèle exact: non fourni — les chiffres ci-dessous sont des estimations explicites"
+    )
+    status = "✅ complète" if info["coverage_complete"] else "⚠️ incomplète"
+    summary = (
+        "**🧾 VALIDATION DES FICHES JURISPRUDENTIELLES**\n\n"
+        f"**Couverture:** {status}\n"
+        f"**Fiches reçues / valides:** {info['cards']} / {info['valid_cards']}\n"
+        f"**Décisions sans fiche:** {info['missing']}\n"
+        f"**Citations rejetées:** {info['invalid_quotes']}\n"
+        f"**Citations faibles/coupées:** {info['weak_quotes']}\n"
+        f"**Tokens entrée estimés:** {info['tokens_input_estimated']:,}\n"
+        f"**Tokens sortie modèle estimés:** {info['tokens_output_estimated']:,}\n"
+        f"**Tokens de toutes les fiches estimés:** {info['tokens_all_cards_estimated']:,}\n"
+        f"**{usage_line}**\n\n"
+        f"**Matrice validée:** {info['matrix']}\n"
+        f"**Métriques:** {info['metrics']}"
+    )
+    return create_response(summary, is_error=not info["coverage_complete"])
 
 
 TOOL_HANDLERS = {
@@ -1552,6 +1622,8 @@ TOOL_HANDLERS = {
     "Search_Premiere_Instance": handle_search_premiere_instance,
     "Search_Code": handle_search_code,
     "Download_Query_Results": handle_download_query_results,
+    "Build_Research_Corpus": handle_build_research_corpus,
+    "Validate_Research_Cards": handle_validate_research_cards,
 
     # mcp_definitions.py annonce « Tracking_BODACC » (T majuscule) alors que la
     # table ne contenait que « tracking_BODACC » : l'outil annoncé tombait donc

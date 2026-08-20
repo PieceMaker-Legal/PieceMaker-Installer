@@ -74,3 +74,31 @@ test('renderMarkdown escapes pipe characters in table cells', () => {
   });
   assert.match(md, /A \\\| B/);
 });
+
+test('renderMarkdown reports exhaustive coverage and labels estimated tokens honestly', () => {
+  const md = renderMarkdown({
+    question: 'Quelles sont les conditions ?',
+    analyseLabel: 'Rapport de recherche exhaustive',
+    rapport: 'Synthèse issue de toutes les fiches validées.',
+    methodologie: 'Corpus fixe sans RAG ; une fiche par décision.',
+    metriques: {
+      decisionsIdentifiees: 398,
+      decisionsScannees: 396,
+      fichesValidees: 396,
+      echecs: 2,
+      tokensEntree: 812345,
+      tokensSortie: 54210,
+      tokensExacts: false,
+      methodeEstimation: 'ceil(caractères/4)',
+      tronquee: true,
+    },
+  });
+
+  assert.match(md, /## Rapport de recherche exhaustive/);
+  assert.match(md, /## Méthodologie/);
+  assert.match(md, /## Couverture et coût/);
+  assert.match(md, /Décisions scannées en texte intégral\*\* : 396/);
+  assert.match(md, /Tokens d'entrée estimés\*\* : 812[\s\u202f]345/);
+  assert.match(md, /Méthode d'estimation\*\* : ceil\(caractères\/4\)/);
+  assert.match(md, /corpus tronqué/);
+});

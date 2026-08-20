@@ -121,7 +121,10 @@ refusé au même titre qu'un `Read`.
 **MCP `legifrance`** — `Search_Code`, `Search_Cour_Cassation`,
 `Search_Conseil_Etat`, `Search_Cour_Appel`, `Search_CAA`,
 `Search_Premiere_Instance`, `consulter_decision`, `Tracking_BODACC`,
-`Brainstorming`. Nécessite `LEGIFRANCE_CLIENT_ID` / `LEGIFRANCE_CLIENT_SECRET`.
+`Build_Research_Corpus`, `Validate_Research_Cards`, `Brainstorming`. Le couple
+`Build_Research_Corpus` / `Validate_Research_Cards` sert aux études exhaustives
+sans RAG et rend la couverture ainsi que les tokens. Nécessite
+`LEGIFRANCE_CLIENT_ID` / `LEGIFRANCE_CLIENT_SECRET`.
 
 **MCP `PieceMaker`** — `read_doc`, `edit_doc`, `read_case`, `get_resource`,
 `draft`, `template_library`, `Stamping`, `Call_Ollama`. Ces outils passent par
