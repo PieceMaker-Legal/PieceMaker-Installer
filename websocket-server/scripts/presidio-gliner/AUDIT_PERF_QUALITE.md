@@ -1,4 +1,25 @@
-# PieceMaker — plan v3
+# PieceMaker — plan v3 (archive historique)
+
+> **Statut — archive, non-feuille de route active.** Ce plan est conservé comme trace de l'analyse
+> publiée dans le commit `fb4bca1` du **6 août 2026**. Il fige les mesures, hypothèses et travaux
+> « à faire » tels qu'ils étaient alors envisagés ; il ne décrit pas l'état courant du code et ne
+> constitue pas un compte rendu d'exécution ultérieure. Ne pas interpréter ses chiffres ou ses
+> étapes comme des résultats actuels sans consulter les documents de vérification ci-dessous.
+>
+> État et résultats disponibles depuis ce plan :
+> - [`eval/CRITERES_QUALITE.md`](eval/CRITERES_QUALITE.md) vérifie les étapes 1 à 3 et documente
+>   la correction de la fuite liée aux tirets Unicode ;
+> - [`eval/BACKENDS_MESURES.md`](eval/BACKENDS_MESURES.md) rassemble les mesures comparatives des
+>   backends ;
+> - les scripts [`eval/verify_substitution.cjs`](eval/verify_substitution.cjs) et
+>   [`eval/verify_whitespace.py`](eval/verify_whitespace.py), ainsi que les résultats
+>   [`eval/eval_results.json`](eval/eval_results.json), [`eval/bench_results.json`](eval/bench_results.json)
+>   et [`eval/sweep_results.json`](eval/sweep_results.json), indiquent les vérifications
+>   effectivement rejouables ou leurs sorties conservées.
+>
+> Les sections historiques ci-dessous sont volontairement laissées inchangées : leurs mentions
+> « à faire », estimations et résultats partiels ne donnent pas le statut courant et ne prouvent
+> pas des travaux réalisés aujourd'hui.
 
 > Remplace la v2. Contient **deux corrections de mes propres conclusions** et un renversement de
 > l'objectif qualité, provoqué par la lecture du code de substitution que je n'avais pas encore lu.
