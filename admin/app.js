@@ -1430,55 +1430,90 @@ const MARKETPLACE_BADGES = {
 // choix réversible côté serveur). La recherche filtre localement — Claude Code
 // n'expose aucune recherche distante. `scope` est transmis au serveur pour
 // borner l'énumération et l'installation au seul marketplace de l'onglet.
+// Le catalogue officiel compte ~300 connecteurs : on ne les affiche pas d'un
+// bloc mais par pages de PAGE_SIZE, avec « Précédent / Suivant ». La recherche
+// filtre l'ensemble (pas seulement la page courante) et ramène en page 1.
+const MARKETPLACE_PAGE_SIZE = 10;
+
 function createMarketplaceController({ scope, ids, labels }) {
   let data = null;
   let selected = new Set();
   let searchQuery = '';
+  let page = 0;
   const msg = () => byId('pluginComponentsMessage');
 
-  function treeGroups() {
+  // Toute la liste filtrée (tous marketplaces de l'onglet confondus), triée par
+  // nom — la base que l'on découpe ensuite en pages.
+  function filteredPlugins() {
     const plugins = data?.plugins || [];
     const query = searchQuery.trim().toLowerCase();
     const filtered = query
       ? plugins.filter((plugin) => plugin.name.toLowerCase().includes(query) || (plugin.description || '').toLowerCase().includes(query))
       : plugins;
-    const byMarketplace = new Map();
-    for (const plugin of filtered) {
-      const key = plugin.marketplace || labels.marketplaceName;
-      if (!byMarketplace.has(key)) byMarketplace.set(key, []);
-      byMarketplace.get(key).push(plugin);
-    }
-    return Array.from(byMarketplace.entries()).map(([marketplaceName, items]) => ({
-      label: marketplaceName,
-      items: items
-        .slice()
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((plugin) => ({
-          id: plugin.id,
-          name: plugin.name,
-          description: plugin.description || (plugin.installCount ? `${plugin.installCount} installation(s)` : ''),
-          disabled: false,
-          hint: 'Installer/activer (ou désactiver) ce connecteur',
-          badge: plugin.installed ? (plugin.enabled ? MARKETPLACE_BADGES.active : MARKETPLACE_BADGES.installed) : null,
-        })),
-    }));
+    return filtered.slice().sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  function pluginToTreeItem(plugin) {
+    return {
+      id: plugin.id,
+      name: plugin.name,
+      description: plugin.description || (plugin.installCount ? `${plugin.installCount} installation(s)` : ''),
+      disabled: false,
+      hint: 'Installer/activer (ou désactiver) ce connecteur',
+      badge: plugin.installed ? (plugin.enabled ? MARKETPLACE_BADGES.active : MARKETPLACE_BADGES.installed) : null,
+    };
+  }
+
+  // Barre « ‹ Précédent · Page x/y · N connecteurs · Suivant › » sous l'arbre.
+  function buildPager(total, totalPages, start, count) {
+    const bar = makeElement('div', 'marketplace-pager');
+    const prev = makeElement('button', 'button secondary compact', '‹ Précédent');
+    prev.type = 'button';
+    prev.disabled = page <= 0;
+    prev.addEventListener('click', () => { page -= 1; render(); });
+    const next = makeElement('button', 'button secondary compact', 'Suivant ›');
+    next.type = 'button';
+    next.disabled = page >= totalPages - 1;
+    next.addEventListener('click', () => { page += 1; render(); });
+    const status = makeElement(
+      'span',
+      'marketplace-pager-status',
+      `Page ${page + 1}/${totalPages} · ${start + 1}–${start + count} sur ${total}`,
+    );
+    bar.append(prev, status, next);
+    return bar;
   }
 
   function render() {
     const container = byId(ids.list);
     container.textContent = '';
-    const groups = treeGroups();
-    if (!groups.length) {
+    const all = filteredPlugins();
+    if (!all.length) {
       container.append(createHistoryEmpty(
         searchQuery ? 'Aucun résultat' : 'Aucun connecteur disponible',
         searchQuery ? 'Essayez un autre terme.' : labels.emptyHint,
       ));
       return;
     }
+    const totalPages = Math.max(1, Math.ceil(all.length / MARKETPLACE_PAGE_SIZE));
+    page = Math.min(Math.max(page, 0), totalPages - 1);
+    const start = page * MARKETPLACE_PAGE_SIZE;
+    const pageItems = all.slice(start, start + MARKETPLACE_PAGE_SIZE);
+    // Regroupe les éléments de la page par marketplace (un seul en pratique,
+    // l'onglet étant scopé) pour garder l'entête de groupe de l'arbre.
+    const byMarketplace = new Map();
+    for (const plugin of pageItems) {
+      const key = plugin.marketplace || labels.marketplaceName;
+      if (!byMarketplace.has(key)) byMarketplace.set(key, []);
+      byMarketplace.get(key).push(pluginToTreeItem(plugin));
+    }
+    const groups = Array.from(byMarketplace.entries()).map(([label, items]) => ({ label, items }));
     container.append(buildComponentTree(groups, selected, () => {}));
+    if (totalPages > 1) container.append(buildPager(all.length, totalPages, start, pageItems.length));
   }
 
   async function load() {
+    page = 0;
     byId(ids.list).textContent = 'Chargement…';
     byId(ids.status).textContent = 'Chargement…';
     byId(ids.registerBtn).hidden = true;
@@ -1546,11 +1581,12 @@ function createMarketplaceController({ scope, ids, labels }) {
       data = null;
       selected = new Set();
       searchQuery = '';
+      page = 0;
       const search = byId(ids.search);
       if (search) search.value = '';
     },
     ensureLoaded() { if (!data) void load(); },
-    setSearch(value) { searchQuery = value; render(); },
+    setSearch(value) { searchQuery = value; page = 0; render(); },
     registerMarketplace,
     applySelection,
   };
