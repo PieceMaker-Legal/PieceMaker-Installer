@@ -10,25 +10,9 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
-  ListPromptsRequestSchema,
-  GetPromptRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import fetch from 'node-fetch';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Chemin de sortie configuré (passé via variable d'environnement)
-const OUTPUT_PATH = process.env.OUTPUT_PATH;
-if (OUTPUT_PATH) {
-  console.error('[MCP Local] Chemin de sortie configuré:', OUTPUT_PATH);
-} else {
-  console.error('[MCP Local] Utilisation du chemin de sortie par défaut (addon/output)');
-}
 
 // Désactiver la vérification SSL pour localhost
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
@@ -418,65 +402,6 @@ Use it if analysis is empty`,
 }
 ];
 
-// ============================================================================
-// PROMPTS MANAGEMENT
-// ============================================================================
-
-let promptsData = { prompts: [], metadata: {} };
-
-/**
- * Load prompts from mcp-prompts.json
- */
-function loadPrompts() {
-  try {
-    const promptsPath = path.join(__dirname, '..', 'mcp-prompts.json');
-    const data = fs.readFileSync(promptsPath, 'utf-8');
-    promptsData = JSON.parse(data);
-    console.error(`[MCP Local] ${promptsData.prompts.length} prompts chargés depuis mcp-prompts.json`);
-  } catch (error) {
-    console.error('[MCP Local] Erreur chargement prompts:', error.message);
-    promptsData = { prompts: [], metadata: {} };
-  }
-}
-
-/**
- * List all available prompts
- */
-function listPrompts() {
-  return promptsData.prompts.map(prompt => ({
-    name: prompt.name,
-    description: prompt.description,
-    arguments: prompt.arguments || []
-  }));
-}
-
-/**
- * Get a specific prompt by name with argument interpolation
- */
-function getPrompt(name, args = {}) {
-  const prompt = promptsData.prompts.find(p => p.name === name);
-
-  if (!prompt) {
-    throw new Error(`Prompt '${name}' not found`);
-  }
-
-  let promptText = prompt.prompt;
-
-  // Interpolate arguments
-  for (const [key, value] of Object.entries(args)) {
-    const placeholder = `{${key}}`;
-    promptText = promptText.replace(new RegExp(placeholder, 'g'), value);
-  }
-
-  return {
-    name: prompt.name,
-    description: prompt.description,
-    prompt: promptText,
-    sequence: prompt.sequence || [],
-    absolute_rules: prompt.absolute_rules || []
-  };
-}
-
 // Schémas Zod pour validation des arguments
 const OpenDocSchema = z.object({
   path: z.string().min(1),
@@ -661,7 +586,6 @@ const server = new Server(
   {
     capabilities: {
       tools: {},
-      prompts: {},
     },
   }
 );
@@ -725,54 +649,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-// ============================================================================
-// PROMPTS HANDLERS
-// ============================================================================
-
-// Handler pour prompts/list
-server.setRequestHandler(ListPromptsRequestSchema, async () => {
-  const prompts = listPrompts();
-  return {
-    prompts: prompts
-  };
-});
-
-// Handler pour prompts/get
-server.setRequestHandler(GetPromptRequestSchema, async (request) => {
-  const promptName = request.params.name;
-  const promptArgs = request.params.arguments || {};
-
-  try {
-    const promptData = getPrompt(promptName, promptArgs);
-
-    // Format MCP response
-    return {
-      description: promptData.description,
-      messages: [
-        {
-          role: 'user',
-          content: {
-            type: 'text',
-            text: promptData.prompt
-          }
-        }
-      ]
-    };
-  } catch (error) {
-    throw new Error(`Prompt error: ${error.message}`);
-  }
-});
-
 // Démarrer le serveur avec stdio transport
 async function main() {
-  loadPrompts(); // Charger les prompts au démarrage
-
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
   console.error('[MCP Local] Serveur MCP local démarré avec SDK officiel v2.0');
   console.error('[MCP Local] - Tools: Enabled');
-  console.error('[MCP Local] - Prompts: Enabled');
 }
 
 main().catch((error) => {
