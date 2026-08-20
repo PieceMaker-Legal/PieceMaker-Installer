@@ -44,8 +44,22 @@ import {
 } from '../lib/service.mjs';
 
 const require = createRequire(import.meta.url);
-const { syncClaudeAssets } = require('../../websocket-server/claude-assets.cjs');
-const { installClaudeHooks } = require('../../websocket-server/claude-hooks.cjs');
+const CLAUDE_ASSETS_MODULE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../websocket-server/claude-assets.cjs');
+const CLAUDE_HOOKS_MODULE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../websocket-server/claude-hooks.cjs');
+
+/**
+ * The bootstrap/update command is also distributed as an installer-only
+ * checkout. Claude integration modules are optional there and must not keep
+ * the updater from starting before the first full repository sync.
+ */
+function loadClaudeIntegrations() {
+  const integrations = {};
+  if (fs.existsSync(CLAUDE_ASSETS_MODULE)) Object.assign(integrations, require(CLAUDE_ASSETS_MODULE));
+  if (fs.existsSync(CLAUDE_HOOKS_MODULE)) Object.assign(integrations, require(CLAUDE_HOOKS_MODULE));
+  return typeof integrations.syncClaudeAssets === 'function' && typeof integrations.installClaudeHooks === 'function'
+    ? integrations
+    : null;
+}
 
 const STEPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'steps');
 const COMMANDS = new Set(['open', 'start', 'stop', 'status', 'logs', 'install', 'doctor', 'check', 'update']);
@@ -351,14 +365,15 @@ async function runOperationalCommand(command, knownUpdate = null) {
       // ~/.claude/{skills,agents}. Les liens symboliques suivent déjà le dépôt ;
       // cet appel rafraîchit aussi le repli par copie sur les plateformes qui ne
       // peuvent pas créer de liens.
-      if (commandExists('claude', ['--version'])) {
-        const claudeAssets = syncClaudeAssets(REPO_ROOT, os.homedir());
+      const claudeIntegrations = loadClaudeIntegrations();
+      if (commandExists('claude', ['--version']) && claudeIntegrations) {
+        const claudeAssets = claudeIntegrations.syncClaudeAssets(REPO_ROOT, os.homedir());
         if (claudeAssets.conflicts.length) {
           log.warn(`${claudeAssets.conflicts.length} skill(s)/agent(s) Claude personnel(s) homonyme(s) conservé(s).`);
         } else {
           log.ok(`${claudeAssets.registered} skill(s)/agent(s) PieceMaker synchronisé(s) pour Claude Code.`);
         }
-        const claudeHooks = installClaudeHooks(REPO_ROOT, os.homedir());
+        const claudeHooks = claudeIntegrations.installClaudeHooks(REPO_ROOT, os.homedir());
         if (!claudeHooks.ok) log.warn(`Hooks Claude Code non synchronisés (${claudeHooks.reason}).`);
         else if (claudeHooks.changed) log.ok(`${claudeHooks.registered} hook(s) PieceMaker synchronisé(s) pour Claude Code.`);
       }
