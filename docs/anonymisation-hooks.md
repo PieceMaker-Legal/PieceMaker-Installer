@@ -1,9 +1,12 @@
 # Les hooks d'anonymisation
 
 Ce document décrit la frontière de confidentialité de PieceMaker telle qu'elle
-tourne réellement : quatre hooks Claude Code qui codent ce que le modèle lit et
-rétablissent les vrais noms sur ce qu'il produit. Il explique aussi comment
-prouver qu'elle fonctionne, et ce qu'elle ne couvre pas.
+est réellement câblée aujourd'hui. L'anonymisation des entrées/sorties passe par
+un hook central global installé dans `~/.claude`; le plugin garde ses propres
+hooks, notamment la protection des pièces et le suivi des opérations, mais ne
+déclare pas les scripts `anonymize-read.mjs` et `deanonymize-write.mjs` dans son
+`hooks.json`. Il explique aussi comment prouver que la frontière fonctionne, et
+ce qu'elle ne couvre pas.
 
 Le tour d'horizon du dépôt est dans `CLAUDE.md` ; ici, seul le chemin des
 données personnelles.
@@ -17,8 +20,8 @@ transite donc jamais par l'API, et le document produit pour un humain le porte
 malgré tout.
 
 ```
-disque (noms réels)  ──Read/Grep/Glob/Bash──►  anonymize-read   ──►  modèle (codes)
-disque (noms réels)  ◄──Write/Edit/Telegram──  deanonymize-write ◄──  modèle (codes)
+disque (noms réels)  ──Read/Grep/Glob/Bash──►  hook central   ──►  modèle (codes)
+disque (noms réels)  ◄──Write/Edit/Telegram──  hook central   ◄──  modèle (codes)
 ```
 
 Les hooks **ne scannent rien** : ni GLiNER, ni Presidio, ni heuristique. Ils
@@ -27,16 +30,55 @@ l'administration (`POST /api/admin/originals/pipeline`), seul endroit où les
 modèles NER sont chargés — les charger à chaque lecture rendrait la session
 inutilisable.
 
-## Les quatre hooks
+## Le hook central global
 
-Câblés dans `piecemaker-plugin/hooks/hooks.json` :
+Au démarrage du serveur, `websocket-server/central-hook-install.cjs` copie
+`websocket-server/global-hooks/piecemaker-central-anonymize.mjs` dans
+`~/.claude/hooks/` et l'ajoute, de façon idempotente, à `~/.claude/settings.json`.
+Il s'applique à toute session Claude Code, quel que soit le dossier courant — il
+n'est pas limité aux dossiers juridiques enregistrés par le plugin.
 
 | Événement | Filtre | Script | Rôle |
 | --- | --- | --- | --- |
-| `PreToolUse` | `Read\|Grep\|Glob\|Bash` | `protect-originals.mjs` | Refuse une pièce protégée et renvoie vers son `.md` |
-| `PostToolUse` | `Read\|Grep\|Glob\|Bash` | `anonymize-read.mjs` | `updatedToolOutput` : mapping appliqué |
-| `PreToolUse` | `Write\|Edit\|mcp__telegram__reply\|mcp__telegram__edit_message` | `deanonymize-write.mjs` | `updatedInput` : mapping inversé |
-| `PostToolUse` | `Write\|Edit` | `commit-track.mjs` | Commit du dossier, libellé rétabli |
+| `PostToolUse` | `Read\|Grep\|Glob\|Bash` | `piecemaker-central-anonymize.mjs` | `updatedToolOutput` : mapping central (entité → code) |
+| `PreToolUse` | `Write\|Edit\|mcp__.*telegram.*__(reply\|edit_message)` | `piecemaker-central-anonymize.mjs` | `updatedInput` : mapping inversé (code → entité) |
+
+Le mapping lu est `~/.piecemaker/central-mapping.json`. Il est reconstruit par
+`central-mapping.cjs` en fusionnant les mappings des dossiers et en
+dé-conflictant les codes. Le hook central ignore les fichiers de mapping/scan,
+et ne réécrit jamais le disque : il transforme uniquement la réponse remise au
+modèle ou l'entrée d'outil avant exécution. En l'absence de configuration, de
+mapping, de moteur ou en cas d'erreur, il échoue ouvert (sortie vide, code 0).
+
+Les scripts `piecemaker-plugin/scripts/anonymize-read.mjs` et
+`deanonymize-write.mjs` restent présents comme implémentations autonomes et
+sont couverts par l'auto-test de l'étape `06-hooks`; ils ne sont pas des
+entrées du câblage `piecemaker-plugin/hooks/hooks.json`.
+
+## Les hooks du plugin
+
+Le fichier `piecemaker-plugin/hooks/hooks.json` déclare les rôles suivants :
+
+| Événement | Filtre | Script | Rôle |
+| --- | --- | --- | --- |
+| `PreToolUse` | `Read\|Grep\|Glob\|Bash` | `protect-originals.mjs` | Refuse une pièce protégée ou un fichier de mapping |
+| `PostToolUse` | `Read` | `track-legifrance-reads.mjs` | Suit les lectures de résultats Légifrance |
+| `PostToolUse` | `Write\|Edit` | `commit-track.mjs` | Suit/commit les modifications du dossier |
+| `PostToolUse` | `Write` | `compile-recherche.mjs` | Compile le rapport de recherche après écriture |
+| `Stop` | `*` | `billing-track.mjs` | Enregistre l'événement de facturation |
+| `TaskCompleted` | `*` | `billing-track.mjs` | Enregistre l'événement de facturation |
+
+Ces hooks sont ceux du plugin et leur portée dépend du chargement du plugin par
+Claude Code. La protection des pièces complète le hook central : elle refuse,
+par défaut, les fichiers non `.md`/`.json` d'un dossier juridique enregistré,
+afin qu'un contenu qui n'a pas de mapping ne puisse pas atteindre le modèle.
+
+À part ces deux couches, l'étape `13-garde-secrets` installe le hook global
+`~/.claude/hooks/piecemaker-guard-secrets.mjs` et le câble en `PreToolUse` dans
+`~/.claude/settings.json`. Il bloque les chemins de la liste noire (notamment
+les `.env`) pour `Read`/`Grep`/`Glob`/`Edit`/`Write`/`NotebookEdit` et les
+contournements `Bash`. Ce garde-fou n'est pas un hook du plugin et ne réalise
+aucune anonymisation.
 
 Quelques points qui ne se devinent pas à la lecture des noms :
 
@@ -44,15 +86,21 @@ Quelques points qui ne se devinent pas à la lecture des noms :
   mapping : son `old_string` porte des codes, le disque porte les noms. Ne
   reverter que `new_string` ferait échouer chaque édition sur « chaîne
   introuvable ».
-- **`Bash` est gardé des deux côtés.** C'est ce qui ferme la brèche ouverte par
-  le skill `docx`, qui travaille par `pandoc`, `unzip` et
-  `python ooxml/scripts/unpack.py`.
-- **Telegram passe par l'outil MCP `reply` du plugin officiel**, pas par le
-  canal du harnais : un hook `Stop` n'aurait pas pu réécrire ces messages.
-- **Un dossier = un mapping.** Le dossier est déduit du chemin visé, ou à
-  défaut du répertoire de travail. Deux dossiers ont des compteurs de codes
-  indépendants ; mélanger leurs mappings attribuerait un même code à deux
-  personnes différentes.
+- **`Bash` est couvert par les deux couches actives.** Le hook central anonymise
+  `stdout`/`stderr` pour `Bash` avec le mapping central, quel que soit le chemin
+  du dossier. En parallèle, `protect-originals.mjs` inspecte les chemins cités
+  par la commande et refuse les pièces protégées dans les dossiers juridiques
+  enregistrés ; cela ferme notamment la brèche du skill `docx` (`pandoc`,
+  `unzip`, `python ooxml/scripts/unpack.py`).
+- **Telegram est réécrit par le hook central.** Ses filtres `PreToolUse` ciblent
+  les outils MCP dont le nom correspond à `reply` ou `edit_message`; ce n'est
+  pas un hook `Stop` et ce n'est pas le canal du harnais.
+- **Les dossiers ont des mappings locaux, pas un hook par dossier.** Chaque
+  mapping de dossier est une entrée du rebuild central :
+  `central-mapping.cjs` les fusionne et dé-conflicte les codes pour produire
+  `~/.piecemaker/central-mapping.json`. Le hook central actif ne déduit donc
+  pas un dossier depuis `cwd` ou le chemin de l'outil et n'attribue pas de code
+  local à la volée.
 
 ## La protection des pièces
 
@@ -94,18 +142,27 @@ et reste permis.
 
 ## Le contrat d'exécution
 
-Confirmé contre <https://code.claude.com/docs/en/hooks>, et implémenté dans
-`piecemaker-plugin/scripts/lib/hook-io.mjs` :
+Le contrat Claude Code est partagé par les scripts autonomes du plugin via
+`piecemaker-plugin/scripts/lib/hook-io.mjs`. Le hook central
+`websocket-server/global-hooks/piecemaker-central-anonymize.mjs` implémente le
+même contrat indépendamment, avec son moteur copié dans
+`~/.piecemaker/lib/substitution.cjs`; il ne dépend donc ni de `hook-io.mjs`, ni
+du chemin d'un dossier juridique. Référence :
+<https://code.claude.com/docs/en/hooks>.
 
 - Une charge utile JSON par invocation, sur stdin.
 - Sortie 0 + JSON sur stdout → le JSON est appliqué. Sortie 2 → blocage, stderr
   affiché comme motif. Tout autre code → erreur non bloquante.
 - Ne jamais mélanger les deux signalisations.
 
-**Chaque hook échoue ouvert** : pas de configuration, pas de mapping, ou un
-chemin hors dossier se terminent tous par un exit 0 sans stdout, et la session
-n'en sait rien. `anonymize-read.mjs` reste également muet quand la substitution
-ne change rien, pour que `Read` conserve sa numérotation de lignes native.
+**Les deux familles échouent ouvert**, mais avec des conditions différentes :
+les scripts du plugin sortent 0 sans stdout en cas d'erreur, de timeout, de
+configuration absente ou de situation hors dossier; le hook central fait de
+même en cas d'erreur, de configuration/mapping absent ou de moteur indisponible,
+et il continue à fonctionner avec son mapping central même quand `cwd` et le
+chemin visé ne correspondent à aucun dossier juridique. Le script autonome
+`anonymize-read.mjs` reste également muet quand sa substitution ne change rien,
+pour que `Read` conserve sa numérotation de lignes native.
 
 **stdout est vidé avant de sortir.** Claude Code branche la sortie du hook sur
 un tube : un `process.exit()` immédiat coupait le JSON au tampon de 64 Ko. Le
@@ -137,7 +194,9 @@ qui se bloque.
 ### 1. Les tests
 
 ```bash
-node --test test/hooks-anonymize.test.mjs test/mapping.test.cjs test/protection.test.cjs
+node --test test/central-hook.test.mjs test/central-hook-install.test.cjs \
+  test/central-mapping.test.cjs test/hooks-anonymize.test.mjs \
+  test/mapping.test.cjs test/protection.test.cjs
 npm test          # la suite complète
 ```
 
@@ -151,6 +210,11 @@ plafond et orthographes piégeuses.
 codage d'un `Read` et d'un `Bash`, les deux chaînes d'un `Edit`, le message
 Telegram, l'effacement complet sans configuration, et les charges utiles
 au-delà du tampon du tube.
+
+`test/central-hook.test.mjs`, `test/central-hook-install.test.cjs` et
+`test/central-mapping.test.cjs` couvrent respectivement l'anonymisation globale
+(y compris hors dossier), le câblage idempotent dans `settings.json`, et la
+fusion/dé-confliction des mappings locaux ainsi que la copie du moteur central.
 
 ### 2. L'auto-test de l'installateur
 
@@ -187,8 +251,10 @@ jamais afficher son contenu, ni le résultat complet d'un hook.
 
 ## Après avoir modifié un hook
 
-Les hooks tournent depuis la **copie installée du plugin**, pas depuis le dépôt
-de travail :
+Il faut distinguer les deux emplacements d'exécution. Le hook central est copié
+depuis `websocket-server/global-hooks/` dans `~/.claude/hooks/` au démarrage du
+serveur : redémarrer le serveur le réinstalle et le recâble si nécessaire. Les
+hooks déclarés par le plugin tournent depuis la **copie installée du plugin** :
 
 ```
 ~/.claude/plugins/cache/piecemaker/piecemaker/<version>/
@@ -197,7 +263,7 @@ de travail :
 C'est une copie figée du marketplace GitHub
 (`PieceMaker-Legal/PieceMaker-Installer`). Une modification dans
 `piecemaker-plugin/` ne change donc rien à une session tant qu'elle n'est pas
-commitée, poussée, puis récupérée :
+publiée puis récupérée :
 
 ```bash
 git push
@@ -205,12 +271,13 @@ claude plugin marketplace update piecemaker
 claude plugin update piecemaker
 ```
 
-Vérifier ensuite que la copie installée porte bien les quatre scripts :
+Vérifier ensuite que la copie installée porte les scripts référencés par
+`hooks.json` (et leurs bibliothèques) :
 
 ```bash
 ls ~/.claude/plugins/cache/piecemaker/piecemaker/*/scripts/
-# protect-originals.mjs  anonymize-read.mjs  deanonymize-write.mjs
-# commit-track.mjs  billing-track.mjs  lib/{hook-io.mjs,mapping.cjs,protection.cjs,commits.cjs}
+# protect-originals.mjs  track-legifrance-reads.mjs  commit-track.mjs
+# compile-recherche.mjs  billing-track.mjs  lib/{hook-io.mjs,mapping.cjs,protection.cjs}
 ```
 
 Une copie qui contient encore `pre-anonymize.mjs` ou `post-anonymize.mjs` est
@@ -219,20 +286,26 @@ pas en place.
 
 Les **skills et agents** échappent à cette contrainte : `claude-assets.cjs` les
 lie par lien symbolique dans `~/.claude/`, une édition depuis `/admin/` y est
-donc active immédiatement. Les hooks, eux, n'ont pas d'équivalent.
+donc active immédiatement. Le hook central, lui, dépend du redémarrage du
+serveur pour recopier sa source.
 
 ## Où vit quoi
 
 | Fichier | Contenu |
 | --- | --- |
 | `piecemaker-plugin/hooks/hooks.json` | Câblage événement → script |
-| `piecemaker-plugin/scripts/*.mjs` | Les cinq hooks |
+| `websocket-server/global-hooks/piecemaker-central-anonymize.mjs` | Hook global d'anonymisation |
+| `websocket-server/central-hook-install.cjs` | Copie et câblage du hook global, synchronisation du central |
+| `piecemaker-plugin/scripts/*.mjs` | Hooks du plugin et scripts autonomes d'auto-test |
 | `piecemaker-plugin/scripts/lib/hook-io.mjs` | stdin/stdout, configuration, échec ouvert |
 | `piecemaker-plugin/scripts/lib/mapping.cjs` | Moteur unique de substitution |
 | `piecemaker-plugin/scripts/lib/protection.cjs` | Règle de protection, résolution du dossier |
 | `websocket-server/originals-pipeline.cjs` | Construction du mapping (côté administration) |
+| `installer/assets/claude-hooks/piecemaker-guard-secrets.mjs` | Garde global des fichiers secrets, distinct du plugin et du hook d'anonymisation |
 
-Un script de hook ne peut requérir que depuis `piecemaker-plugin/scripts/lib/`
+Le hook global ne dépend pas du cache du marketplace : l'installateur copie
+également son moteur de substitution vers `~/.piecemaker/lib/`. Les scripts du
+plugin, eux, ne peuvent requérir que depuis `piecemaker-plugin/scripts/lib/`
 — le plugin est distribué seul. Une logique serveur dont un hook a besoin
 *entre* dans le plugin et est ré-exportée par le module serveur, jamais
 l'inverse.
