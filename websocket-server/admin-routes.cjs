@@ -19,6 +19,7 @@ const {
   createCommit,
   createHistoryBranch,
   historyBranches,
+  historyRepo,
   isTechnicalCaseDirectoryName,
   listCases,
   listHistory,
@@ -201,26 +202,46 @@ function installClaudeAssets(repoRoot, userHome, runCommand = captureCommand) {
   };
 }
 
-function caseRuleContent(repoRoot) {
+// Chemin du dépôt d'historique propre à un dossier (`~/.piecemaker/case-history/
+// <nom>-<empreinte>.git`), affiché avec `~`. Réutilise la dérivation nom+empreinte
+// de commits.cjs pour rester exactement aligné sur là où les commits atterrissent.
+function caseHistoryRepoLabel(folder) {
+  try {
+    const legalCase = resolveCase(path.dirname(folder), path.basename(folder));
+    const abs = historyRepo(path.join(os.homedir(), '.piecemaker'), legalCase);
+    const home = os.homedir();
+    return abs.startsWith(home + path.sep) ? `~${abs.slice(home.length)}` : abs;
+  } catch {
+    return '';
+  }
+}
+
+function caseRuleContent(repoRoot, folder = '') {
   const template = path.join(repoRoot, 'installer', 'templates', 'workspace-CLAUDE.md');
   if (!fs.existsSync(template)) throw new Error('Le modèle d’instructions PieceMaker est introuvable.');
-  return fs.readFileSync(template, 'utf8')
-    .replace('# PieceMaker — dossiers juridiques', '# PieceMaker — dossier juridique actif')
-    .replace(
-      /Ce fichier est à la racine du workspace PieceMaker\.[\s\S]*?\*\*Chaque sous-dossier immédiat de cette racine est un dossier juridique\nindépendant\.\*\* Rien ne circule d'un dossier à l'autre : ni historique, ni\nmapping d'anonymisation, ni facturation\./,
-      'Cette règle est installée dans le dossier juridique sélectionné. Toute session Claude Code ouverte dans ce dossier ou dans un de ses sous-dossiers la charge automatiquement. Ce répertoire constitue un dossier juridique PieceMaker indépendant : son historique, son mapping d’anonymisation et sa facturation ne circulent vers aucun autre dossier.',
-    )
+  let content = fs.readFileSync(template, 'utf8')
     .replace(
       '| Racine des dossiers | ce répertoire (`workspacePath` de `~/.piecemaker/config.json`) |',
       '| Dossier juridique actif | ce répertoire (`caseFolders` de `~/.piecemaker/config.json`) |',
     );
+
+  // Localiser le dépôt d'historique EXACT de ce dossier dans la règle auto-générée,
+  // au lieu du seul répertoire parent générique.
+  const repoLabel = folder ? caseHistoryRepoLabel(folder) : '';
+  if (repoLabel) {
+    content = content.replace(
+      '| Historique des dossiers | `~/.piecemaker/case-history/` |',
+      `| Historique de ce dossier | \`${repoLabel}\` |`,
+    );
+  }
+  return content;
 }
 
 function ensureCaseRule(repoRoot, folder) {
   const target = path.join(folder, '.claude', 'rules', 'piecemaker.md');
   fs.mkdirSync(path.dirname(target), { recursive: true });
   // This file is PieceMaker-owned and can be refreshed safely on re-register.
-  fs.writeFileSync(target, caseRuleContent(repoRoot), 'utf8');
+  fs.writeFileSync(target, caseRuleContent(repoRoot, folder), 'utf8');
   return target;
 }
 

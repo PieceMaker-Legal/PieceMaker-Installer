@@ -91,7 +91,7 @@ test('un dossier extérieur est enregistré et réutilise les composants Claude 
   assert.equal(fs.existsSync(path.join(data.selected, result.installed.mapping)), true);
   assert.equal(fs.existsSync(path.join(data.selected, '.piecemaker', 'protection.json')), true);
   const rule = fs.readFileSync(path.join(data.selected, '.claude', 'rules', 'piecemaker.md'), 'utf8');
-  assert.match(rule, /dossier juridique actif/);
+  assert.match(rule, /\| Dossier juridique actif \|/);
   assert.match(rule, /caseFolders/);
   assert.doesNotMatch(rule, /Chaque sous-dossier immédiat/);
 
