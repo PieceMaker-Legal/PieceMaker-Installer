@@ -63,11 +63,7 @@ web-bundles/
 .claude/commands/BMad
 .claude/settings.local.json
 .claude/agents/codebase-scan.md
-# CLAUDE.md racine = repères d'architecture de la code base, chargés par Claude
-# Code dans le clone de développement, jamais poussés ni livrés au clone
-# d'exécution. La persona utilisateur (« Avocat ») livrée à l'utilisateur est le
-# gabarit versionné installer/templates/root-CLAUDE.md, déposé par l'étape 09.
-CLAUDE.md
+# CLAUDE.md racine = repères d'architecture versionnés dans le dépôt
 CLAUDE.local.md
 __pycache__/
 # output/ contient les mappings d'anonymisation : des données client réelles.

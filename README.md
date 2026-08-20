@@ -48,18 +48,22 @@ environnement virtuel Python et modèles GLiNER2 + spaCy.
 
 | # | Étape | Contenu |
 | --- | --- | --- |
-| 00a | Identification de l’utilisateur | nom protégé dans le `.env` global et appliqué à chaque commit |
-| 00b | Dossier racine PieceMaker | choix de la racine contenant un sous-dossier par dossier juridique |
-| 01 | Prérequis système | Node, Python, git, outils de build |
-| 02 | Dépendances Node.js | `npm install` racine et `mcp-server/` |
-| 03 | Python, GLiNER & anonymisation | venv, `requirements.txt`, modèles GLiNER2 et spaCy |
-| 04 | Conversion en Markdown | markitdown / MinerU pour les PDF scannés |
-| 05 | Certificats HTTPS | certificat local requis par Word |
-| 06 | Hooks Claude Code | garde-fous PII et suivi de facturation |
-| 07 | Serveur MCP Légifrance | clés PISTE, validées en ligne |
-| 08 | Telegram | Assistant Bot à la racine de PieceMaker + daemon de surveillance nommable, sans LLM |
-| 09a | Claude Code PieceMaker | skills, agents et hooks enregistrés directement dans `~/.claude` |
-| 09b | Codex CLI PieceMaker | skills enregistrés directement dans `~/.codex/skills` |
+| 00-identite | Identification de l’utilisateur | signe chaque tâche enregistrée dans l’historique avec votre nom |
+| 01-prerequis | Prérequis système | vérifie Node.js, npm, git et Python avant toute installation |
+| 02-dependances-node | Dépendances Node.js | installe les modules npm de la racine et du serveur MCP |
+| 03-python-gliner | Python, GLiNER & anonymisation | venv Python, dépendances et modèles GLiNER |
+| 04-conversion-md | Conversion de documents en Markdown | vérifie markitdown/pypdf et propose MinerU pour les PDF scannés |
+| 05-certificats | Certificats HTTPS | génère le certificat local requis par Word |
+| 06-hooks | Hooks Claude Code (anonymisation, commits & facturation) | configure les garde-fous, les commits PostToolUse et le suivi de facturation |
+| 07-legifrance | Serveur MCP Légifrance (clés PISTE) | configure et valide l’accès à l’API Légifrance via PISTE |
+| 08-telegram | Telegram — Assistant Bot et daemon | configure le bot conversationnel PieceMaker et son daemon de surveillance séparé |
+| 09-claude-assets | Composants Claude Code PieceMaker | enregistre les skills, agents et hooks PieceMaker lorsque Claude Code est présent |
+| 09-codex-plugin | Skills Codex PieceMaker | enregistre les skills PieceMaker lorsque la CLI Codex est présente |
+| 10-libreoffice | Conversion des pièces en PDF (LibreOffice) | installe LibreOffice, requis pour tamponner les pièces Excel et Word |
+| 11-document-skills | Skill docx (documents Word) | installe et active le plugin officiel document-skills |
+| 12-word-taskpane | Ouverture automatique du volet Word | permet à PieceMaker d’ouvrir Word avec le volet déjà affiché |
+| 13-garde-secrets | Garde-fou secrets (Claude Code) | empêche Claude Code de lire le `.env` du serveur |
+| 14-mxc-sandbox | Confinement OS (mxc) | construit microsoft/mxc pour isoler la session Claude Code |
 
 Les secrets Telegram vont dans `~/.claude/channels/` en 0600. Sur macOS, le
 daemon est installé comme service utilisateur dans `~/Library/LaunchAgents/`.
@@ -143,13 +147,11 @@ les hooks de garde-fou PII. Voir
 - `admin/` — interface web locale : Telegram, paramètres, éditeur visuel des skills/agents et aperçus de facturation
 - `taskpane/` — volet Office du complément Word
 - `mcp-server/` — serveur MCP exposant les outils document
-- `electron/` — ancien client de bureau, conservé comme archive mais désactivé
 
-Le `CLAUDE.md` racine contient les repères d'architecture pour contribuer à la
-code base : il est gitignoré et vit dans le clone de développement, jamais
-poussé. La persona destinée à l'utilisateur qui installe PieceMaker est le
-gabarit versionné `installer/templates/root-CLAUDE.md`, déposé à la racine du
-clone d'exécution par l'étape d'installation 09.
+Le `CLAUDE.md` racine est versionné dans ce dépôt et contient les repères
+d'architecture pour contribuer à la code base. La persona destinée à
+l'utilisateur est disponible dans le gabarit versionné
+`installer/templates/root-CLAUDE.md`.
 
 ## Licence
 

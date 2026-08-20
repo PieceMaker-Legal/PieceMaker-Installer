@@ -1,9 +1,8 @@
 # PieceMaker — repères d'architecture (code base)
 
-Ce fichier oriente le travail **sur le code** de PieceMaker. Il est gitignoré :
-il vit dans le clone de développement et n'est jamais poussé. La persona
-utilisateur (« Avocat ») livrée au clone d'exécution est le gabarit versionné
-`installer/templates/root-CLAUDE.md`, déposé par l'étape d'installation 09.
+Ce fichier, versionné dans ce dépôt, oriente le travail **sur le code** de
+PieceMaker. La persona utilisateur (« Avocat ») est disponible dans le gabarit
+versionné `installer/templates/root-CLAUDE.md`.
 
 ## Audit du projet
 
@@ -43,8 +42,7 @@ Markdown, rédaction et tamponnage de pièces. Node ≥ 18, Python ≥ 3.10.
 | `orchestrator/` | Assistant Bot Telegram (`piecemaker-daemon.mjs`) et surveillance de quotas (`limit-watch.mjs`), sans LLM. |
 | `piecemaker-plugin/` | Plugin Claude Code : `skills/`, `agents/`, `hooks/hooks.json`, `mcp/` (Legifrance), `scripts/` (logique des hooks) + `scripts/lib/` (mapping, protection, commits, facturation…). |
 
-Archives à ignorer : `electron/` (ancien client désactivé),
-`admin.backup-*`, `_mxc_hooktest/`, `ARCHITECTURE_FIX.md`,
+Archives à ignorer : `admin.backup-*`, `_mxc_hooktest/`, `ARCHITECTURE_FIX.md`,
 `central-hook-haiku-test.md`.
 
 ## Flux clé — outils document (Word)
