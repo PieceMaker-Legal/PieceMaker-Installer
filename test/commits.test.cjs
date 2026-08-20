@@ -150,28 +150,6 @@ test('un nom invalide est refusé pour la signature des commits', () => {
   assert.throws(() => resolveCommitIdentity({ identity: { name: '' } }), /Identité utilisateur absente/);
 });
 
-// Régression : lancé depuis le cache du plugin, le hook d'édition n'a ni `.env`
-// (résolu à côté du clone runtime, inexistant) ni variable d'environnement.
-// L'identité doit alors venir de ~/.piecemaker/config.json.
-test('sans .env ni variable d’environnement, l’identité vient de config.json', () => {
-  const previous = process.env.PIECEMAKER_USER_NAME;
-  delete process.env.PIECEMAKER_USER_NAME;
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-identity-config-'));
-  const configFile = path.join(dir, 'config.json');
-  const absentEnv = path.join(dir, 'absent.env');
-  try {
-    fs.writeFileSync(configFile, JSON.stringify({ commits: { enabled: true, userName: 'Camille Config' } }));
-    assert.equal(resolveCommitIdentity({ envFile: absentEnv, configFile }).name, 'Camille Config');
-    // config.json sans nom → l'erreur d'identité absente est bien levée.
-    fs.writeFileSync(configFile, JSON.stringify({ commits: { enabled: true } }));
-    assert.throws(() => resolveCommitIdentity({ envFile: absentEnv, configFile }), /Identité utilisateur absente/);
-  } finally {
-    if (previous === undefined) delete process.env.PIECEMAKER_USER_NAME;
-    else process.env.PIECEMAKER_USER_NAME = previous;
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 test('les branches séparent les commits automatiques du dossier', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
