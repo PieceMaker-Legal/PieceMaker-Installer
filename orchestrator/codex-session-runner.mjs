@@ -9,19 +9,31 @@
 
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
-import { loadConfig, runBridge } from 'file:///Users/tsardet/Sites/impt-trader/bot/telegram-codex.mjs'
+import { delimiter, dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { resolveTarget, workdirFor } from './config.mjs'
 
-const PROJECTS = {
-  trading: '/Users/tsardet/Sites/impt-trader',
-  app: '/Users/tsardet/Sites/GITHUB - Letino Festival/App',
-  dashboard: '/Users/tsardet/Sites/GITHUB - Letino Festival/Dashboard',
-  website: '/Users/tsardet/Sites/GITHUB - Letino Festival/Website',
-}
-
-const project = String(process.argv[2] || '').toLowerCase()
-const root = PROJECTS[project]
+const projectArgument = String(process.argv[2] || '').trim()
+const project = resolveTarget(projectArgument) || projectArgument.toLowerCase()
+const root = workdirFor(project)
 if (!root || !existsSync(root)) throw new Error(`Unknown or missing project: ${project}`)
+
+const gatewayPath = String(process.env.PIECEMAKER_CODEX_GATEWAY || '').trim()
+if (!gatewayPath) {
+  throw new Error('PIECEMAKER_CODEX_GATEWAY is not configured; set it to the telegram-codex.mjs gateway path')
+}
+if (!existsSync(gatewayPath)) throw new Error(`Codex gateway not found: ${gatewayPath}`)
+
+let gateway
+try {
+  gateway = await import(pathToFileURL(gatewayPath).href)
+} catch (error) {
+  throw new Error(`Unable to load Codex gateway ${gatewayPath}: ${error.message}`)
+}
+const { loadConfig, runBridge } = gateway
+if (typeof loadConfig !== 'function' || typeof runBridge !== 'function') {
+  throw new Error(`Codex gateway ${gatewayPath} must export loadConfig() and runBridge()`)
+}
 
 const claudeState = join(homedir(), '.claude', 'channels', `telegram-${project}`)
 const codexState = join(homedir(), '.codex', 'channels', `telegram-${project}`)
@@ -64,16 +76,23 @@ if (!token || !chatId) throw new Error(`Telegram token or allowlist missing for 
 const pidPath = join(codexState, 'bot.pid')
 writeFileSync(pidPath, `${process.pid}\n`, { mode: 0o600 })
 
+const codexBin = process.env.PIECEMAKER_CODEX_BIN || process.env.CODEX_BIN || 'codex'
 const runtimePath = [
-  '/Users/tsardet/.nvm/versions/node/v24.11.1/bin',
-  '/Users/tsardet/.local/bin',
-  process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin',
-].join(':')
+  process.env.PIECEMAKER_CODEX_PATH,
+  dirname(process.execPath),
+  join(homedir(), '.local', 'bin'),
+  join(homedir(), '.nvm', 'current', 'bin'),
+  process.env.PATH,
+  '/usr/bin:/bin:/usr/sbin:/sbin',
+].filter(Boolean)
+  .flatMap((entry) => entry.split(delimiter))
+  .filter((entry, index, entries) => entries.indexOf(entry) === index)
+  .join(delimiter)
 
 const config = loadConfig({
   ...process.env,
   PATH: runtimePath,
-  CODEX_BIN: '/Users/tsardet/.local/bin/codex',
+  CODEX_BIN: codexBin,
   TELEGRAM_CODEX_BOT_TOKEN: token,
   TELEGRAM_CODEX_CHAT_ID: chatId,
   TELEGRAM_CODEX_TRIGGER: '*',

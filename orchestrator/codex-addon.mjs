@@ -10,14 +10,14 @@
 import { spawn, execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 // Passerelle Codex : chemin propre à chaque poste, déclaré via l'environnement.
 // Absente, la garde d'existsSync plus bas fait échouer les verbes Codex avec un
 // message clair — le reste du superviseur continue de fonctionner.
-const GATEWAY = process.env.PIECEMAKER_CODEX_GATEWAY || ''
+const GATEWAY = String(process.env.PIECEMAKER_CODEX_GATEWAY || '').trim()
 const RUNNER = join(HERE, 'codex-session-runner.mjs')
 const STATE_ROOT = join(homedir(), '.codex', 'channels')
 const CLAUDE_STATE_ROOT = join(homedir(), '.claude', 'channels')
@@ -156,8 +156,9 @@ async function launchCodexSession(project, restartProcess = false) {
 
 // Token + chat du projet, lus (en lecture seule) dans l'état Claude qui en est la
 // source de vérité. Sans ça, le CLI de la passerelle retombe sur son parseEnvFile()
-// par défaut — qui lit le .env d'impt-trader : @app parlerait avec le token de
-// @trading. codex-session-runner.mjs résout déjà ses identifiants de cette façon.
+// par défaut — qui peut lire le mauvais .env : @app parlerait alors avec le
+// token de @trading. codex-session-runner.mjs résout déjà ses identifiants de
+// cette façon.
 function projectCredentials(project) {
   const directory = join(CLAUDE_STATE_ROOT, `telegram-${project}`)
   let token = ''
@@ -174,10 +175,22 @@ function projectCredentials(project) {
 }
 
 function childEnvironment(project) {
+  const codexBin = process.env.PIECEMAKER_CODEX_BIN || process.env.CODEX_BIN || 'codex'
+  const runtimePath = [
+    process.env.PIECEMAKER_CODEX_PATH,
+    dirname(process.execPath),
+    join(homedir(), '.local', 'bin'),
+    join(homedir(), '.nvm', 'current', 'bin'),
+    process.env.PATH,
+    '/usr/bin:/bin:/usr/sbin:/sbin',
+  ].filter(Boolean)
+    .flatMap((entry) => entry.split(delimiter))
+    .filter((entry, index, entries) => entries.indexOf(entry) === index)
+    .join(delimiter)
   const env = {
     ...process.env,
-    PATH: `/Users/tsardet/.nvm/versions/node/v24.11.1/bin:/Users/tsardet/.local/bin:${process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin'}`,
-    CODEX_BIN: '/Users/tsardet/.local/bin/codex',
+    PATH: runtimePath,
+    CODEX_BIN: codexBin,
     TELEGRAM_CODEX_ROOT: WORKDIRS[project],
     TELEGRAM_CODEX_STATE: join(stateDirectory(project), 'session-state.json'),
     TELEGRAM_CODEX_SANDBOX: 'read-only',
