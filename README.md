@@ -1,10 +1,75 @@
 # PieceMaker
 
-Assistant juridique pour professionnels du droit français : anonymisation RGPD
-des pièces (GLiNER2 / Presidio, en local), conversion de documents en Markdown,
-recherche et rédaction assistées, gestion du dossier et bordereau de pièces.
+## Quel est le concept PieceMaker ?
 
-Le tout s'installe depuis le terminal, sans dépendance autre que Node.js.
+PieceMaker est une **couche locale qui enveloppe un LLM utilisé en ligne de
+commande**, comme Claude Code ou Codex CLI. Il ne remplace pas le modèle et
+n'impose pas une logique métier particulière : il lui fournit un environnement
+de travail sécurisé, traçable et accessible depuis une interface graphique.
+
+```text
+LLM en ligne de commande
+        enveloppé par
+              │
+          PieceMaker
+              │
+Sécurité · Suivi du dossier · Interface graphique
+              │
+       enrichi avec
+              │
+    Skills · MCP · Agents
+```
+
+Cette couche repose sur trois modules.
+
+### 1. Sécurité
+
+- **Fichiers originaux inaccessibles au LLM** : les pièces sources sont
+  protégées. Le modèle travaille sur leurs représentations autorisées, notamment
+  les conversions en Markdown, sans ouvrir directement les originaux.
+- **Anonymisation locale avec GLiNER et Presidio** : les entités sensibles sont
+  détectées puis associées à des codes stables.
+- **Hooks d'entrée et de sortie** : ils anonymisent les informations avant
+  qu'elles soient transmises au modèle et les rétablissent au retour. En
+  pratique, le LLM voit des codes tandis que l'utilisateur voit les noms réels.
+- **Confinement du processus** : les garde-fous applicatifs peuvent être
+  complétés par une isolation au niveau du système d'exploitation.
+
+### 2. Suivi du travail réalisé dans chaque dossier
+
+PieceMaker reprend le principe de suivi de Git et GitHub. Chaque dossier est
+un espace de travail autonome et chaque tâche réalisée est enregistrée dans son
+historique avec un commentaire et l'identité de son auteur.
+
+L'utilisateur peut ainsi retrouver l'état complet du dossier à chaque étape,
+comprendre ce qui a été fait et suivre son évolution dans le temps. Cet
+historique est local : son fonctionnement ne dépend pas d'un hébergement sur
+GitHub.
+
+### 3. Interface graphique
+
+Une interface web locale permet de piloter PieceMaker sans manipuler
+directement ses fichiers de configuration. Elle centralise notamment :
+
+- les dossiers et leurs pièces ;
+- les règles d'accès et l'anonymisation ;
+- l'historique des tâches ;
+- l'identité, les paramètres et les intégrations ;
+- l'édition des skills et des agents.
+
+## Une base à laquelle ajouter sa logique métier
+
+Les trois modules constituent le socle de PieceMaker. L'utilisateur peut
+ensuite adapter le comportement du LLM à son activité en ajoutant :
+
+- des **skills**, pour décrire des savoir-faire et des procédures ;
+- des **serveurs MCP**, pour donner accès à des outils et sources de données ;
+- des **agents**, pour confier des rôles ou processus spécialisés.
+
+PieceMaker fournit déjà des composants destinés aux professionnels du droit
+français : conversion et anonymisation des pièces, rédaction juridique,
+tamponnage et gestion des bordereaux. Un **serveur MCP Légifrance est intégré
+directement** ; l'installateur configure son accès à l'API via PISTE.
 
 ## Installation
 
@@ -42,7 +107,7 @@ l'installateur interactif. Variables disponibles :
 Prévoir une vingtaine de minutes et environ 2,5 Go : dépendances npm,
 environnement virtuel Python et modèles GLiNER2 + spaCy.
 
-## Ce que fait l'installateur
+### Détail des étapes
 
 Étapes exécutables ensemble ou une par une :
 
@@ -74,6 +139,20 @@ manuellement une commande `node "/chemin/vers/PieceMaker/orchestrator/report-cyc
 au hook `Stop` ; le token et le destinataire sont alors ceux du bot de
 surveillance (ou `LORD_ENV` et `CHAT_ID` si vous les surchargez).
 
+### Depuis un dépôt déjà cloné
+
+```bash
+npm run install:piecemaker      # menu interactif
+npm run check                   # diagnostic, n'installe rien
+
+node installer/bin/piecemaker.mjs --all       # tout installer
+node installer/bin/piecemaker.mjs --step 03-python-gliner
+node installer/bin/piecemaker.mjs --dry-run --all
+```
+
+`--dry-run` affiche les actions sans rien écrire, `--yes` accepte les valeurs
+par défaut sans poser de question.
+
 ## Utilisation
 
 Après l’installation, une seule commande donne accès aux opérations courantes
@@ -83,19 +162,22 @@ et au sous-menu d’installation/réparation :
 piecemaker
 ```
 
-L’interface graphique locale permet de modifier les paramètres et l’identité
-qui signe les tâches, configurer
-séparément l’Assistant Telegram général et son bot de surveillance sans LLM,
-puis lier chaque sous-dossier juridique à son propre Assistant Telegram. Elle
-permet aussi de rédiger les skills et agents dans un éditeur Markdown visuel
-(sans afficher les marqueurs `#`). Les synthèses de facturation y sont
-consultables en lecture seule. Les noms des pièces originales n’y sont affichés
-qu’après application du mapping d’anonymisation ; à défaut, un nom générique est
-utilisé. L’interface permet enfin d’inspecter chaque dossier juridique
-indépendant, de choisir pièce par pièce ce que l’IA n’a pas le droit d’ouvrir
-(tout ce qui n’est ni Markdown ni JSON est protégé par défaut) et de consulter
-ses commits automatiques représentant chacun l’état complet du dossier. La commande suivante démarre le serveur si
-nécessaire et ouvre directement cette interface dans le navigateur :
+Depuis l’interface graphique, l’utilisateur peut notamment :
+
+- inspecter séparément chaque dossier juridique, ses pièces et l’historique de
+  ses tâches ;
+- choisir les documents que l’IA n’a pas le droit d’ouvrir — tout ce qui n’est ni
+  Markdown ni JSON est protégé par défaut ;
+- lancer l’anonymisation et gérer le mapping des noms ;
+- modifier l’identité qui signe les tâches et les autres paramètres ;
+- rédiger ses skills et ses agents dans un éditeur Markdown visuel ;
+- configurer l’Assistant Telegram, son bot de surveillance sans LLM et les
+  assistants propres à chaque dossier ;
+- consulter les synthèses de facturation en lecture seule.
+
+Les noms des pièces originales ne sont affichés qu’après application du mapping
+d’anonymisation ; à défaut, un nom générique est utilisé. La commande suivante
+démarre le serveur si nécessaire et ouvre l’interface dans le navigateur :
 
 ```bash
 piecemaker open
@@ -117,21 +199,7 @@ Le tableau de bord est servi uniquement en local sur
 `https://localhost:43098/admin/`. Le volet Word reste disponible sur
 `https://localhost:43098/taskpane.html`.
 
-### Depuis un dépôt déjà cloné
-
-```bash
-npm run install:piecemaker      # menu interactif
-npm run check                   # diagnostic, n'installe rien
-
-node installer/bin/piecemaker.mjs --all       # tout installer
-node installer/bin/piecemaker.mjs --step 03-python-gliner
-node installer/bin/piecemaker.mjs --dry-run --all
-```
-
-`--dry-run` affiche les actions sans rien écrire, `--yes` accepte les valeurs
-par défaut sans poser de question.
-
-## Claude Code et Codex CLI
+## Intégration avec Claude Code et Codex CLI
 
 PieceMaker n'installe aucun manifest ni marketplace pour ses propres
 composants. Lorsque la CLI correspondante est présente, l'installateur lie les

@@ -486,6 +486,41 @@ function listRegisteredMarketplaces(runCommand = captureCommand) {
     }));
 }
 
+// Le catalogue officiel dépasse aujourd'hui ~300 plugins et `claude plugin
+// list --available --json` rafraîchit les marketplaces par le réseau : l'appel
+// prend couramment 10–16 s. On lui laisse donc un délai large (il ne doit
+// jamais être tué en cours de route, sinon les onglets se vident) et on met le
+// résultat en cache un court instant : ré-ouvrir un onglet, basculer legal ↔
+// officiel ou paginer ne relance pas la commande lente. Le cache n'est actif
+// que pour le vrai `captureCommand` — les tests injectent leur runCommand et
+// doivent voir chaque appel.
+const AVAILABLE_TTL_MS = 5 * 60 * 1000;
+const AVAILABLE_TIMEOUT_MS = 60000;
+let availableCache = null; // { at: number, data }
+
+function invalidateMarketplaceCache() {
+  availableCache = null;
+}
+
+function fetchAvailablePlugins(runCommand = captureCommand) {
+  const useCache = runCommand === captureCommand;
+  if (useCache && availableCache && Date.now() - availableCache.at < AVAILABLE_TTL_MS) {
+    return availableCache.data;
+  }
+  const result = runCommand('claude', ['plugin', 'list', '--available', '--json'], AVAILABLE_TIMEOUT_MS);
+  if (!result.ok) {
+    return { ok: false, reason: result.output || 'Échec de l’appel « claude plugin list --available --json ».' };
+  }
+  const parsed = parseJsonOutput(result.output) || {};
+  const data = {
+    ok: true,
+    installed: Array.isArray(parsed.installed) ? parsed.installed : [],
+    available: Array.isArray(parsed.available) ? parsed.available : [],
+  };
+  if (useCache) availableCache = { at: Date.now(), data };
+  return data;
+}
+
 /**
  * Plugins-connecteurs des marketplaces déjà enregistrées (hors piecemaker),
  * fusion de `plugin list --json` (installés, avec enabled/scope) et
@@ -506,19 +541,18 @@ function listMarketplaceConnectors(runCommand = captureCommand, options = {}) {
   // `registered` : le marketplace de l'onglet est-il déjà déclaré sur ce poste ?
   // (scopé sur son nom, sinon sur l'officiel — comme avant.)
   const registered = marketplaces.some((entry) => entry.name === (scopeName || OFFICIAL_MARKETPLACE_NAME));
-  const result = runCommand('claude', ['plugin', 'list', '--available', '--json'], 8000);
-  if (!result.ok) {
+  const fetched = fetchAvailablePlugins(runCommand);
+  if (!fetched.ok) {
     return {
       marketplaces,
       officialRegistered: registered,
       registered,
       plugins: [],
-      reason: result.output || 'Échec de l’appel « claude plugin list --available --json ».',
+      reason: fetched.reason,
     };
   }
-  const parsed = parseJsonOutput(result.output) || {};
-  const installed = Array.isArray(parsed.installed) ? parsed.installed : [];
-  const available = Array.isArray(parsed.available) ? parsed.available : [];
+  const installed = fetched.installed;
+  const available = fetched.available;
 
   const plugins = [];
   const seen = new Set();
@@ -574,6 +608,8 @@ function registerOfficialMarketplace(runCommand = captureCommand, marketplace = 
   if (!action.ok) {
     return { ok: false, alreadyRegistered, reason: action.output || `Échec de l’enregistrement du marketplace « ${marketplace.name} ».` };
   }
+  // Un nouveau marketplace change le catalogue « available » : purger le cache.
+  invalidateMarketplaceCache();
   return { ok: true, alreadyRegistered };
 }
 
@@ -612,6 +648,8 @@ function applyMarketplaceSelection(selection, runCommand = captureCommand, optio
     const command = runCommand('claude', ['plugin', 'disable', plugin.id], 5000);
     return { id: plugin.id, action: 'disable', ok: command.ok, reason: command.ok ? '' : command.output || 'Échec de la commande claude.' };
   });
+  // L'état installé/activé a changé : le prochain chargement doit repartir de zéro.
+  if (results.some((entry) => entry.action !== 'none')) invalidateMarketplaceCache();
   return {
     results,
     installed: results.filter((entry) => entry.action === 'install' && entry.ok).length,
@@ -2332,6 +2370,7 @@ function createAdminRouter({
         case: legalCase.id,
         files,
         protectedCount: files.filter((file) => file.protected).length,
+        resourceCount: files.filter((file) => file.resource).length,
         truncated: Boolean(files.truncated),
       });
     } catch (error) {
@@ -2344,12 +2383,19 @@ function createAdminRouter({
       if (!Array.isArray(req.body?.unprotected)) {
         throw new Error('« unprotected » doit être la liste des pièces laissées accessibles à l’IA.');
       }
+      if (req.body?.resources !== undefined && !Array.isArray(req.body.resources)) {
+        throw new Error('« resources » doit être la liste des pièces marquées comme ressources.');
+      }
       const legalCase = selectedCase(req.body?.case);
-      const saved = writeProtection(legalCase.root, { unprotected: req.body.unprotected });
+      const saved = writeProtection(legalCase.root, {
+        unprotected: req.body.unprotected,
+        resources: req.body.resources,
+      });
       res.json({
         ok: true,
         case: legalCase.id,
         unprotected: [...saved.unprotected],
+        resources: [...saved.resources],
       });
     } catch (error) {
       res.status(400).json({ error: error.message });

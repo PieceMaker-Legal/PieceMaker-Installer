@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Configuration centralisée du serveur MCP Légifrance (port stdio local)."""
+"""Configuration autonome du serveur MCP Légifrance (port stdio local)."""
 
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+MCP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Priorité à l'environnement du processus. Accepte aussi un `.env` dans le
+# chemin explicitement fourni, le répertoire courant ou la racine du serveur.
+_ENV_FILE = (os.getenv('LEGIFRANCE_ENV_FILE') or '').strip()
+if _ENV_FILE:
+    load_dotenv(os.path.abspath(os.path.expanduser(_ENV_FILE)), override=False)
+load_dotenv(override=False)
+load_dotenv(os.path.join(MCP_ROOT, '.env'), override=False)
 
 # Légifrance (PISTE)
 # SECURITY: pas de valeur par défaut. Les identifiants précédemment codés en
@@ -30,11 +38,11 @@ def _credential(name):
 
 LEGIFRANCE_CLIENT_ID = _credential('LEGIFRANCE_CLIENT_ID')
 LEGIFRANCE_CLIENT_SECRET = _credential('LEGIFRANCE_CLIENT_SECRET')
+LEGIFRANCE_DEBUG = (os.getenv('LEGIFRANCE_DEBUG') or '').strip().lower() in ('1', 'true', 'yes', 'on')
 
 # Une application PISTE porte des identifiants DIFFÉRENTS en sandbox et en
-# production : l'installateur laisse choisir, le serveur doit viser le même
-# environnement, sinon l'authentification échoue en 401 sans raison visible.
-# Défaut : production, comme l’environnement configuré par l’installateur.
+# production : les identifiants PISTE doivent correspondre à l'environnement,
+# sinon l'authentification échoue en 401. Défaut autonome : production.
 LEGIFRANCE_ENV = (os.getenv('LEGIFRANCE_ENV') or 'production').strip().lower()
 _SANDBOX = LEGIFRANCE_ENV == 'sandbox'
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Serveur MCP PieceMaker - Légifrance (transport stdio local)
+Serveur MCP Légifrance autonome (transport stdio local)
 
-Serveur JSON-RPC 2.0 sur stdio lancé localement par PieceMaker.
+Serveur JSON-RPC 2.0 local sur stdio.
 La logique métier (handlers d'outils, clients Légifrance/BODACC et définitions
 MCP) reste entièrement locale ; seules les API juridiques officielles sont
 appelées par les clients dédiés.
@@ -26,7 +26,7 @@ logging.basicConfig(
     format='%(asctime)s | %(levelname)-8s | %(name)s | %(message)s',
     stream=sys.stderr,
 )
-logger = logging.getLogger('piecemaker.mcp_stdio')
+logger = logging.getLogger('legifrance.mcp_stdio')
 
 from config.mcp_definitions import MCP_TOOLS, MCP_RESOURCES, MCP_PROMPTS
 from tools.handlers import handle_tool_call
@@ -38,7 +38,7 @@ from resources import (
     get_exemples_dispositif
 )
 
-# Le plugin est lancé pour un seul opérateur : il n'y a ni login ni session à
+# Le serveur est lancé pour un seul opérateur : il n'y a ni login ni session à
 # établir. handle_tool_call() conserve un paramètre positionnel user_id ; une
 # constante locale suffit, car aucun outil ne varie selon cette valeur.
 LOCAL_USER_ID = "local-stdio-user"
@@ -78,7 +78,7 @@ def handle_initialize(params):
             "resources": {"enabled": True, "list": True, "read": True},
             "prompts": {"enabled": True, "list": True, "get": True}
         },
-        "serverInfo": {"name": "PieceMaker Légifrance", "version": "2.0.0"}
+        "serverInfo": {"name": "Légifrance MCP", "version": "2.0.0"}
     }
 
 

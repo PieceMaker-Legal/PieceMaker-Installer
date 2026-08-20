@@ -7,6 +7,7 @@ const test = require('node:test');
 const {
   isMappingFile,
   isProtectedFile,
+  isResourceFile,
   locateCase,
   markdownCounterpart,
   readProtection,
@@ -39,6 +40,34 @@ test('tout ce qui n’est ni Markdown ni JSON est protégé par défaut', (t) =>
   assert.equal(isProtectedFile(path.join(data.casesRoot, 'ailleurs.pdf'), data.caseRoot), false);
 });
 
+test('une copie extraite …-ooxml sous le workspace est un espace de travail', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+
+  const ooxmlDir = path.join(data.caseRoot, 'Fichiers convertis PieceMaker', 'doc-ooxml');
+  fs.mkdirSync(path.join(ooxmlDir, 'word'), { recursive: true });
+  fs.writeFileSync(path.join(ooxmlDir, '[Content_Types].xml'), '<Types/>');
+  fs.writeFileSync(path.join(ooxmlDir, 'word', 'document.xml'), '<w:document/>');
+  fs.writeFileSync(path.join(ooxmlDir, 'word', 'media.png'), 'PNG');
+
+  // Les parties du .docx extrait sont accessibles sans inscription d'exception.
+  assert.equal(isProtectedFile(path.join(ooxmlDir, '[Content_Types].xml'), data.caseRoot), false);
+  assert.equal(isProtectedFile(path.join(ooxmlDir, 'word', 'document.xml'), data.caseRoot), false);
+  assert.equal(isProtectedFile(path.join(ooxmlDir, 'word', 'media.png'), data.caseRoot), false);
+
+  // Le .docx original, hors du sous-dossier -ooxml, reste protégé.
+  assert.equal(isProtectedFile(path.join(data.caseRoot, 'annexes', 'pièce jointe.docx'), data.caseRoot), true);
+  // Un fichier isolé nommé …-ooxml sous le workspace (pas un dossier) reste protégé.
+  const bare = path.join(data.caseRoot, 'Fichiers convertis PieceMaker', 'contrat-ooxml.pdf');
+  fs.writeFileSync(bare, 'ORIGINAL');
+  assert.equal(isProtectedFile(bare, data.caseRoot), true);
+  // Un dossier -ooxml hors du workspace ne bénéficie pas de la règle.
+  const stray = path.join(data.caseRoot, 'doc-ooxml', 'word', 'document.xml');
+  fs.mkdirSync(path.dirname(stray), { recursive: true });
+  fs.writeFileSync(stray, '<w:document/>');
+  assert.equal(isProtectedFile(stray, data.caseRoot), true);
+});
+
 test('le mapping et les scans PII sont reconnus où qu’ils soient rangés', () => {
   assert.equal(isMappingFile('mapping_dossier.json'), true);
   assert.equal(isMappingFile('/dossier/annexes/mapping_default.json'), true);
@@ -61,6 +90,34 @@ test('une exception enregistrée libère exactement une pièce', (t) => {
   // protégée sans que personne ait à repasser dans l'administration.
   fs.writeFileSync(path.join(data.caseRoot, 'nouvelle.pdf'), 'ORIGINAL');
   assert.equal(isProtectedFile(path.join(data.caseRoot, 'nouvelle.pdf'), data.caseRoot), true);
+});
+
+test('une ressource est accessible à l’IA et distincte de l’espace de travail', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+
+  writeProtection(data.caseRoot, { unprotected: [], resources: ['contrat.pdf'] });
+  // Une ressource n'est pas protégée (l'IA l'ouvre telle quelle)…
+  assert.equal(isProtectedFile(path.join(data.caseRoot, 'contrat.pdf'), data.caseRoot), false);
+  // …et se reconnaît comme ressource, contrairement à une pièce d'espace de travail.
+  assert.equal(isResourceFile(path.join(data.caseRoot, 'contrat.pdf'), data.caseRoot), true);
+  assert.equal(isResourceFile(path.join(data.caseRoot, 'annexes', 'pièce jointe.docx'), data.caseRoot), false);
+});
+
+test('écrire une seule liste préserve l’autre, et les deux listes s’excluent', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+
+  writeProtection(data.caseRoot, { unprotected: ['contrat.pdf'], resources: ['annexes/pièce jointe.docx'] });
+  // Réécrire `unprotected` seul ne doit pas effacer les ressources.
+  writeProtection(data.caseRoot, { unprotected: ['contrat.pdf'] });
+  assert.deepEqual([...readProtection(data.caseRoot).resources], ['annexes/pièce jointe.docx']);
+
+  // Une même pièce ne peut être dans les deux listes : `resources` l'emporte.
+  writeProtection(data.caseRoot, { unprotected: ['contrat.pdf'], resources: ['contrat.pdf'] });
+  const state = readProtection(data.caseRoot);
+  assert.deepEqual([...state.resources], ['contrat.pdf']);
+  assert.deepEqual([...state.unprotected], []);
 });
 
 test('la liste d’exceptions rejette les chemins qui sortent du dossier', (t) => {

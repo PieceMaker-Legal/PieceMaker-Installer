@@ -103,6 +103,29 @@ function hasAutoOpen(zip) {
   return zip.file(PART.taskpanes) != null && zip.file(PART.webextension) != null;
 }
 
+/** Regexp des parties `word/webextensions/webextensionN.xml` (hors _rels). */
+const WEBEXT_PART_RE = /^word\/webextensions\/webextension\d+\.xml$/;
+
+/**
+ * Vrai seulement si les parties d'auto-ouverture sont déjà *canoniques* :
+ * exactement une partie `webextension1.xml` qui référence notre add-in, et un
+ * unique volet en `visibility="1"`. Avoir des parties ne suffit pas — Word
+ * réécrit `visibility="0"` quand l'utilisateur ferme le volet et sauvegarde, et
+ * un ancien passage peut laisser un `webextension2.xml` en double avec un GUID
+ * périmé. Dans ces cas il faut réparer, pas court-circuiter.
+ */
+async function isAutoOpenHealthy(zip) {
+  if (!hasAutoOpen(zip)) return false;
+  const weParts = Object.keys(zip.files).filter((n) => WEBEXT_PART_RE.test(n));
+  if (weParts.length !== 1 || weParts[0] !== PART.webextension) return false;
+  const we = await zip.file(PART.webextension).async('string');
+  if (!we.includes(`id="${ADDIN_ID}"`)) return false;
+  const tp = await zip.file(PART.taskpanes).async('string');
+  if ((tp.match(/<wetp:taskpane\b/g) || []).length !== 1) return false;
+  if (!/visibility="1"/.test(tp)) return false;
+  return true;
+}
+
 function ensureContentTypes(xml) {
   const overrides = [
     { part: '/word/webextensions/taskpanes.xml', type: 'application/vnd.ms-office.webextensiontaskpanes+xml' },
@@ -131,8 +154,13 @@ function ensureDocumentRel(xml) {
 
 /**
  * Inject the synthesized auto-open parts into `docxPath` in place.
- * Idempotent: returns { injected:false, reason:'already-present' } if the doc
- * already auto-opens. Throws if the file is not a valid .docx package.
+ * Idempotent : renvoie { injected:false, reason:'already-present' } uniquement
+ * si les parties existantes sont déjà canoniques (voir `isAutoOpenHealthy`).
+ * Si elles sont présentes mais cassées — `visibility="0"` laissé par Word, ou
+ * un `webextensionN.xml` en double au GUID périmé — elles sont **réparées** :
+ * on force `visibility="1"` et on ramène à une **référence unique** correcte
+ * ({ injected:true, reason:'repaired' }). Throws si le fichier n'est pas un
+ * paquet .docx valide.
  */
 async function injectAutoOpen(docxPath, opts = {}) {
   const buf = await fs.promises.readFile(docxPath);
@@ -141,8 +169,18 @@ async function injectAutoOpen(docxPath, opts = {}) {
   if (!zip.file('word/document.xml')) {
     throw new Error(`Not a Word document (no word/document.xml): ${docxPath}`);
   }
-  if (hasAutoOpen(zip) && !opts.force) {
+  const wasPresent = hasAutoOpen(zip);
+  if (wasPresent && !opts.force && (await isAutoOpenHealthy(zip))) {
     return { injected: false, reason: 'already-present' };
+  }
+
+  // Réparation : supprimer tout `webextensionN.xml` parasite (passage antérieur
+  // ou réécriture de Word) pour retomber sur une référence unique. taskpanes.xml
+  // et taskpanes.xml.rels sont réécrits intégralement juste après.
+  for (const name of Object.keys(zip.files)) {
+    if (WEBEXT_PART_RE.test(name) && name !== PART.webextension) {
+      zip.remove(name);
+    }
   }
 
   const webextRelId = 'rId1';
@@ -168,7 +206,7 @@ async function injectAutoOpen(docxPath, opts = {}) {
     mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   });
   await writeAtomically(docxPath, out);
-  return { injected: true, reason: 'synthesized' };
+  return { injected: true, reason: wasPresent ? 'repaired' : 'synthesized' };
 }
 
 /**

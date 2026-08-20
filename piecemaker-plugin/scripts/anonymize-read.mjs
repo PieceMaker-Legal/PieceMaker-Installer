@@ -21,7 +21,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { loadPieceMakerConfig, readHookPayload, runHook, noop } from './lib/hook-io.mjs';
+import { loadPieceMakerConfig, readHookPayloadStrict, runHook, noop } from './lib/hook-io.mjs';
 
 const require = createRequire(import.meta.url);
 const { applyMapping, resolveConfiguredCaseMapping } = require('./lib/mapping.cjs');
@@ -119,8 +119,25 @@ function resultText(toolResponse) {
 }
 
 async function main() {
-  const payload = await readHookPayload(2000);
-  if (!payload) return null;
+  // Lecture stricte : on distingue « rien à lire » (TTY, stdin vide) d'un
+  // payload NON VIDE mais illisible (tronqué au tampon du tube, ou corrompu).
+  // Le premier est un fail-open légitime ; le second est la frontière RGPD à ne
+  // JAMAIS franchir en clair — c'est le défaut C du rapport.
+  const { payload, raw, complete } = await readHookPayloadStrict(2000);
+
+  if (!payload) {
+    // stdin vide / TTY → vraiment rien à faire, on s'efface.
+    if (!raw || !raw.trim()) return null;
+    // Payload non vide mais inparseable ou incomplet : ne PAS retomber sur le
+    // résultat d'outil original en clair. On code au mieux ce qu'on récupère.
+    return failClosed(raw);
+  }
+  if (!complete) {
+    // Rare : parse réussi mais flux marqué incomplet. On code quand même par
+    // sécurité plutôt que de faire confiance à un flux tronqué.
+    return failClosedFromPayload(payload) || null;
+  }
+
   if (!HANDLED_TOOLS.has(payload.tool_name)) return null;
 
   const config = loadPieceMakerConfig();
@@ -133,8 +150,8 @@ async function main() {
   const legalCase = resolveLegalCase(payload, config, cwd);
   if (!legalCase) return null;
 
-  const raw = payload.tool_response;
-  const text = resultText(raw);
+  const raw2 = payload.tool_response;
+  const text = resultText(raw2);
   if (!text) return null;
 
   const anonymized = applyMapping(text, legalCase.mapping);
@@ -145,12 +162,126 @@ async function main() {
   // chaîne. Renvoyer une chaîne brute est rejeté (« does not match ») et le nom
   // réel passe. On préserve donc la forme exacte du résultat et on ne code que
   // les chaînes à l'intérieur — l'objet reste un résultat d'outil valide.
-  const updatedToolOutput = anonymizeShape(raw, legalCase.mapping);
+  const updatedToolOutput = anonymizeShape(raw2, legalCase.mapping);
 
   return {
     hookSpecificOutput: {
       hookEventName: 'PostToolUse',
       updatedToolOutput,
+    },
+  };
+}
+
+/**
+ * Extrait la première valeur chaîne d'une clé JSON, même si le JSON global est
+ * cassé. Tolère une valeur finale non terminée (troncature) : on prend alors
+ * jusqu'à la fin du texte. La chaîne rendue reste échappée façon JSON — sans
+ * importance ici : les noms réels (« Bernard Gilly ») y apparaissent
+ * littéralement, donc `applyMapping` les code quand même.
+ */
+function extractJsonString(raw, key) {
+  const opener = new RegExp(`"${key}"\\s*:\\s*"`, 'g');
+  const m = opener.exec(raw);
+  if (!m) return null;
+  let out = '';
+  for (let i = m.index + m[0].length; i < raw.length; i += 1) {
+    const c = raw[i];
+    if (c === '\\') { out += c + (raw[i + 1] || ''); i += 1; continue; }
+    if (c === '"') return out;
+    out += c;
+  }
+  return out; // valeur tronquée : pas de guillemet fermant
+}
+
+/** Toutes les valeurs chaîne porteuses de contenu d'outil récupérables du brut. */
+function salvageResponseText(raw) {
+  const parts = [];
+  for (const key of ['content', 'stdout', 'stderr', 'output', 'text']) {
+    const opener = new RegExp(`"${key}"\\s*:\\s*"`, 'g');
+    let m;
+    while ((m = opener.exec(raw))) {
+      let out = '';
+      let i = m.index + m[0].length;
+      for (; i < raw.length; i += 1) {
+        const c = raw[i];
+        if (c === '\\') { out += c + (raw[i + 1] || ''); i += 1; continue; }
+        if (c === '"') break;
+        out += c;
+      }
+      if (out) parts.push(out);
+      opener.lastIndex = i + 1;
+    }
+  }
+  return parts.join('\n');
+}
+
+/**
+ * Devine une forme de résultat d'outil crédible pour le harnais à partir du
+ * brut, et y place le texte codé. Une chaîne nue serait rejetée pour un Read et
+ * laisserait passer l'original ; on colle donc au schéma le plus probable.
+ */
+function shapeFromRaw(raw, coded) {
+  if (/"stdout"\s*:/.test(raw) || /"stderr"\s*:/.test(raw)) return { stdout: coded, stderr: '' };
+  if (/"file"\s*:/.test(raw) && /"content"\s*:/.test(raw)) return { file: { content: coded } };
+  return { content: coded };
+}
+
+/** Résout le mapping du dossier à partir de chemins récupérés du brut, avec repli
+ *  sur le cwd réel du processus. */
+function resolveCaseFromRaw(raw, config) {
+  const candidates = [
+    extractJsonString(raw, 'file_path'),
+    extractJsonString(raw, 'path'),
+    extractJsonString(raw, 'cwd'),
+    process.cwd(),
+  ].filter(Boolean);
+  for (const hint of candidates) {
+    const found = resolveConfiguredCaseMapping(config, path.resolve(String(hint)));
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * Fail-closed : le payload d'entrée n'a pas pu être lu proprement. On refuse de
+ * laisser filer le résultat d'outil original (en clair) et on émet à la place
+ * une version codée, au mieux, de ce qu'on a pu récupérer. Sans mapping
+ * applicable, il n'y avait de toute façon aucune anonymisation à faire pour ce
+ * dossier — on s'efface alors comme le ferait la voie normale.
+ */
+function failClosed(raw) {
+  const config = loadPieceMakerConfig();
+  if (config.anonymization?.enabled === false) return null;
+  const legalCase = resolveCaseFromRaw(raw, config);
+  if (!legalCase) return null;
+
+  const recovered = salvageResponseText(raw) || raw;
+  const coded = applyMapping(recovered, legalCase.mapping);
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PostToolUse',
+      updatedToolOutput: shapeFromRaw(raw, coded),
+    },
+  };
+}
+
+/** Variante fail-closed quand on a un objet parsé mais un flux marqué incomplet. */
+function failClosedFromPayload(payload) {
+  if (!HANDLED_TOOLS.has(payload.tool_name)) return null;
+  const config = loadPieceMakerConfig();
+  if (config.anonymization?.enabled === false) return null;
+  const cwd = payload.cwd || process.cwd();
+  const legalCase = resolveLegalCase(payload, config, cwd);
+  if (!legalCase) return null;
+  const raw = payload.tool_response;
+  const text = resultText(raw);
+  if (!text) return null;
+  const anonymized = applyMapping(text, legalCase.mapping);
+  if (anonymized === text) return null;
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PostToolUse',
+      updatedToolOutput: anonymizeShape(raw, legalCase.mapping),
     },
   };
 }

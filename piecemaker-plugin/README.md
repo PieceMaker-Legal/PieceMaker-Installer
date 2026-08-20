@@ -76,7 +76,24 @@ serveur et l'étape 06 réconcilient cet enregistrement.
 
 ## Serveur MCP Légifrance
 
-Le serveur MCP supporté est `mcp/legifrance/mcp_stdio_server.py`. Le fichier
-`.mcp.json` conserve sa configuration stdio portable pour une installation
-explicite du plugin ; l'étape `07-legifrance` configure et valide ses clés
-PISTE dans `.env`.
+Le serveur MCP autonome expose `mcp/legifrance/mcp_stdio_server.py` (transport
+portable principal) et `mcp/legifrance/mcp_http_local.py` (adaptateur HTTP
+partagé, limité à `127.0.0.1`). Le fichier `.mcp.json` conserve la configuration
+stdio du plugin ; les deux transports lisent leurs clés PISTE depuis
+l'environnement, `LEGIFRANCE_ENV_FILE` ou un `.env` local.
+
+Deux outils complètent les recherches ponctuelles :
+
+- `Build_Research_Corpus` fige plusieurs requêtes, déduplique, télécharge et
+  scanne chaque texte intégral ; un filtre booléen auditable ferme les
+  incompatibilités certaines, puis prépare toutes les candidates en lots de
+  30 décisions au plus par défaut ;
+- `Validate_Research_Cards` exige une fiche par décision, confirme chaque
+  citation dans le texte source et produit la matrice ainsi que les métriques
+  de couverture et de consommation.
+
+Ce flux n'utilise ni embeddings, ni base vectorielle, ni top-k. Le filtre
+statique exige la présence conjointe d'un contexte SA et d'une révocation située
+à 300 caractères au plus d'une fonction dirigeante ; chaque cooccurrence d'une
+candidate est conservée. Les tokens sont annoncés comme estimés tant qu'un usage
+exact du fournisseur n'a pas été passé au validateur.

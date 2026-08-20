@@ -54,6 +54,47 @@ function decisionRow(entry) {
   return `| ${titre} | ${juridiction} | ${date} | ${reference} | ${lienCell} |`;
 }
 
+function integer(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : null;
+}
+
+function metricLine(label, value) {
+  const count = integer(value);
+  return count == null ? null : `- **${label}** : ${count.toLocaleString('fr-FR')}`;
+}
+
+function renderMetrics(metrics) {
+  if (!metrics || typeof metrics !== 'object') return [];
+  const lines = ['## Couverture et coût', ''];
+  const counts = [
+    metricLine('Décisions identifiées (dédupliquées)', metrics.decisionsIdentifiees ?? metrics.identified),
+    metricLine('Décisions scannées en texte intégral', metrics.decisionsScannees ?? metrics.scanned),
+    metricLine('Fiches validées', metrics.fichesValidees ?? metrics.validCards),
+    metricLine('Échecs', metrics.echecs ?? metrics.failed),
+  ].filter(Boolean);
+  lines.push(...counts);
+
+  const input = integer(metrics.tokensEntree ?? metrics.inputTokens);
+  const output = integer(metrics.tokensSortie ?? metrics.outputTokens);
+  const exact = metrics.tokensExacts === true || metrics.exact === true;
+  if (input != null) lines.push(`- **Tokens d'entrée ${exact ? 'exacts' : 'estimés'}** : ${input.toLocaleString('fr-FR')}`);
+  if (output != null) lines.push(`- **Tokens de sortie ${exact ? 'exacts' : 'estimés'}** : ${output.toLocaleString('fr-FR')}`);
+  if (metrics.reasoningTokens != null) {
+    const reasoning = integer(metrics.reasoningTokens);
+    if (reasoning != null) lines.push(`- **Tokens de raisonnement exacts** : ${reasoning.toLocaleString('fr-FR')}`);
+  }
+  if (!exact && metrics.methodeEstimation) {
+    lines.push(`- **Méthode d'estimation** : ${String(metrics.methodeEstimation).trim()}`);
+  }
+  if (metrics.tronquee === true || metrics.truncated === true) {
+    lines.push('- **Couverture** : ⚠️ corpus tronqué par un plafond explicite');
+  }
+  if (!counts.length && input == null && output == null) return [];
+  lines.push('');
+  return lines;
+}
+
 /**
  * Construit le Markdown final. L'ordre des sections suit la spécification :
  * question initiale → décision(s)/texte(s) trouvé(s) → citation retenue →
@@ -94,10 +135,19 @@ function renderMarkdown(payload, { date, caseName } = {}) {
   lines.push(payload.citation ? `> ${String(payload.citation).trim()}` : '_Aucune citation vérifiée._');
   lines.push('');
 
-  lines.push('## Rapport de tri (Haiku)');
+  lines.push(`## ${String(payload.analyseLabel || 'Rapport de tri (Haiku)').trim()}`);
   lines.push('');
   lines.push(String(payload.rapport || '_Non renseigné._').trim());
   lines.push('');
+
+  if (payload.methodologie) {
+    lines.push('## Méthodologie');
+    lines.push('');
+    lines.push(String(payload.methodologie).trim());
+    lines.push('');
+  }
+
+  lines.push(...renderMetrics(payload.metriques || payload.metrics));
 
   lines.push('## Liens Legifrance');
   lines.push('');
@@ -122,5 +172,6 @@ function renderMarkdown(payload, { date, caseName } = {}) {
 module.exports = {
   slugify,
   reportSlug,
+  renderMetrics,
   renderMarkdown,
 };

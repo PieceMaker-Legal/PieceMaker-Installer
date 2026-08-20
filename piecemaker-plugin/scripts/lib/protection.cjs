@@ -36,6 +36,15 @@ const PROTECTION_FILE = 'protection.json';
  */
 const WORKSPACE_SUBDIR = 'Fichiers convertis PieceMaker';
 
+/**
+ * Suffixe d'un sous-dossier de travail OOXML : une copie extraite d'un `.docx`
+ * (`unzip`), rangée sous `WORKSPACE_SUBDIR`. Ses parties (`word/document.xml`,
+ * `_rels`, médias…) ne sont ni `.md` ni `.json` : sans règle dédiée elles
+ * tomberaient dans le coffre-fort et l'édition OOXML serait impossible. On les
+ * classe donc d'office en espace de travail (voir `isOoxmlWorkspacePath`).
+ */
+const OOXML_WORKDIR_SUFFIX = '-ooxml';
+
 /** Extensions lisibles par l'IA, sous réserve du mapping appliqué à la lecture. */
 const READABLE_EXTENSIONS = new Set(['.md', '.json']);
 
@@ -142,6 +151,24 @@ function locateCase(casesRoot, target) {
   return { casesRoot: root, caseName, caseRoot, absolute, relative: rest.join('/') };
 }
 
+/** Normalise une liste de chemins relatifs en Set de clés POSIX. */
+function normalizeKeySet(list) {
+  return new Set(
+    (Array.isArray(list) ? list : [])
+      .map((entry) => String(entry || '').replaceAll('\\', '/').trim())
+      .filter(Boolean)
+  );
+}
+
+/**
+ * Trois états possibles pour une pièce, encodés comme deux listes d'exceptions
+ * dans `protection.json` (le défaut, liste vide, est le coffre-fort) :
+ *  - **Coffre-fort** : hors des deux listes — protégé, l'IA ne lit que le `.md` ;
+ *  - **Espace de travail** : dans `unprotected` — accessible, anonymisé à la
+ *    lecture par les hooks ;
+ *  - **Ressource** : dans `resources` — accessible, et exclu du scan GLiNER et de
+ *    la conversion Markdown (documents publics sans donnée personnelle).
+ */
 function readProtection(caseRoot) {
   const file = protectionFile(caseRoot);
   let raw = null;
@@ -150,42 +177,96 @@ function readProtection(caseRoot) {
   } catch {
     raw = null;
   }
-  const list = Array.isArray(raw?.unprotected) ? raw.unprotected : [];
-  const unprotected = new Set(
-    list
-      .map((entry) => String(entry || '').replaceAll('\\', '/').trim())
-      .filter(Boolean)
-  );
-  return { file, exists: raw !== null, unprotected };
+  return {
+    file,
+    exists: raw !== null,
+    unprotected: normalizeKeySet(raw?.unprotected),
+    resources: normalizeKeySet(raw?.resources),
+  };
 }
 
-function writeProtection(caseRoot, { unprotected = [] } = {}) {
+/**
+ * Écrit les deux listes d'exceptions. Une liste laissée à `undefined` est
+ * *préservée* (relue depuis le disque) : un appelant historique qui ne connaît
+ * que `unprotected` — l'initialisation d'un dossier — n'efface pas les
+ * ressources déjà déclarées.
+ */
+function writeProtection(caseRoot, { unprotected, resources } = {}) {
   const file = protectionFile(caseRoot);
-  const list = [...new Set(
-    (Array.isArray(unprotected) ? unprotected : [])
+  const existing = readProtection(caseRoot);
+  const clean = (list, fallback) => [...new Set(
+    (Array.isArray(list) ? list : [...fallback])
       .map((entry) => String(entry || '').replaceAll('\\', '/').trim())
       .filter((entry) => entry && !entry.startsWith('../') && !path.isAbsolute(entry))
   )].sort((a, b) => a.localeCompare(b, 'fr'));
+  // Une pièce ne peut être à la fois « espace de travail » et « ressource » :
+  // `resources` a priorité, on la retire donc de `unprotected`.
+  const resourcesList = clean(resources, existing.resources);
+  const resourceSet = new Set(resourcesList);
+  const unprotectedList = clean(unprotected, existing.unprotected).filter((key) => !resourceSet.has(key));
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify({ version: 1, unprotected: list }, null, 2)}\n`, 'utf8');
-  return { file, unprotected: new Set(list) };
+  fs.writeFileSync(
+    file,
+    `${JSON.stringify({ version: 1, unprotected: unprotectedList, resources: resourcesList }, null, 2)}\n`,
+    'utf8'
+  );
+  return { file, unprotected: new Set(unprotectedList), resources: resourceSet };
+}
+
+/** Vrai pour un chemin recevable dans une des deux listes d'exceptions. */
+function exceptionKey(absolutePath, caseRoot) {
+  const key = relativeKey(absolutePath, caseRoot);
+  if (!key) return null;
+  // Les dotfiles sont de la configuration du dossier, jamais des pièces —
+  // `.piecemaker/protection.json` inclus, qui doit rester lisible par l'admin.
+  if (key.split('/').some((segment) => segment.startsWith('.'))) return null;
+  if (READABLE_EXTENSIONS.has(path.extname(key).toLowerCase())) return null;
+  return key;
+}
+
+/**
+ * Vrai pour un chemin situé dans un sous-dossier de travail OOXML — la copie
+ * extraite d'un `.docx`, rangée sous `WORKSPACE_SUBDIR` dans un sous-dossier
+ * dont le nom finit par `OOXML_WORKDIR_SUFFIX`. Tout son sous-arbre est classé
+ * espace de travail (accessible, filtré à la lecture) sans inscription dans
+ * `protection.json`. Le `.docx` original n'est pas dans ce sous-dossier : il
+ * reste protégé. Seul un *dossier* intermédiaire compte — un fichier isolé
+ * nommé `…-ooxml` sous `WORKSPACE_SUBDIR` reste, lui, protégé.
+ */
+function isOoxmlWorkspacePath(absolutePath, caseRoot) {
+  const key = relativeKey(absolutePath, caseRoot);
+  if (!key) return false;
+  const segments = key.split('/');
+  if (segments[0] !== WORKSPACE_SUBDIR) return false;
+  return segments.slice(1, -1).some((segment) => segment.toLowerCase().endsWith(OOXML_WORKDIR_SUFFIX));
 }
 
 /**
  * Un fichier est protégé s'il est dans le dossier, qu'il n'est ni Markdown ni
- * JSON, et qu'il ne figure pas dans les exceptions. `state` évite de relire le
- * fichier d'exceptions à chaque appel dans une boucle.
+ * JSON, et qu'il ne figure dans *aucune* des deux listes d'exceptions (espace
+ * de travail ou ressource, toutes deux accessibles à l'IA). `state` évite de
+ * relire le fichier d'exceptions à chaque appel dans une boucle.
  */
 function isProtectedFile(absolutePath, caseRoot, state = null) {
   if (!absolutePath || !caseRoot) return false;
-  const key = relativeKey(absolutePath, caseRoot);
+  const key = exceptionKey(absolutePath, caseRoot);
   if (!key) return false;
-  // Les dotfiles sont de la configuration du dossier, jamais des pièces —
-  // `.piecemaker/protection.json` inclus, qui doit rester lisible par l'admin.
-  if (key.split('/').some((segment) => segment.startsWith('.'))) return false;
-  if (READABLE_EXTENSIONS.has(path.extname(key).toLowerCase())) return false;
-  const { unprotected } = state || readProtection(caseRoot);
-  return !unprotected.has(key);
+  // Copie extraite d'un .docx : espace de travail implicite, jamais coffre-fort.
+  if (isOoxmlWorkspacePath(absolutePath, caseRoot)) return false;
+  const { unprotected, resources } = state || readProtection(caseRoot);
+  return !unprotected.has(key) && !(resources && resources.has(key));
+}
+
+/**
+ * Vrai pour une pièce marquée « ressource » : accessible à l'IA et exclue du
+ * scan GLiNER comme de la conversion Markdown.
+ */
+function isResourceFile(absolutePath, caseRoot, state = null) {
+  if (!absolutePath || !caseRoot) return false;
+  const key = exceptionKey(absolutePath, caseRoot);
+  if (!key) return false;
+  const { resources } = state || readProtection(caseRoot);
+  return Boolean(resources && resources.has(key));
 }
 
 /**
@@ -226,6 +307,8 @@ module.exports = {
   isMappingFile,
   locateCase,
   isProtectedFile,
+  isOoxmlWorkspacePath,
+  isResourceFile,
   markdownCounterpart,
   normalizeOriginalName,
   protectionFile,
@@ -237,4 +320,5 @@ module.exports = {
   READABLE_EXTENSIONS,
   FORBIDDEN_JSON_PATTERNS,
   WORKSPACE_SUBDIR,
+  OOXML_WORKDIR_SUFFIX,
 };

@@ -1,5 +1,5 @@
 ##/tools/legifrance_client.py 
-# !/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Client API Légifrance via PISTE - Version corrigée avec logs"""
 
@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Any
 from config.settings import (
     LEGIFRANCE_CLIENT_ID,
     LEGIFRANCE_CLIENT_SECRET,
+    LEGIFRANCE_DEBUG,
     LEGIFRANCE_OAUTH_URL,
     LEGIFRANCE_API_URL
 )
@@ -34,8 +35,8 @@ class LegifranceClient:
         if not self.client_id or not self.client_secret:
             raise Exception(
                 "Identifiants Légifrance manquants (LEGIFRANCE_CLIENT_ID / LEGIFRANCE_CLIENT_SECRET absents). "
-                "Relancez l'installateur PieceMaker (étape « Légifrance ») pour créer un compte PISTE, "
-                "souscrire à l'API Légifrance et saisir vos identifiants."
+                "Créez une application PISTE, souscrivez à l'API Légifrance, puis fournissez ces variables "
+                "dans l'environnement du serveur ou dans son fichier .env local."
             )
 
         if self.access_token and self.token_expires_at:
@@ -73,12 +74,13 @@ class LegifranceClient:
 
         # ===== LOGS DÉTAILLÉS =====
         # Ported to stderr (stdio MCP transport reserves stdout for JSON-RPC only)
-        print("\n" + "="*80, file=sys.stderr)
-        print("DEBUG LEGIFRANCE REQUEST", file=sys.stderr)
-        print("="*80, file=sys.stderr)
-        print(f"URL: {url}", file=sys.stderr)
-        print(f"\nPayload complet:\n{json.dumps(payload, indent=2, ensure_ascii=False)}", file=sys.stderr)
-        print("="*80 + "\n", file=sys.stderr)
+        if LEGIFRANCE_DEBUG:
+            print("\n" + "="*80, file=sys.stderr)
+            print("DEBUG LEGIFRANCE REQUEST", file=sys.stderr)
+            print("="*80, file=sys.stderr)
+            print(f"URL: {url}", file=sys.stderr)
+            print(f"\nPayload complet:\n{json.dumps(payload, indent=2, ensure_ascii=False)}", file=sys.stderr)
+            print("="*80 + "\n", file=sys.stderr)
         # ==========================
         
         try:
@@ -94,18 +96,19 @@ class LegifranceClient:
             )
             
             # ===== LOG RÉPONSE =====
-            print(f"\n{'='*80}", file=sys.stderr)
-            print(f"RESPONSE STATUS: {response.status_code}", file=sys.stderr)
-            print(f"{'='*80}", file=sys.stderr)
+            if LEGIFRANCE_DEBUG:
+                print(f"\n{'='*80}", file=sys.stderr)
+                print(f"RESPONSE STATUS: {response.status_code}", file=sys.stderr)
+                print(f"{'='*80}", file=sys.stderr)
 
-            if response.status_code >= 400:
-                print(f"\n⚠️ ERREUR API:\n{response.text}\n", file=sys.stderr)
-            else:
-                response_data = response.json()
-                print(f"\nTotal résultats: {response_data.get('totalResultNumber', 0)}", file=sys.stderr)
-                print(f"Résultats retournés: {len(response_data.get('results', []))}", file=sys.stderr)
+                if response.status_code >= 400:
+                    print(f"\n⚠️ ERREUR API:\n{response.text}\n", file=sys.stderr)
+                else:
+                    response_data = response.json()
+                    print(f"\nTotal résultats: {response_data.get('totalResultNumber', 0)}", file=sys.stderr)
+                    print(f"Résultats retournés: {len(response_data.get('results', []))}", file=sys.stderr)
 
-            print(f"{'='*80}\n", file=sys.stderr)
+                print(f"{'='*80}\n", file=sys.stderr)
             # =======================
             
             response.raise_for_status()

@@ -748,7 +748,11 @@ async function startOriginalsJob({ casesRoot, caseName, action, files = [], opti
 
   const originals = await listOriginals(legalCase.root);
   const wanted = new Set(files.map((file) => String(file || '').replaceAll('\\', '/')));
-  const selected = wanted.size ? originals.filter((file) => wanted.has(file.path)) : originals;
+  // Les ressources sont volontairement hors périmètre : accessibles à l'IA telles
+  // quelles, elles ne sont ni converties ni scannées. On les écarte même si elles
+  // sont explicitement cochées, pour que le drapeau reste la seule vérité.
+  const selected = (wanted.size ? originals.filter((file) => wanted.has(file.path)) : originals)
+    .filter((file) => !file.resource);
   if (!selected.length) throw new Error('Aucune pièce à traiter.');
 
   // Sans sélection, le travail porte sur tout le dossier et ne refait que ce

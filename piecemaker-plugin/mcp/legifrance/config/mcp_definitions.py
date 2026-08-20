@@ -470,7 +470,7 @@ NOTE: Incluez le nom du code dans la query pour cibler un code spécifique (ex: 
     },
     {
         "name": "Download_Query_Results",
-        "description": "Télécharge TOUS les résultats d'une requête de jurisprudence (dans la limite d'un plafond) dans un dossier local — un fichier Markdown par décision, plus un index et le JSON brut — et rend le CHEMIN du dossier. À utiliser pour le tri en masse : l'agent lit ensuite l'index puis les décisions pertinentes au lieu de paginer. Les lectures du dossier sont tracées automatiquement.",
+        "description": "Télécharge TOUS les résultats d'une requête de jurisprudence (dans la limite d'un plafond) dans un dossier local — un fichier Markdown par décision, plus un index et le JSON brut — et rend le CHEMIN du dossier. À utiliser pour le tri en masse : l'agent lit ensuite l'index puis les décisions pertinentes au lieu de paginer. Un marqueur local stable permet au client de tracer les lectures s'il le souhaite.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -504,10 +504,115 @@ NOTE: Incluez le nom du code dans la query pour cibler un code spécifique (ex: 
                 },
                 "output_dir": {
                     "type": "string",
-                    "description": "Dossier racine où créer le sous-dossier de résultats. Défaut : ~/.piecemaker/legifrance-results/."
+                    "description": "Dossier racine où créer le sous-dossier de résultats. Défaut autonome : ~/.legifrance-mcp/results/."
                 }
             },
             "required": ["query"]
+        }
+    },
+    {
+        "name": "Build_Research_Corpus",
+        "description": "Construit un corpus jurisprudentiel exhaustif et reproductible, sans RAG : exécute plusieurs requêtes, déduplique, télécharge et scanne chaque texte intégral. Un filtre booléen large et documenté ferme statiquement les incompatibilités certaines ; toutes les candidates restantes sont préparées en lots bornés contenant chaque contexte lexical, sans embeddings, score de sélection ni top-k. Rend la couverture et une estimation explicite des tokens.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "Question de droit complète à traiter."
+                },
+                "queries": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Formulations Légifrance complémentaires. Si absent, la question est utilisée telle quelle. Pour une recherche de qualité, fournir les expressions de principe, exceptions, textes et formulations contraires."
+                },
+                "juridictions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["cassation", "appel", "premiere_instance", "administratif"]
+                    },
+                    "default": ["cassation"],
+                    "description": "Corpus interrogés. Chaque couple requête/juridiction est paginé intégralement dans la limite déclarée."
+                },
+                "date_debut": {
+                    "type": "string",
+                    "description": "Date minimale AAAA-MM-JJ. Sans valeur, aucune borne ancienne n'est ajoutée : les arrêts de principe historiques restent couverts."
+                },
+                "date_fin": {
+                    "type": "string",
+                    "description": "Date maximale AAAA-MM-JJ. Sans valeur, aucune borne n'est ajoutée."
+                },
+                "max_results_per_query": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 500,
+                    "default": 500,
+                    "description": "Plafond par couple requête/juridiction. Toute troncature est inscrite dans le manifeste et le rapport."
+                },
+                "max_decisions": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2000,
+                    "default": 1000,
+                    "description": "Plafond global après déduplication."
+                },
+                "batch_target_tokens": {
+                    "type": "integer",
+                    "minimum": 5000,
+                    "maximum": 150000,
+                    "default": 60000,
+                    "description": "Volume estimé visé par lot de cartographie. Une décision plus longue reste entière dans son propre lot."
+                },
+                "batch_max_decisions": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "default": 30,
+                    "description": "Nombre maximal de décisions par lot, pour préserver la qualité d'un cartographe à bas coût."
+                },
+                "fetch_workers": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 8,
+                    "default": 4,
+                    "description": "Téléchargements de textes intégraux simultanés."
+                },
+                "output_dir": {
+                    "type": "string",
+                    "description": "Dossier racine de sortie. Défaut autonome : ~/.legifrance-mcp/research/."
+                }
+            },
+            "required": ["question"]
+        }
+    },
+    {
+        "name": "Validate_Research_Cards",
+        "description": "Valide le résultat de Build_Research_Corpus : exige une fiche par décision, rejette les identifiants inconnus ou dupliqués, confirme mécaniquement chaque citation dans le texte intégral et produit une matrice exhaustive ainsi qu'un rapport de couverture/tokens. Aucun LLM n'intervient dans cette validation.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "folder": {
+                    "type": "string",
+                    "description": "Dossier absolu rendu par Build_Research_Corpus."
+                },
+                "cards_file": {
+                    "type": "string",
+                    "description": "Fichier JSONL unique à valider. Si absent, tous les fichiers cards/*.jsonl du dossier sont fusionnés."
+                },
+                "usage": {
+                    "type": "object",
+                    "description": "Usage exact facultatif rendu par le fournisseur. Sans lui, le rapport marque clairement les tokens comme estimés.",
+                    "properties": {
+                        "input_tokens": {"type": "integer", "minimum": 0},
+                        "output_tokens": {"type": "integer", "minimum": 0},
+                        "reasoning_tokens": {"type": "integer", "minimum": 0},
+                        "cache_read_input_tokens": {"type": "integer", "minimum": 0},
+                        "cache_creation_input_tokens": {"type": "integer", "minimum": 0}
+                    },
+                    "additionalProperties": False
+                }
+            },
+            "required": ["folder"]
         }
     },
 
