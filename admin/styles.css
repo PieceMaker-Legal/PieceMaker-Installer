@@ -236,20 +236,22 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .originals-actions .button { width: 100%; font-size: .7rem; }
 .originals-progress { margin: 0 12px 8px; border-radius: 7px; background: #ddf4ff; padding: 6px 8px; color: #0a3069; font-size: .62rem; line-height: 1.4; }
 .originals-progress.error { background: #ffebe9; color: #82071e; }
-.original-mosaic { display: grid; min-width: 0; min-height: 0; flex: 1; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; overflow: auto; }
+.original-mosaic { display: grid; min-width: 0; min-height: 0; flex: 1; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; overflow: auto; }
 .original-mosaic > .history-empty { grid-column: 1 / -1; }
 .original-mosaic-column { display: flex; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; border: 1px solid #d8dee4; border-radius: 11px; background: #f6f8fa; }
-.original-mosaic-column.accessible { border-top: 4px solid #218bff; }
 .original-mosaic-column.protected { border-top: 4px solid #1a7f37; }
+.original-mosaic-column.accessible { border-top: 4px solid #218bff; }
+.original-mosaic-column.resource { border-top: 4px solid #bf8700; }
 .original-mosaic-heading { display: flex; flex: 0 0 auto; min-height: 43px; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid #d8dee4; padding: 8px 11px; background: #fff; }
 .original-mosaic-heading strong { overflow: hidden; font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
 .original-card-grid { display: grid; min-height: 0; flex: 1; align-content: start; grid-template-columns: repeat(auto-fill, minmax(205px, 1fr)); gap: 9px; overflow: auto; padding: 10px; }
 .original-card { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; border: 1px solid #d8dee4; border-radius: 9px; background: #fff; padding: 10px; box-shadow: 0 1px 3px rgba(31, 35, 40, .05); cursor: pointer; }
-.original-card.accessible { border-left: 3px solid #54aeff; }
 .original-card.protected { border-left: 3px solid #4ac26b; }
+.original-card.accessible { border-left: 3px solid #54aeff; }
+.original-card.resource { border-left: 3px solid #d4a72c; }
 .original-card:hover { border-color: #8c959f; box-shadow: 0 3px 10px rgba(31, 35, 40, .09); }
 .original-card.selected { border-color: #0969da; background: #f0f6ff; box-shadow: 0 0 0 2px rgba(9, 105, 218, .12); }
-.original-card-controls { display: flex; grid-column: 1 / -1; align-items: center; justify-content: space-between; gap: 8px; }
+.original-card-controls { display: flex; flex-wrap: wrap; grid-column: 1 / -1; align-items: center; justify-content: space-between; gap: 8px; }
 .original-card-controls input[type="checkbox"] { width: 15px; height: 15px; min-height: 0; margin: 0; cursor: pointer; }
 .original-row { display: grid; align-items: start; gap: 8px; grid-template-columns: 15px minmax(0, 1fr) auto; border-top: 1px solid #eaeef2; padding: 9px 10px 9px 12px; background: #fff; }
 .original-row input[type="checkbox"] { margin-top: 2px; cursor: pointer; }
@@ -269,11 +271,16 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .protection-badge.converted { background: #ddf4ff; color: #0a3069; }
 .protection-badge.scanned { background: #dafbe1; color: #116329; }
 /* Le bouclier est un bouton : il bascule la protection, il ne la décrit pas. */
-.shield-toggle { flex: 0 0 auto; border: 1px solid transparent; border-radius: 9px; padding: 3px 7px; font-size: .58rem; font-weight: 800; cursor: pointer; }
-.shield-toggle:disabled { cursor: not-allowed; opacity: .55; }
-.shield-toggle.on { border-color: #b4dfc0; background: #dafbe1; color: #116329; }
-.shield-toggle.off { border-color: #d8dee4; background: #f6f8fa; color: #6e7781; }
-.shield-toggle:hover:not(:disabled) { filter: brightness(.96); }
+/* Sélecteur d'accès à trois positions (coffre-fort / travail / ressource) :
+   contrôle segmenté prenant toute la largeur de la carte, sur sa propre ligne. */
+.state-selector { display: flex; flex: 1 1 100%; min-width: 0; border: 1px solid #d8dee4; border-radius: 9px; overflow: hidden; }
+.state-option { flex: 1 1 0; min-width: 0; border: 0; border-left: 1px solid #d8dee4; background: #f6f8fa; padding: 4px 4px; color: #6e7781; font-size: .58rem; font-weight: 800; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; cursor: pointer; }
+.state-option:first-child { border-left: 0; }
+.state-option:hover:not(:disabled) { filter: brightness(.96); }
+.state-option.active { cursor: default; }
+.state-option.active.protected { background: #dafbe1; color: #116329; }
+.state-option.active.accessible { background: #ddf4ff; color: #0a3069; }
+.state-option.active.resource { background: #fff1cc; color: #7d4e00; }
 .originals-scope { display: inline-flex; overflow: hidden; border: 1px solid #d8dee4; border-radius: 7px; }
 .scope-button { border: 0; padding: 3px 9px; background: #f6f8fa; color: #57606a; cursor: pointer; font-size: .6rem; font-weight: 700; }
 .scope-button + .scope-button { border-left: 1px solid #d8dee4; }
@@ -971,6 +978,11 @@ html[data-theme="dark"] .diff-segment.header { color: var(--muted); }
 html[data-theme="dark"] .diff-stats { color: #7ee787; }
 html[data-theme="dark"] :is(.original-mosaic-column, .original-card, .procedure-summary, .procedure-party-column, .procedure-party-item) { border-color: var(--line); }
 html[data-theme="dark"] .original-card:hover { border-color: #768390; }
+html[data-theme="dark"] :is(.state-selector, .state-option) { border-color: var(--line); }
+html[data-theme="dark"] .state-option { background: var(--dark-surface-muted); color: var(--muted); }
+html[data-theme="dark"] .state-option.active.protected { background: #132b1d; color: #4ac26b; }
+html[data-theme="dark"] .state-option.active.accessible { background: var(--dark-blue-muted); color: #79c0ff; }
+html[data-theme="dark"] .state-option.active.resource { background: #2b2411; color: #e3b341; }
 html[data-theme="dark"] :is(.procedure-summary, .procedure-party-item) { background: var(--dark-surface); color: var(--ink); }
 html[data-theme="dark"] .procedure-summary-side.client { background: #132b1d; }
 html[data-theme="dark"] .procedure-summary-side.adverse { background: #321b20; }
