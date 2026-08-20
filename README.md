@@ -37,7 +37,7 @@ l'installateur interactif. Variables disponibles :
 | git | — | amorçage |
 | Node.js | 18+ | installateur, serveur |
 | Python | 3.10+ | anonymisation, conversion |
-| [Claude Code](https://claude.com/claude-code) | — | hooks, plugin et Assistant Bot Telegram |
+| [Claude Code](https://claude.com/claude-code) | — | hooks, skills, agents et Assistant Bot Telegram |
 
 Prévoir une vingtaine de minutes et environ 2,5 Go : dépendances npm,
 environnement virtuel Python et modèles GLiNER2 + spaCy.
@@ -58,7 +58,8 @@ environnement virtuel Python et modèles GLiNER2 + spaCy.
 | 06 | Hooks Claude Code | garde-fous PII et suivi de facturation |
 | 07 | Serveur MCP Légifrance | clés PISTE, validées en ligne |
 | 08 | Telegram | Assistant Bot à la racine de PieceMaker + daemon de surveillance nommable, sans LLM |
-| 09 | Plugin Claude Code PieceMaker | marketplace, skills et agents |
+| 09a | Claude Code PieceMaker | skills, agents et hooks enregistrés directement dans `~/.claude` |
+| 09b | Codex CLI PieceMaker | skills enregistrés directement dans `~/.codex/skills` |
 
 Les secrets Telegram vont dans `~/.claude/channels/` en 0600. Sur macOS, le
 daemon est installé comme service utilisateur dans `~/Library/LaunchAgents/`.
@@ -120,25 +121,23 @@ node installer/bin/piecemaker.mjs --dry-run --all
 `--dry-run` affiche les actions sans rien écrire, `--yes` accepte les valeurs
 par défaut sans poser de question.
 
-## Plugin Claude Code
+## Claude Code et Codex CLI
 
-Le dépôt est aussi un marketplace de plugin Claude Code. Sans passer par
-l'installateur :
+PieceMaker n'installe aucun manifest ni marketplace pour ses propres
+composants. Lorsque la CLI correspondante est présente, l'installateur lie les
+skills dans `~/.claude/skills` et `~/.codex/skills`, ainsi que les agents dans
+`~/.claude/agents`. Les hooks Claude sont fusionnés directement dans
+`~/.claude/settings.json`. Les fichiers personnels homonymes sont conservés.
 
-```
-/plugin marketplace add PieceMaker-Legal/PieceMaker-Installer
-/plugin install piecemaker@piecemaker
-```
-
-Il apporte les skills d'anonymisation, de conversion, de rédaction juridique
-et de tamponnage des pièces, deux agents dédiés, les hooks de garde-fou PII
-et le serveur MCP Légifrance. Voir
+Les composants comprennent les skills d'anonymisation, de conversion, de
+rédaction juridique et de tamponnage des pièces, deux agents Claude dédiés et
+les hooks de garde-fou PII. Voir
 [`piecemaker-plugin/README.md`](./piecemaker-plugin/README.md).
 
 ## Structure
 
 - `installer/` — installateur terminal (aucune dépendance)
-- `piecemaker-plugin/` — plugin Claude Code : skills, agents, hooks, MCP
+- `piecemaker-plugin/` — composants partagés : skills, agents, hooks, MCP
 - `orchestrator/` — Assistant Bot Telegram et daemon de surveillance sans LLM
 - `websocket-server/` — serveur HTTPS/WebSocket, API REST et scripts Python
 - `admin/` — interface web locale : Telegram, paramètres, éditeur visuel des skills/agents et aperçus de facturation

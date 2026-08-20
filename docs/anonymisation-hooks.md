@@ -251,49 +251,24 @@ jamais afficher son contenu, ni le résultat complet d'un hook.
 
 ## Après avoir modifié un hook
 
-Il faut distinguer les deux emplacements d'exécution. Le hook central est copié
-depuis `websocket-server/global-hooks/` dans `~/.claude/hooks/` au démarrage du
-serveur : redémarrer le serveur le réinstalle et le recâble si nécessaire. Les
-hooks déclarés par le plugin tournent depuis la **copie installée du plugin** :
+Il faut distinguer deux modes d'enregistrement, tous deux sans manifest
+PieceMaker. Le hook central est copié depuis `websocket-server/global-hooks/`
+dans `~/.claude/hooks/` au démarrage du serveur. Les autres hooks sont appelés
+directement depuis `piecemaker-plugin/scripts/` par les entrées fusionnées dans
+`~/.claude/settings.json` par `claude-hooks.cjs`.
 
-```
-~/.claude/plugins/cache/piecemaker/piecemaker/<version>/
-```
-
-C'est une copie figée du marketplace GitHub
-(`PieceMaker-Legal/PieceMaker-Installer`). Une modification dans
-`piecemaker-plugin/` ne change donc rien à une session tant qu'elle n'est pas
-publiée puis récupérée :
-
-```bash
-git push
-claude plugin marketplace update piecemaker
-claude plugin update piecemaker
-```
-
-Vérifier ensuite que la copie installée porte les scripts référencés par
-`hooks.json` (et leurs bibliothèques) :
-
-```bash
-ls ~/.claude/plugins/cache/piecemaker/piecemaker/*/scripts/
-# protect-originals.mjs  track-legifrance-reads.mjs  commit-track.mjs
-# compile-recherche.mjs  billing-track.mjs  lib/{hook-io.mjs,mapping.cjs,protection.cjs}
-```
-
-Une copie qui contient encore `pre-anonymize.mjs` ou `post-anonymize.mjs` est
-antérieure au remplacement des hooks de scan : la frontière décrite ici n'y est
-pas en place.
-
-Les **skills et agents** échappent à cette contrainte : `claude-assets.cjs` les
-lie par lien symbolique dans `~/.claude/`, une édition depuis `/admin/` y est
-donc active immédiatement. Le hook central, lui, dépend du redémarrage du
-serveur pour recopier sa source.
+Une modification d'un script du dépôt est donc utilisée directement, sans
+publication ni cache intermédiaire. Après l'ajout ou le retrait d'un événement
+dans `hooks/hooks.json`, relancer l'étape 06, `piecemaker update` ou le serveur
+pour réconcilier `settings.json`, puis ouvrir une nouvelle session Claude Code.
+Le hook central, lui, dépend du redémarrage du serveur pour recopier sa source.
 
 ## Où vit quoi
 
 | Fichier | Contenu |
 | --- | --- |
-| `piecemaker-plugin/hooks/hooks.json` | Câblage événement → script |
+| `piecemaker-plugin/hooks/hooks.json` | Source du câblage événement → script |
+| `websocket-server/claude-hooks.cjs` | Fusion directe des hooks dans `~/.claude/settings.json` |
 | `websocket-server/global-hooks/piecemaker-central-anonymize.mjs` | Hook global d'anonymisation |
 | `websocket-server/central-hook-install.cjs` | Copie et câblage du hook global, synchronisation du central |
 | `piecemaker-plugin/scripts/*.mjs` | Hooks du plugin et scripts autonomes d'auto-test |
@@ -303,9 +278,8 @@ serveur pour recopier sa source.
 | `websocket-server/originals-pipeline.cjs` | Construction du mapping (côté administration) |
 | `installer/assets/claude-hooks/piecemaker-guard-secrets.mjs` | Garde global des fichiers secrets, distinct du plugin et du hook d'anonymisation |
 
-Le hook global ne dépend pas du cache du marketplace : l'installateur copie
-également son moteur de substitution vers `~/.piecemaker/lib/`. Les scripts du
-plugin, eux, ne peuvent requérir que depuis `piecemaker-plugin/scripts/lib/`
-— le plugin est distribué seul. Une logique serveur dont un hook a besoin
-*entre* dans le plugin et est ré-exportée par le module serveur, jamais
-l'inverse.
+Le hook global copie son moteur de substitution vers `~/.piecemaker/lib/`.
+Les autres scripts sont exécutés depuis le dépôt et requièrent leurs modules
+dans `piecemaker-plugin/scripts/lib/`. Une logique serveur dont un hook a besoin
+entre dans ce répertoire partagé et est ré-exportée par le module serveur,
+jamais l'inverse.

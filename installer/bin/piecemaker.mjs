@@ -23,11 +23,13 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { banner, title, log, write, blank, summary, spinner, badge, c } from '../lib/ui.mjs';
 import { select, confirm, multiSelect, pause, nonInteractive } from '../lib/prompt.mjs';
-import { findPython } from '../lib/platform.mjs';
+import { REPO_ROOT, commandExists, findPython } from '../lib/platform.mjs';
 import { loadConfig, readEnv, markStep, loadState, CONFIG_FILE } from '../lib/state.mjs';
 import {
   getServerStatus,
@@ -38,9 +40,12 @@ import {
   stopServer,
   checkForUpdate,
   updateRepository,
-  refreshClaudePlugin,
   depositRootClaudeMd,
 } from '../lib/service.mjs';
+
+const require = createRequire(import.meta.url);
+const { syncClaudeAssets } = require('../../websocket-server/claude-assets.cjs');
+const { installClaudeHooks } = require('../../websocket-server/claude-hooks.cjs');
 
 const STEPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'steps');
 const COMMANDS = new Set(['open', 'start', 'stop', 'status', 'logs', 'install', 'doctor', 'check', 'update']);
@@ -342,23 +347,20 @@ async function runOperationalCommand(command, knownUpdate = null) {
         log.warn('requirements.txt a changé : relancez « piecemaker install » puis l’étape 03 — Python & GLiNER.');
       }
 
-      // Le dépôt est à jour, mais le plugin que Claude Code charge est une copie
-      // figée et versionnée du marketplace : on la rafraîchit ici pour éviter le
-      // double « claude plugin marketplace update » + « claude plugin update »
-      // manuel — et, surtout, on VÉRIFIE que le cache installé correspond bien
-      // au dépôt après coup (une commande peut sortir en code 0 sans rien avoir
-      // recopié si la version du plugin n'a pas changé — voir
-      // installer/lib/plugin-refresh.mjs).
-      const spin = spinner('Rafraîchissement du plugin Claude Code...');
-      const plugin = refreshClaudePlugin();
-      if (plugin.alreadyUpToDate) {
-        spin.succeed(`Plugin Claude Code déjà à jour (version ${plugin.status.repoVersion}).`);
-      } else if (plugin.converged) {
-        spin.succeed(`Plugin Claude Code rafraîchi (version ${plugin.status.repoVersion}) — redémarrez votre session Claude Code pour charger la nouvelle version.`);
-      } else {
-        spin.stop();
-        log.warn(`Plugin Claude Code non rafraîchi (${plugin.reason}).`);
-        log.detail('Rattrapage manuel : « claude plugin marketplace update piecemaker » puis « claude plugin update piecemaker@piecemaker ».');
+      // Les composants PieceMaker sont découverts directement dans
+      // ~/.claude/{skills,agents}. Les liens symboliques suivent déjà le dépôt ;
+      // cet appel rafraîchit aussi le repli par copie sur les plateformes qui ne
+      // peuvent pas créer de liens.
+      if (commandExists('claude', ['--version'])) {
+        const claudeAssets = syncClaudeAssets(REPO_ROOT, os.homedir());
+        if (claudeAssets.conflicts.length) {
+          log.warn(`${claudeAssets.conflicts.length} skill(s)/agent(s) Claude personnel(s) homonyme(s) conservé(s).`);
+        } else {
+          log.ok(`${claudeAssets.registered} skill(s)/agent(s) PieceMaker synchronisé(s) pour Claude Code.`);
+        }
+        const claudeHooks = installClaudeHooks(REPO_ROOT, os.homedir());
+        if (!claudeHooks.ok) log.warn(`Hooks Claude Code non synchronisés (${claudeHooks.reason}).`);
+        else if (claudeHooks.changed) log.ok(`${claudeHooks.registered} hook(s) PieceMaker synchronisé(s) pour Claude Code.`);
       }
     } finally {
       if (previous.running) {

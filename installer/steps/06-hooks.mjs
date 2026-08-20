@@ -16,9 +16,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { log, spinner } from '../lib/ui.mjs';
 import { REPO_ROOT, HOME_DIR, runCapture, ensureDir } from '../lib/platform.mjs';
-import { loadConfig, updateConfig } from '../lib/state.mjs';
+import { updateConfig } from '../lib/state.mjs';
+
+const require = createRequire(import.meta.url);
+const { claudeHooksStatus, installClaudeHooks } = require('../../websocket-server/claude-hooks.cjs');
 
 export const meta = {
   id: '06-hooks',
@@ -86,6 +90,7 @@ export async function install(ctx) {
 
   if (ctx.dryRun) {
     log.info('[simulation] configuration anonymisation/facturation non écrite');
+    log.info('[simulation] hooks PieceMaker fusionnés directement dans ~/.claude/settings.json');
   } else {
     updateConfig({
       anonymization: anonymizationConfig,
@@ -212,6 +217,11 @@ export async function install(ctx) {
     const failed = testResults.filter((r) => !r.ok).map((r) => r.label).join(', ');
     return { status: 'failed', note: `Échec de la vérification : ${failed}. Corrigez puis relancez cette étape.` };
   }
+  const registration = installClaudeHooks(REPO_ROOT, os.homedir());
+  if (!registration.ok) {
+    return { status: 'failed', note: registration.reason };
+  }
+  log.ok(`${registration.registered} hook(s) PieceMaker ${registration.changed ? 'enregistré(s)' : 'déjà enregistré(s)'} directement dans ~/.claude/settings.json.`);
   return { status: 'done', note: '' };
 }
 
@@ -221,12 +231,13 @@ export async function check(ctx) {
   const dirsExist = fs.existsSync(BILLING_DIR) && fs.existsSync(SYNTHESE_DIR);
   const cfg = ctx.config || {};
   const configOk = Boolean(cfg.anonymization && cfg.commits && cfg.billing);
+  const hooksRegistered = claudeHooksStatus(REPO_ROOT, os.homedir()).ok;
 
   if (!scriptsExist || !hooksJsonExists) {
     return { status: 'failed', note: 'Fichiers du plugin manquants (scripts ou hooks.json) — réinstallez piecemaker-plugin/.' };
   }
-  if (!dirsExist || !configOk) {
-    return { status: 'partial', note: 'Scripts présents mais configuration ou répertoires de facturation incomplets — relancez cette étape.' };
+  if (!dirsExist || !configOk || !hooksRegistered) {
+    return { status: 'partial', note: 'Scripts présents mais configuration, enregistrement Claude ou répertoires de facturation incomplets — relancez cette étape.' };
   }
   return { status: 'done', note: '' };
 }

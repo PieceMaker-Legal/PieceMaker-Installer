@@ -9,6 +9,7 @@ const { Ollama } = require('ollama');
 const { z } = require('zod');
 const { createAdminRouter, isLocalOrigin } = require('./admin-routes.cjs');
 const { syncClaudeAssets } = require('./claude-assets.cjs');
+const { installClaudeHooks } = require('./claude-hooks.cjs');
 const { convertToPdf, findSoffice } = require('./lib/office-to-pdf.cjs');
 const {
   detectStampImage,
@@ -249,15 +250,16 @@ app.use('/api/admin', createAdminRouter({
   }),
 }));
 
-// Les skills et agents du dépôt sont republiés dans ~/.claude au démarrage :
-// Claude Code les découvre à l'ouverture d'une session, sans attendre une
-// publication du marketplace (voir claude-assets.cjs).
+// Les composants du dépôt sont enregistrés directement dans ~/.claude au
+// démarrage, sans manifest ni marketplace PieceMaker.
 try {
   const sync = syncClaudeAssets(REPO_ROOT);
   console.log(`Claude Code : ${sync.registered} skill(s)/agent(s) enregistré(s)`
     + (sync.conflicts.length ? `, ${sync.conflicts.length} conflit(s) de nom dans ~/.claude` : ''));
+  const hooks = installClaudeHooks(REPO_ROOT, os.homedir());
+  if (!hooks.ok) console.warn('Enregistrement des hooks auprès de Claude Code impossible :', hooks.reason);
 } catch (error) {
-  console.warn('Enregistrement des skills/agents auprès de Claude Code impossible :', error.message);
+  console.warn('Enregistrement des composants auprès de Claude Code impossible :', error.message);
 }
 
 // Hook central global : installé dans ~/.claude et câblé dans settings.json, il

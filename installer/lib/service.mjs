@@ -11,8 +11,6 @@ import https from 'node:https';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
-import os from 'node:os';
-
 import {
   HOME_DIR,
   IS_MAC,
@@ -25,12 +23,6 @@ import {
   runCapture,
 } from './platform.mjs';
 import { loadConfig, readEnv } from './state.mjs';
-import {
-  MARKETPLACE_NAME as CLAUDE_MARKETPLACE,
-  PLUGIN_NAME as CLAUDE_PLUGIN,
-  REFRESH_REASON_LABEL,
-  pluginRefreshStatus,
-} from './plugin-refresh.mjs';
 
 export const PID_FILE = path.join(HOME_DIR, 'server.pid');
 export const LOG_FILE = path.join(HOME_DIR, 'server.log');
@@ -371,85 +363,6 @@ export function restartTelegramDaemon() {
 
 function gitOut(args, label) {
   return runOrThrow('git', args, label).stdout;
-}
-
-/**
- * Claude Code plugin coordinates — kept in sync with the marketplace/plugin
- * names declared in installer/steps/09-claude-assets.mjs.
- */
-const CLAUDE_PLUGIN_SPEC = `${CLAUDE_PLUGIN}@${CLAUDE_MARKETPLACE}`;
-const PLUGIN_DIR = path.join(REPO_ROOT, 'piecemaker-plugin');
-
-/**
- * Refresh the installed Claude Code plugin after a repository update, and
- * VERIFY it actually converged rather than trusting the commands' exit codes.
- *
- * `piecemaker update` moves the checked-out repo to origin, but the plugin
- * Claude Code actually loads is a frozen, version-keyed cache copy under
- * ~/.claude/plugins/cache/. It only moves when the marketplace clone is
- * pulled (`plugin marketplace update`) and the plugin reinstalled from it
- * (`plugin update`) — the two commands a user otherwise runs by hand. Both
- * exit 0 whether or not they actually changed anything: if the plugin's
- * declared version didn't move, `plugin update` can no-op and leave the old
- * cache directory's bytes in place even though the repo's hook/script content
- * changed — exactly the failure mode documented in
- * `installer/lib/plugin-refresh.mjs` that shipped stale anonymisation hooks.
- * So this always re-checks `pluginRefreshStatus()` after running the
- * commands and reports `converged: false` with an explanatory reason when the
- * cache still doesn't match the repo (most commonly: the change hasn't been
- * pushed yet, so the GitHub-sourced marketplace clone is itself still behind).
- *
- * Idempotent: already-converged is detected up front and no command runs at
- * all. Best-effort by design: a missing `claude` CLI or a failing subcommand
- * is reported, never thrown, so it can't turn a successful repo update into a
- * failed command. A session restart is still required for Claude Code to load
- * a newly-converged revision — that part is on the user.
- */
-export function refreshClaudePlugin({ pluginDir = PLUGIN_DIR, userHome = os.homedir() } = {}) {
-  if (!commandExists('claude', ['--version'])) {
-    return { ok: false, refreshed: false, converged: false, alreadyUpToDate: false, reason: 'CLI « claude » introuvable' };
-  }
-
-  const before = pluginRefreshStatus({ pluginDir, userHome });
-  if (before.upToDate) {
-    return { ok: true, refreshed: false, converged: true, alreadyUpToDate: true, status: before, reason: '' };
-  }
-
-  const market = runCapture('claude', ['plugin', 'marketplace', 'update', CLAUDE_MARKETPLACE]);
-  if (market.code !== 0) {
-    return {
-      ok: false,
-      refreshed: false,
-      converged: false,
-      alreadyUpToDate: false,
-      status: before,
-      reason: market.stderr || market.stdout || `« plugin marketplace update » a échoué (code ${market.code})`,
-    };
-  }
-  const plugin = runCapture('claude', ['plugin', 'update', CLAUDE_PLUGIN_SPEC]);
-  if (plugin.code !== 0) {
-    return {
-      ok: false,
-      refreshed: false,
-      converged: false,
-      alreadyUpToDate: false,
-      status: before,
-      reason: plugin.stderr || plugin.stdout || `« plugin update » a échoué (code ${plugin.code})`,
-    };
-  }
-
-  const after = pluginRefreshStatus({ pluginDir, userHome });
-  if (after.upToDate) {
-    return { ok: true, refreshed: true, converged: true, alreadyUpToDate: false, status: after, reason: '' };
-  }
-  return {
-    ok: true,
-    refreshed: false,
-    converged: false,
-    alreadyUpToDate: false,
-    status: after,
-    reason: `commandes exécutées mais le cache Claude Code reste périmé (${REFRESH_REASON_LABEL[after.reason] || after.reason}) — le marketplace distant n'a peut-être pas encore cette révision : poussez le dépôt, ou incrémentez la version du plugin, puis relancez « piecemaker update ».`,
-  };
 }
 
 /**

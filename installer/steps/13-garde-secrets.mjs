@@ -11,13 +11,9 @@
  * piecemaker-guard-secrets.mjs` for the hook itself (a byte-for-byte copy of
  * the one that was running standalone in ~/.claude/hooks).
  *
- * Deliberately NOT part of the piecemaker plugin/marketplace flow (step
- * 09-claude-assets.mjs): a plugin hook only fires inside a registered legal
- * case, and the plugin's own cache can go stale (see
- * installer/lib/plugin-refresh.mjs) — neither acceptable for a guard whose
- * whole job is to always deny reading one specific general file, everywhere.
- * It is instead wired directly into ~/.claude/settings.json, exactly as a
- * human would do it by hand.
+ * Comme les autres hooks PieceMaker, il est câblé directement dans
+ * ~/.claude/settings.json, sans manifest ni cache de plugin. Il reste séparé
+ * car il protège un fichier global précis et maintient sa propre liste noire.
  *
  * The .env this seeds the blocklist with is resolved the same way the rest
  * of the installer already resolves "the server's .env" — `ENV_FILE` from
@@ -85,7 +81,7 @@ export async function install(ctx) {
   if (settings.denyAdded.length) log.ok(`Règle(s) permissions.deny ajoutée(s) : ${settings.denyAdded.join(', ')}`);
   else log.ok('Règle(s) permissions.deny déjà présente(s).');
 
-  log.detail("Ce garde-fou n'est pas géré par le plugin/marketplace piecemaker : il reste actif même si le plugin est désactivé ou son cache périmé.");
+  log.detail("Ce garde-fou est enregistré directement dans Claude Code, sans dépendre d'un plugin PieceMaker.");
 
   return { status: 'done', note: '' };
 }

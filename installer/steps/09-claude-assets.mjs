@@ -1,186 +1,57 @@
 /**
- * Step 09 — PieceMaker's own Claude Code plugin (marketplace + install) and
- * the root CLAUDE.md.
+ * Étape 09 — composants PieceMaker pour Claude Code.
  *
- * The plugin (piecemaker-plugin/) bundles skills/ and agents/ via Claude
- * Code's default component auto-discovery — installing it is what delivers
- * requirement #7 ("root CLAUDE.md + skills + agents"). CLAUDE.md itself is
- * NOT a plugin component (plugin.json only supports skills/commands/agents/
- * hooks/mcpServers/outputStyles). It is also NOT git-tracked: the repo-root
- * CLAUDE.md is gitignored (it holds architecture notes in a dev clone), so
- * for the user's runtime clone reconcileClaudeMd() deposits the user persona
- * from the versioned gabarit installer/templates/root-CLAUDE.md.
- *
- * Subcommands verified live against `claude` 2.1.222 (`claude plugin --help`,
- * `claude plugin marketplace --help`, `claude plugin install --help`,
- * `claude plugin marketplace add --help`):
- *   claude plugin marketplace add <source>   (URL, path, or GitHub "owner/repo")
- *   claude plugin marketplace list --json
- *   claude plugin install <plugin>[@marketplace]
- *   claude plugin list --json
- *
- * Marketplace source: this step tries the published GitHub source first
- * (PieceMaker-Legal/PieceMaker-Installer, matching the manual
- * `/plugin marketplace add PieceMaker-Legal/PieceMaker-Installer` documented
- * for end users, and the only source Claude Code's background refresher
- * polls for the "auto-update on session open" behaviour). If that fails
- * (repo not pushed yet, offline, private repo without credentials) it falls
- * back to registering the local working copy (REPO_ROOT) as a path-based
- * marketplace, which works but does not get background auto-refresh — see
- * piecemaker-plugin/README.md for the caveat.
- *
- * Cache convergence: `claude plugin update` exits 0 whether or not it
- * actually recopied anything — the installed cache directory is keyed by the
- * version string in piecemaker-plugin/.claude-plugin/plugin.json, so an edit
- * without a version bump can leave it silently stale. `ensurePlugin()` below
- * never trusts the exit code alone: it calls `pluginRefreshStatus()`
- * (installer/lib/plugin-refresh.mjs) before running anything (skipping the
- * command entirely when already converged — this step is idempotent) and
- * again afterward, to confirm the cache's content fingerprint actually
- * matches the repo. `check()` reports the same drift as a `partial` result so
- * `piecemaker doctor` surfaces it without re-running the install.
+ * Aucun manifest ni marketplace PieceMaker n'est requis : les composants
+ * présents dans `piecemaker-plugin/{skills,agents,hooks}` sont enregistrés
+ * directement dans `~/.claude`, que Claude Code découvre à chaque session.
  */
 
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { log, spinner } from '../lib/ui.mjs';
-import { REPO_ROOT, commandExists, run, runCapture } from '../lib/platform.mjs';
-import { MARKETPLACE_NAME, PLUGIN_NAME, REFRESH_REASON_LABEL, pluginRefreshStatus } from '../lib/plugin-refresh.mjs';
-import { depositRootClaudeMd } from '../lib/service.mjs';
 import { createRequire } from 'node:module';
+
+import { log } from '../lib/ui.mjs';
+import { REPO_ROOT, commandExists } from '../lib/platform.mjs';
+import { depositRootClaudeMd } from '../lib/service.mjs';
 
 const require = createRequire(import.meta.url);
 const { claudeAssetStatus, repositoryAssets, syncClaudeAssets } = require('../../websocket-server/claude-assets.cjs');
+const { claudeHooksStatus, installClaudeHooks } = require('../../websocket-server/claude-hooks.cjs');
 
 export const meta = {
   id: '09-claude-assets',
-  label: 'Plugin Claude Code PieceMaker',
-  description: 'Enregistre le marketplace piecemaker, installe le plugin (skills + agents) et vérifie CLAUDE.md',
+  label: 'Composants Claude Code PieceMaker',
+  description: 'Enregistre localement les skills, agents et hooks PieceMaker lorsque Claude Code est présent',
 };
 
-const REPO_SLUG = 'PieceMaker-Legal/PieceMaker-Installer';
-// Marketplace/plugin coordinates come from plugin-refresh.mjs so the version
-// drift check below (ensurePlugin) and the eventual `claude plugin ...`
-// commands always agree on the same names.
-const PLUGIN_SPEC = `${PLUGIN_NAME}@${MARKETPLACE_NAME}`;
 const PLUGIN_DIR = path.join(REPO_ROOT, 'piecemaker-plugin');
 const CLAUDE_MD = path.join(REPO_ROOT, 'CLAUDE.md');
-// La persona utilisateur (« Avocat ») n'est plus versionnée à la racine : le
-// CLAUDE.md racine est désormais gitignoré et sert de repères d'architecture
-// dans le clone de développement. Pour le clone d'exécution (utilisateur), on
-// dépose la persona depuis ce gabarit versionné.
 const CLAUDE_MD_TEMPLATE = path.join(REPO_ROOT, 'installer', 'templates', 'root-CLAUDE.md');
 
-function parseJson(str) {
-  try {
-    return JSON.parse(str);
-  } catch {
-    return null;
-  }
-}
-
-function listMarketplaces() {
-  const result = runCapture('claude', ['plugin', 'marketplace', 'list', '--json']);
-  return result.code === 0 ? parseJson(result.stdout) : null;
-}
-
-function listPlugins() {
-  const result = runCapture('claude', ['plugin', 'list', '--json']);
-  return result.code === 0 ? parseJson(result.stdout) : null;
-}
-
-function isPluginInstalled(plugins) {
-  return Array.isArray(plugins) && plugins.some((p) => p.id === PLUGIN_SPEC && p.enabled !== false);
-}
-
-async function ensureMarketplace() {
-  const marketplaces = listMarketplaces();
-  if (Array.isArray(marketplaces) && marketplaces.some((m) => m.name === MARKETPLACE_NAME)) {
-    const spin = spinner(`Actualisation du marketplace "${MARKETPLACE_NAME}"...`);
-    const code = await run('claude', ['plugin', 'marketplace', 'update', MARKETPLACE_NAME]);
-    if (code === 0) spin.succeed(`Marketplace "${MARKETPLACE_NAME}" actualisé.`);
-    else spin.fail('Actualisation impossible — la copie déjà enregistrée sera utilisée.');
-    return { ok: true };
-  }
-
-  let spin = spinner(`Enregistrement du marketplace depuis GitHub (${REPO_SLUG})...`);
-  let code = await run('claude', ['plugin', 'marketplace', 'add', REPO_SLUG]);
-  if (code === 0) {
-    spin.succeed('Marketplace enregistré depuis GitHub — mises à jour automatiques actives.');
-    return { ok: true, source: 'github' };
-  }
-  spin.fail('Échec depuis GitHub (dépôt non publié, privé sans accès, ou hors ligne).');
-
-  spin = spinner(`Repli : enregistrement depuis la copie locale (${REPO_ROOT})...`);
-  code = await run('claude', ['plugin', 'marketplace', 'add', REPO_ROOT]);
-  if (code === 0) {
-    spin.succeed('Marketplace enregistré depuis la copie locale du dépôt.');
-    log.detail('Source locale : pas de rafraîchissement automatique en arrière-plan (voir piecemaker-plugin/README.md).');
-    return { ok: true, source: 'local' };
-  }
-  spin.fail('Échec de l\'enregistrement du marketplace (GitHub et copie locale).');
-  return { ok: false };
+function dependencies(overrides = {}) {
+  return {
+    commandExists,
+    existsSync: fs.existsSync,
+    userHome: os.homedir(),
+    log,
+    claudeAssetStatus,
+    repositoryAssets,
+    syncClaudeAssets,
+    claudeHooksStatus,
+    installClaudeHooks,
+    depositRootClaudeMd,
+    ...overrides,
+  };
 }
 
 /**
- * Install or refresh the plugin, then VERIFY the installed cache actually
- * matches the repo instead of trusting `claude plugin update`'s exit code.
- *
- * That command exits 0 whether or not it recopied anything: when the plugin's
- * declared version hasn't moved it can no-op, leaving stale hook/script bytes
- * in the version-keyed cache directory even though the repo's content
- * changed — the exact failure mode that shipped a broken anonymisation hook
- * (see `installer/lib/plugin-refresh.mjs` and the auto-memory "Hooks inertes
- * si plugin cache périmé"). So every call here re-checks `pluginRefreshStatus`
- * after running a command and reports drift explicitly. Idempotent: an
- * already-converged install skips `claude plugin update` entirely.
+ * Dépose la persona utilisateur si le CLAUDE.md racine est absent. Un fichier
+ * existant n'est jamais remplacé, afin de préserver les repères d'un clone de
+ * développement.
  */
-async function ensurePlugin() {
-  const plugins = listPlugins();
-  if (!isPluginInstalled(plugins)) {
-    const spin = spinner(`Installation du plugin (${PLUGIN_SPEC})...`);
-    const code = await run('claude', ['plugin', 'install', PLUGIN_SPEC]);
-    if (code === 0) {
-      spin.succeed('Plugin installé (skills + agents disponibles).');
-      return true;
-    }
-    spin.fail('Échec de l\'installation du plugin.');
-    return false;
-  }
-
-  const before = pluginRefreshStatus({ pluginDir: PLUGIN_DIR });
-  if (before.upToDate) {
-    log.ok(`Plugin PieceMaker déjà à jour (version ${before.repoVersion}).`);
-    return true;
-  }
-
-  const spin = spinner(`Mise à jour du plugin (${PLUGIN_SPEC})... [${REFRESH_REASON_LABEL[before.reason] || before.reason}]`);
-  const code = await run('claude', ['plugin', 'update', PLUGIN_SPEC]);
-  if (code !== 0) {
-    spin.fail('Mise à jour impossible — la version déjà installée reste active.');
-    return false;
-  }
-
-  const after = pluginRefreshStatus({ pluginDir: PLUGIN_DIR });
-  if (after.upToDate) {
-    spin.succeed(`Plugin PieceMaker rafraîchi et à jour (version ${after.repoVersion}) — redémarrage de session requis.`);
-    return true;
-  }
-  spin.stop();
-  log.warn(`Plugin Claude Code toujours périmé après « claude plugin update » (${REFRESH_REASON_LABEL[after.reason] || after.reason}).`);
-  log.detail('Le marketplace distant (GitHub) n\'a peut-être pas encore cette révision : poussez le dépôt, ou incrémentez la version du plugin, puis relancez cette étape.');
-  return false;
-}
-
-/**
- * CLAUDE.md racine — persona utilisateur déposée depuis le gabarit versionné,
- * via depositRootClaudeMd() (installer/lib/service.mjs), source unique partagée
- * avec `piecemaker update`. Absent → on écrit la persona ; présent → jamais
- * écrasé (préserve aussi le CLAUDE.md d'architecture d'un clone de dev).
- */
-function reconcileClaudeMd() {
-  const result = depositRootClaudeMd();
+function reconcileClaudeMd(ops) {
+  const result = ops.depositRootClaudeMd();
   if (result.status === 'missing-template') {
     return { status: 'partial', note: `CLAUDE.md absent et gabarit introuvable (${CLAUDE_MD_TEMPLATE}).` };
   }
@@ -190,81 +61,79 @@ function reconcileClaudeMd() {
   return { status: 'done', note: '' };
 }
 
-export async function install(ctx) {
-  if (!commandExists('claude', ['--version'])) {
+export async function install(ctx, overrides = {}) {
+  const ops = dependencies(overrides);
+  if (!ops.existsSync(PLUGIN_DIR)) {
+    return { status: 'skipped', note: 'Dossier piecemaker-plugin absent.' };
+  }
+  if (!ops.commandExists('claude', ['--version'])) {
     return {
       status: 'skipped',
       note: 'CLI "claude" introuvable — installez Claude Code puis relancez cette étape.',
     };
   }
 
+  const assets = ops.repositoryAssets(REPO_ROOT);
+  if (!assets.length) {
+    return { status: 'skipped', note: 'Aucun skill ni agent PieceMaker à enregistrer dans Claude Code.' };
+  }
   if (ctx.dryRun) {
-    log.info(`[simulation] claude plugin marketplace add ${REPO_SLUG} (repli local : ${REPO_ROOT})`);
-    log.info(`[simulation] claude plugin install ${PLUGIN_SPEC}`);
-    log.info('[simulation] enregistrement des skills/agents locaux dans ~/.claude');
-    log.info('[simulation] dépôt de CLAUDE.md (racine) depuis le gabarit si absent');
+    ops.log.info(`[simulation] enregistrement de ${assets.length} skill(s)/agent(s) PieceMaker dans ~/.claude`);
+    ops.log.info('[simulation] fusion des hooks PieceMaker dans ~/.claude/settings.json');
+    ops.log.info('[simulation] dépôt de CLAUDE.md (racine) depuis le gabarit si absent');
     return { status: 'skipped', note: 'Mode simulation — aucune modification effectuée.' };
   }
 
-  const marketplace = await ensureMarketplace();
-  if (!marketplace.ok) {
-    return { status: 'failed', note: `Impossible d'enregistrer le marketplace "${MARKETPLACE_NAME}".` };
+  const result = ops.syncClaudeAssets(REPO_ROOT, ops.userHome);
+  ops.log.detail(`${result.registered} skill(s)/agent(s) PieceMaker enregistré(s) dans ~/.claude.`);
+  for (const conflict of result.conflicts) {
+    ops.log.warn(`« ${conflict.slug} » existe déjà dans ~/.claude et n'a pas été remplacé.`);
   }
-
-  const pluginOk = await ensurePlugin();
-  // Le plugin installé est une copie figée du marketplace : les skills et
-  // agents créés localement (administration web) ne s'y trouvent pas. On les
-  // enregistre donc aussi dans ~/.claude/{agents,skills}, que Claude Code
-  // découvre à chaque session (voir websocket-server/claude-assets.cjs).
-  const assets = syncClaudeAssets(REPO_ROOT);
-  log.detail(`${assets.registered} skill(s)/agent(s) local(aux) enregistré(s) dans ~/.claude.`);
-  for (const conflict of assets.conflicts) {
-    log.warn(`« ${conflict.slug} » existe déjà dans ~/.claude et n'a pas été remplacé.`);
+  const hooks = ops.installClaudeHooks(REPO_ROOT, ops.userHome);
+  if (!hooks.ok) {
+    return { status: 'partial', note: hooks.reason };
   }
-  const claudeMdResult = reconcileClaudeMd();
+  ops.log.detail(`${hooks.registered} hook(s) PieceMaker enregistré(s) directement dans ~/.claude/settings.json.`);
 
-  if (!pluginOk) {
+  const claudeMd = reconcileClaudeMd(ops);
+  if (claudeMd.status !== 'done') return claudeMd;
+  if (result.conflicts.length) {
     return {
-      status: 'failed',
-      note: `Marketplace enregistré mais le plugin (${PLUGIN_SPEC}) n'a pas pu être installé/rafraîchi à jour — voir les avertissements ci-dessus.`,
+      status: 'partial',
+      note: `${result.conflicts.length} skill(s)/agent(s) Claude personnel(s) homonyme(s) conservé(s).`,
     };
   }
-
-  if (claudeMdResult.status !== 'done') {
-    return { status: 'partial', note: claudeMdResult.note || 'CLAUDE.md nécessite une action manuelle.' };
-  }
-
-  return { status: 'done', note: '' };
+  return { status: 'done', note: 'Composants PieceMaker disponibles à la prochaine session Claude Code.' };
 }
 
-export async function check(ctx) {
-  if (!commandExists('claude', ['--version'])) {
+export async function check(_ctx, overrides = {}) {
+  const ops = dependencies(overrides);
+  if (!ops.existsSync(PLUGIN_DIR)) {
+    return { status: 'skipped', note: 'Dossier piecemaker-plugin absent.' };
+  }
+  if (!ops.commandExists('claude', ['--version'])) {
     return { status: 'skipped', note: 'CLI "claude" introuvable.' };
   }
 
-  const plugins = listPlugins();
-  const pluginInstalled = isPluginInstalled(plugins);
-  const claudeMdOk = fs.existsSync(CLAUDE_MD);
-  const unregistered = repositoryAssets(REPO_ROOT)
-    .filter((asset) => !['linked', 'copied'].includes(claudeAssetStatus(REPO_ROOT, os.homedir(), asset)?.state));
-  // Installed and present is not the same as up to date: the cache is keyed
-  // by version, so an edit without a version bump leaves it silently stale —
-  // see installer/lib/plugin-refresh.mjs.
-  const refresh = pluginRefreshStatus({ pluginDir: PLUGIN_DIR });
+  const unregistered = ops.repositoryAssets(REPO_ROOT)
+    .filter((asset) => !['linked', 'copied'].includes(
+      ops.claudeAssetStatus(REPO_ROOT, ops.userHome, asset)?.state,
+    ));
+  const claudeMdOk = ops.existsSync(CLAUDE_MD);
+  const hooksOk = ops.claudeHooksStatus(REPO_ROOT, ops.userHome).ok;
 
-  if (!pluginInstalled && !claudeMdOk) return { status: 'failed', note: 'Plugin non installé et CLAUDE.md absent.' };
-  if (!pluginInstalled) return { status: 'partial', note: 'CLAUDE.md présent, plugin non installé.' };
-  if (!claudeMdOk) return { status: 'partial', note: 'Plugin installé, CLAUDE.md absent.' };
-  if (!refresh.upToDate) {
+  if (!claudeMdOk && unregistered.length) {
     return {
       status: 'partial',
-      note: `Cache du plugin Claude Code périmé (${REFRESH_REASON_LABEL[refresh.reason] || refresh.reason}) — relancez cette étape.`,
+      note: `CLAUDE.md absent et ${unregistered.length} skill(s)/agent(s) non enregistré(s) dans ~/.claude.`,
     };
   }
+  if (!claudeMdOk) return { status: 'partial', note: 'CLAUDE.md absent.' };
+  if (!hooksOk) return { status: 'partial', note: 'Hooks PieceMaker non enregistrés dans ~/.claude/settings.json.' };
   if (unregistered.length) {
     return {
       status: 'partial',
-      note: `${unregistered.length} skill(s)/agent(s) local(aux) non enregistré(s) dans ~/.claude — relancez cette étape.`,
+      note: `${unregistered.length} skill(s)/agent(s) PieceMaker non enregistré(s) dans ~/.claude.`,
     };
   }
   return { status: 'done', note: '' };

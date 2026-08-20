@@ -556,25 +556,21 @@ test('applyPluginComponentSelection enregistre les composants cochés et retire 
   assert.equal(components.find((c) => c.path === agentPath).registered, false);
 });
 
-test('ensureClaudePluginActive installe (marketplace puis plugin) quand rien n’est encore installé', async (t) => {
+test('ensureClaudePluginActive enregistre directement les composants sans commande plugin', async (t) => {
   const data = pluginFixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
   const calls = [];
   const runCommand = (command, args) => {
     calls.push([command, ...args].join(' '));
-    if (args.includes('list') && args.includes('--json') && args.includes('marketplace')) return { ok: true, output: '[]' };
-    if (args.includes('list') && args.includes('--json')) return { ok: true, output: '[]' };
-    if (args.includes('add')) return { ok: true, output: 'ok' };
-    if (args.includes('install')) return { ok: true, output: 'ok' };
-    return { ok: false, output: 'inattendu' };
+    return { ok: args[0] === '--version', output: '2.1.0' };
   };
 
   const result = await ensureClaudePluginActive({ repoRoot: data.repo, userHome: data.home, runCommand });
   assert.equal(result.ok, true);
-  assert.equal(result.action, 'installed');
+  assert.equal(result.action, 'registered');
   assert.equal(result.installed, true);
-  assert.ok(calls.some((call) => call.includes('marketplace add')));
-  assert.ok(calls.some((call) => call.includes('plugin install')));
+  assert.equal(result.registered, 2);
+  assert.deepEqual(calls, ['claude --version']);
 });
 
 test('ensureClaudePluginActive rapporte l’échec sans lever quand le CLI claude est absent', async (t) => {
@@ -585,36 +581,25 @@ test('ensureClaudePluginActive rapporte l’échec sans lever quand le CLI claud
   const result = await ensureClaudePluginActive({ repoRoot: data.repo, userHome: data.home, runCommand });
   assert.equal(result.ok, false);
   assert.equal(result.installed, false);
-  assert.match(result.reason, /Échec/);
+  assert.match(result.reason, /introuvable/);
 });
 
-test('ensureClaudePluginActive délègue à refreshClaudePlugin quand le plugin est déjà installé', async (t) => {
+test('ensureClaudePluginActive conserve les conflits personnels et les signale', async (t) => {
   const data = pluginFixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
-  const runCommand = (command, args) => {
-    if (args.includes('list') && args.includes('--json')) {
-      return { ok: true, output: JSON.stringify([{ id: 'piecemaker@piecemaker', enabled: true, version: '1.0.0' }]) };
-    }
-    throw new Error(`commande inattendue en environnement de test : ${[command, ...args].join(' ')}`);
-  };
-  let refreshCalledWith = null;
-  const refreshInstalledPlugin = async (options) => {
-    refreshCalledWith = options;
-    return { ok: true, refreshed: false, alreadyUpToDate: true };
-  };
+  const conflict = { slug: 'redaction', state: 'conflict' };
+  const syncAssets = () => ({ registered: 1, conflicts: [conflict], assets: [conflict], pruned: [] });
 
   const result = await ensureClaudePluginActive({
     repoRoot: data.repo,
     userHome: data.home,
-    runCommand,
-    refreshInstalledPlugin,
+    runCommand: () => ({ ok: true, output: '2.1.0' }),
+    syncAssets,
   });
-  assert.equal(result.ok, true);
-  assert.equal(result.action, 'refresh');
+  assert.equal(result.ok, false);
+  assert.equal(result.action, 'registered');
   assert.equal(result.installed, true);
-  assert.equal(result.alreadyUpToDate, true);
-  assert.equal(refreshCalledWith.userHome, data.home);
-  assert.equal(refreshCalledWith.pluginDir, path.join(data.repo, 'piecemaker-plugin'));
+  assert.deepEqual(result.conflicts, [conflict]);
 });
 
 // ---------------------------------------------------------------------------

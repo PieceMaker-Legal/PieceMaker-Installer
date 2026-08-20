@@ -49,7 +49,8 @@ test('le bouton admin sélectionne un dossier existant et ne propose plus de le 
   assert.match(app, /openCreateCase'\)\.addEventListener\('click', selectAndRegisterCase\)/);
   assert.match(app, /body: '\{\}'/);
   assert.doesNotMatch(app, /createCaseFromForm|newCaseName/);
-  assert.match(routes, /'plugin', 'install', 'piecemaker@piecemaker', '--scope', 'project'/);
+  assert.doesNotMatch(routes, /'plugin', 'install', 'piecemaker@piecemaker'/);
+  assert.match(routes, /syncClaudeAssets\(repoRoot, userHome\)/);
 });
 
 test('les sélecteurs natifs n’autorisent que des dossiers existants', () => {
@@ -65,20 +66,25 @@ test('les sélecteurs natifs n’autorisent que des dossiers existants', () => {
   assert.deepEqual(registeredCaseFolders({ caseFolders: ['', 'chemin/relatif'] }), []);
 });
 
-test('un dossier extérieur est enregistré et reçoit PieceMaker au scope projet', async (t) => {
+test('un dossier extérieur est enregistré et réutilise les composants Claude globaux', async (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
-  const installedIn = [];
+  const installedFrom = [];
 
   const result = await registerLegalCase({
     folder: data.selected,
     configFile: path.join(data.home, 'config.json'),
     repoRoot: data.repo,
     homeDir: data.home,
-    projectPluginInstaller: async (folder) => { installedIn.push(folder); },
+    userHome: data.home,
+    claudeAssetsInstaller: async (repoRoot, userHome) => {
+      installedFrom.push([repoRoot, userHome]);
+      return { installed: true };
+    },
   });
 
-  assert.deepEqual(installedIn, [fs.realpathSync(data.selected)]);
+  assert.deepEqual(installedFrom, [[data.repo, data.home]]);
+  assert.equal(result.installed.claudeAssets, true);
   assert.match(result.folder.path, /^folder-[a-f0-9]{20}$/);
   assert.equal(result.folder.location, fs.realpathSync(data.selected));
   assert.equal(fs.readFileSync(path.join(data.selected, 'piece.pdf'), 'utf8'), 'original');

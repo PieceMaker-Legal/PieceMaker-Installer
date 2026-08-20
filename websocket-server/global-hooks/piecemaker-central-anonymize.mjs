@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Hook central global d'anonymisation — PAS un hook du plugin PieceMaker.
+ * Hook central global d'anonymisation — indépendant des autres hooks PieceMaker.
  *
  * Installé de façon autonome dans `~/.claude/hooks/` et câblé directement dans
  * `~/.claude/settings.json`. Contrairement aux hooks du plugin (scopés à un

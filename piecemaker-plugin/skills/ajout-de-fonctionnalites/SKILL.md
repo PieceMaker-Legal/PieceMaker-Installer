@@ -5,10 +5,9 @@ description: À utiliser quand l'utilisateur veut ajouter ou modifier ses propre
 
 # Ajouter ses propres éléments (persistants aux mises à jour)
 
-PieceMaker évolue par mises à jour (`git pull` sur le dépôt, ou
-`claude plugin update` pour le plugin installé). Ces mises à jour
-remplacent le contenu fourni par PieceMaker — mais jamais ce que l'avocat a
-ajouté lui-même **en dehors** du dépôt et de la copie figée du plugin. Cette
+PieceMaker évolue par mises à jour du dépôt. Ces mises à jour remplacent le
+contenu fourni par PieceMaker — mais jamais ce que l'avocat a ajouté lui-même
+**en dehors** du dépôt. Cette
 skill sert de guide pour ranger un ajout personnel au bon endroit.
 
 ## Où vivent les éléments personnels, et pourquoi ils survivent
@@ -20,9 +19,8 @@ skill sert de guide pour ranger un ajout personnel au bon endroit.
 | Gabarit personnel (acte, courrier type…) | `/Users/tsardet/.piecemaker/templates/` | Disponible pour toute rédaction, indépendamment du dépôt de l'application. |
 | Élément propre à une seule affaire (parties, juridiction, échéances) | Section « Ce dossier » du `CLAUDE.md` / `AGENTS.md` de ce dossier | Uniquement ce dossier-là. |
 
-Ces emplacements sont hors du dépôt PieceMaker et hors de la copie figée du
-plugin installé (celle que `claude plugin update` remplace) : une mise à
-jour de PieceMaker ne les touche jamais. Réciproquement, modifier l'un de
+Ces emplacements sont hors du dépôt PieceMaker : une mise à jour de PieceMaker
+ne les touche jamais. Réciproquement, modifier l'un de
 ces fichiers ne modifie ni n'affecte le fonctionnement standard de
 PieceMaker — la garantie va dans les deux sens.
 

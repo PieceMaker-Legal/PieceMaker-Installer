@@ -2,7 +2,6 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('node:crypto');
-const { pathToFileURL } = require('node:url');
 const { spawn, spawnSync } = require('child_process');
 const { performance } = require('node:perf_hooks');
 const {
@@ -63,6 +62,7 @@ const {
   syncClaudeAssets,
   unregisterClaudeAsset,
 } = require('./claude-assets.cjs');
+const { claudeHooksStatus } = require('./claude-hooks.cjs');
 const {
   controlDossierBot,
   controlTelegram,
@@ -190,17 +190,15 @@ async function selectLocalFolder(platform = process.platform, initialFolder = os
   throw new Error(`Aucun sélecteur de dossier n’est disponible sur ce poste (${lastError?.message || 'commande introuvable'}).`);
 }
 
-async function installProjectPlugin(folder) {
-  const result = await captureProcess('claude', [
-    'plugin', 'install', 'piecemaker@piecemaker', '--scope', 'project',
-  ], { cwd: folder });
-  if (result.code !== 0) {
-    const detail = result.error?.code === 'ENOENT'
-      ? 'Claude Code est introuvable.'
-      : result.stderr || result.stdout || 'installation refusée';
-    throw new Error(`Le plugin PieceMaker n’a pas pu être activé pour ce dossier : ${detail}`);
+function installClaudeAssets(repoRoot, userHome, runCommand = captureCommand) {
+  if (!runCommand('claude', ['--version']).ok) {
+    return { installed: false, skipped: true, reason: 'Claude Code est introuvable.' };
   }
-  return true;
+  const result = syncClaudeAssets(repoRoot, userHome);
+  return {
+    installed: result.conflicts.length === 0,
+    ...result,
+  };
 }
 
 function caseRuleContent(repoRoot) {
@@ -231,10 +229,11 @@ async function registerLegalCase({
   configFile,
   repoRoot,
   homeDir,
-  projectPluginInstaller = installProjectPlugin,
+  userHome = os.homedir(),
+  claudeAssetsInstaller = installClaudeAssets,
 } = {}) {
   const root = validateSelectedCaseFolder(folder);
-  await projectPluginInstaller(root);
+  const claudeAssets = await claudeAssetsInstaller(repoRoot, userHome);
   const rule = ensureCaseRule(repoRoot, root);
   const protection = readProtection(root);
   if (!protection.exists) writeProtection(root, { unprotected: [] });
@@ -265,7 +264,7 @@ async function registerLegalCase({
   return {
     folder: folderOverview,
     installed: {
-      plugin: true,
+      claudeAssets: Boolean(claudeAssets?.installed),
       rule: path.relative(root, rule).split(path.sep).join('/'),
       mapping: path.relative(root, mapping.file).split(path.sep).join('/'),
       protection: path.relative(root, protection.file).split(path.sep).join('/'),
@@ -387,28 +386,10 @@ function captureCommand(command, args = [], timeout = 3000) {
   };
 }
 
-function installedClaudePlugin() {
-  const result = captureCommand('claude', ['plugin', 'list', '--json'], 5000);
-  if (!result.ok) return null;
-  try {
-    const plugins = JSON.parse(result.output);
-    return Array.isArray(plugins)
-      ? plugins.find((plugin) => plugin?.id === 'piecemaker@piecemaker' && plugin.enabled !== false) || null
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-// Coordonnées marketplace/plugin — mêmes valeurs que
-// installer/lib/plugin-refresh.mjs (MARKETPLACE_NAME/PLUGIN_NAME) et
-// installer/steps/09-claude-assets.mjs (REPO_SLUG), dupliquées ici en
-// constantes plutôt qu'importées : ce fichier reste CommonJS pur pour tout
-// ce qui ne touche pas explicitement à l'installation du plugin.
-const CLAUDE_MARKETPLACE_NAME = 'piecemaker';
-const CLAUDE_PLUGIN_NAME = 'piecemaker';
-const CLAUDE_PLUGIN_SPEC = `${CLAUDE_PLUGIN_NAME}@${CLAUDE_MARKETPLACE_NAME}`;
-const CLAUDE_MARKETPLACE_SLUG = 'PieceMaker-Legal/PieceMaker-Installer';
+// Une ancienne installation PieceMaker par marketplace peut encore être
+// présente sur un poste mis à jour. On la masque des catalogues Anthropic
+// pour ne pas dupliquer les composants désormais enregistrés directement.
+const LEGACY_PIECEMAKER_MARKETPLACE_NAME = 'piecemaker';
 
 function parseJsonOutput(output) {
   try {
@@ -418,102 +399,32 @@ function parseJsonOutput(output) {
   }
 }
 
-// installer/lib/service.mjs (ESM) is the existing, tested implementation of
-// "refresh an already-installed plugin and verify convergence by content
-// fingerprint" (see its doc comment). It is loaded lazily via dynamic
-// import() — the one interop path that works from this CommonJS file — and
-// cached, since it is pure/side-effect-free at import time.
-let cachedRefreshClaudePlugin = null;
-async function loadRefreshClaudePlugin() {
-  if (!cachedRefreshClaudePlugin) {
-    const modulePath = path.join(__dirname, '..', 'installer', 'lib', 'service.mjs');
-    const mod = await import(pathToFileURL(modulePath).href);
-    cachedRefreshClaudePlugin = mod.refreshClaudePlugin;
-  }
-  return cachedRefreshClaudePlugin;
-}
-
 /**
- * Installe ou rafraîchit le plugin Claude Code PieceMaker (marketplace +
- * plugin), pour le bouton « Ajouter le plugin legal Claude » de l'onglet
- * « Skills et agents ». Deux chemins :
- *  - Plugin déjà installé : délègue à `refreshClaudePlugin()`
- *    (installer/lib/service.mjs) — la même vérification de convergence par
- *    empreinte de contenu que `piecemaker update` utilise déjà pour éviter de
- *    laisser un cache Claude Code périmé (voir plugin-refresh.mjs). Best
- *    effort, jamais levée.
- *  - Jamais installé : reprend la séquence de
- *    `installer/steps/09-claude-assets.mjs` (marketplace add — GitHub puis
- *    repli sur la copie locale du dépôt — puis install), sans les invites
- *    interactives de l'installeur : ce chemin doit pouvoir tourner depuis une
- *    requête HTTP de l'administration.
- * `runCommand` et `refreshInstalledPlugin` sont injectables pour les tests,
- * afin de ne jamais dépendre d'un vrai CLI `claude` en CI.
+ * Enregistre directement les composants PieceMaker dans ~/.claude. Le nom de
+ * cette fonction est conservé pour la compatibilité de l'API d'administration,
+ * mais aucune commande `claude plugin` ni aucun manifest n'est utilisé.
  */
 async function ensureClaudePluginActive({
   repoRoot,
   userHome = os.homedir(),
   runCommand = captureCommand,
-  refreshInstalledPlugin = null,
+  syncAssets = syncClaudeAssets,
 } = {}) {
-  const listPlugins = () => {
-    const result = runCommand('claude', ['plugin', 'list', '--json']);
-    return result.ok ? parseJsonOutput(result.output) : null;
-  };
-  const isPluginInstalled = (plugins) => Array.isArray(plugins)
-    && plugins.some((entry) => entry?.id === CLAUDE_PLUGIN_SPEC && entry.enabled !== false);
-
-  if (isPluginInstalled(listPlugins())) {
-    const refresh = refreshInstalledPlugin || await loadRefreshClaudePlugin();
-    const result = await refresh({ pluginDir: path.join(repoRoot, 'piecemaker-plugin'), userHome });
-    return { ok: Boolean(result?.ok), action: 'refresh', installed: true, ...result };
-  }
-
-  const marketplaces = runCommand('claude', ['plugin', 'marketplace', 'list', '--json']);
-  const marketplaceList = marketplaces.ok ? parseJsonOutput(marketplaces.output) : null;
-  const marketplaceRegistered = Array.isArray(marketplaceList)
-    && marketplaceList.some((entry) => entry?.name === CLAUDE_MARKETPLACE_NAME);
-
-  let marketplaceSource = 'existing';
-  if (marketplaceRegistered) {
-    const updated = runCommand('claude', ['plugin', 'marketplace', 'update', CLAUDE_MARKETPLACE_NAME]);
-    if (!updated.ok) {
-      return {
-        ok: false,
-        action: 'marketplace-update',
-        installed: false,
-        reason: updated.output || 'Échec de l’actualisation du marketplace « piecemaker ».',
-      };
-    }
-  } else {
-    const fromGitHub = runCommand('claude', ['plugin', 'marketplace', 'add', CLAUDE_MARKETPLACE_SLUG]);
-    if (fromGitHub.ok) {
-      marketplaceSource = 'github';
-    } else {
-      const fromLocal = runCommand('claude', ['plugin', 'marketplace', 'add', repoRoot]);
-      if (!fromLocal.ok) {
-        return {
-          ok: false,
-          action: 'marketplace-add',
-          installed: false,
-          reason: fromLocal.output || 'Échec de l’enregistrement du marketplace (GitHub et copie locale).',
-        };
-      }
-      marketplaceSource = 'local';
-    }
-  }
-
-  const install = runCommand('claude', ['plugin', 'install', CLAUDE_PLUGIN_SPEC]);
-  if (!install.ok) {
+  if (!runCommand('claude', ['--version']).ok) {
     return {
       ok: false,
-      action: 'plugin-install',
+      action: 'skipped',
       installed: false,
-      reason: install.output || 'Échec de l’installation du plugin — le client « claude » est-il installé ?',
+      reason: 'Claude Code est introuvable.',
     };
   }
-
-  return { ok: true, action: 'installed', installed: true, marketplaceSource };
+  const result = syncAssets(repoRoot, userHome);
+  return {
+    ok: result.conflicts.length === 0,
+    action: 'registered',
+    installed: true,
+    ...result,
+  };
 }
 
 // -----------------------------------------------------------------------
@@ -531,9 +442,7 @@ async function ensureClaudePluginActive({
 // filtre côté client cette même liste (voir admin/app.js). Le seul
 // marketplace enregistrable en un clic depuis ce pop-up est le marketplace
 // premier-parti d'Anthropic (`claude-plugins-official`, dépôt
-// anthropics/claude-plugins-official) — le même nom déjà utilisé comme
-// référence dans installer/steps/09-claude-assets.mjs pour notre propre
-// marketplace. Tout autre marketplace se déclare via
+// anthropics/claude-plugins-official). Tout autre marketplace se déclare via
 // `claude plugin marketplace add` en dehors de ce pop-up.
 // -----------------------------------------------------------------------
 const OFFICIAL_MARKETPLACE_NAME = 'claude-plugins-official';
@@ -565,7 +474,7 @@ function listRegisteredMarketplaces(runCommand = captureCommand) {
   const parsed = parseJsonOutput(result.output);
   if (!Array.isArray(parsed)) return [];
   return parsed
-    .filter((entry) => entry?.name && entry.name !== CLAUDE_MARKETPLACE_NAME)
+    .filter((entry) => entry?.name && entry.name !== LEGACY_PIECEMAKER_MARKETPLACE_NAME)
     .map((entry) => ({
       name: entry.name,
       repo: entry.repo || null,
@@ -614,7 +523,7 @@ function listMarketplaceConnectors(runCommand = captureCommand, options = {}) {
   const plugins = [];
   const seen = new Set();
   for (const entry of available) {
-    if (!entry?.pluginId || entry.marketplaceName === CLAUDE_MARKETPLACE_NAME || seen.has(entry.pluginId)) continue;
+    if (!entry?.pluginId || entry.marketplaceName === LEGACY_PIECEMAKER_MARKETPLACE_NAME || seen.has(entry.pluginId)) continue;
     if (!inScope(entry.marketplaceName)) continue;
     seen.add(entry.pluginId);
     plugins.push({
@@ -631,7 +540,7 @@ function listMarketplaceConnectors(runCommand = captureCommand, options = {}) {
   // « available » en a une. Un plugin déjà installé apparaît donc ici avec
   // une description vide (limite de la CLI, pas une omission de notre part).
   for (const entry of installed) {
-    if (!entry?.id || entry.id.endsWith(`@${CLAUDE_MARKETPLACE_NAME}`) || seen.has(entry.id)) continue;
+    if (!entry?.id || entry.id.endsWith(`@${LEGACY_PIECEMAKER_MARKETPLACE_NAME}`) || seen.has(entry.id)) continue;
     const [name, marketplace] = entry.id.split('@');
     if (!inScope(marketplace)) continue;
     seen.add(entry.id);
@@ -800,7 +709,6 @@ async function configurationOverview({ repoRoot, homeDir, userHome, getRuntimeSt
   const installer = readJson(path.join(homeDir, 'state.json'), { steps: {} });
   const steps = installer.steps || {};
   const runtime = getRuntimeStatus();
-  const plugin = installedClaudePlugin();
   const claude = captureCommand('claude', ['--version']);
   const codex = captureCommand('codex', ['--version']);
   const clients = [
@@ -816,6 +724,10 @@ async function configurationOverview({ repoRoot, homeDir, userHome, getRuntimeSt
   ].map((name) => path.join(repoRoot, 'piecemaker-plugin', 'scripts', name));
   const hooksReady = hookFiles.every((file) => fs.existsSync(file))
     && fs.existsSync(path.join(repoRoot, 'piecemaker-plugin', 'hooks', 'hooks.json'));
+  const claudeAssets = repositoryAssets(repoRoot);
+  const claudeAssetsReady = claudeAssets.length > 0 && claudeAssets.every((asset) =>
+    ['linked', 'copied'].includes(claudeAssetStatus(repoRoot, userHome, asset)?.state));
+  const hooksRegistered = claudeHooksStatus(repoRoot, userHome).ok;
   let nodePtyReady = false;
   try { nodePtyReady = Boolean(require.resolve('node-pty')); } catch { /* dépendance optionnelle */ }
 
@@ -883,8 +795,8 @@ async function configurationOverview({ repoRoot, homeDir, userHome, getRuntimeSt
           ? clients.map((client) => `${client.name}${client.version ? ` ${client.version}` : ''}`).join(' · ')
           : 'Aucun client en ligne de commande détecté',
         clients,
-        pluginInstalled: Boolean(plugin) || steps['09-claude-assets']?.status === 'done',
-        pluginVersion: plugin?.version || '',
+        pluginInstalled: claude.ok && claudeAssetsReady,
+        pluginVersion: '',
       },
       terminal: {
         name: 'Terminal intégré',
@@ -896,7 +808,7 @@ async function configurationOverview({ repoRoot, homeDir, userHome, getRuntimeSt
       },
       hooks: {
         name: 'Hooks PieceMaker',
-        installed: hooksReady && (Boolean(plugin) || steps['06-hooks']?.status === 'done'),
+        installed: hooksReady && hooksRegistered,
         summary: `${hookFiles.filter((file) => fs.existsSync(file)).length}/${hookFiles.length} garde-fous disponibles`,
         count: hookFiles.filter((file) => fs.existsSync(file)).length,
         installerStatus: steps['06-hooks']?.status || '',
@@ -1020,7 +932,7 @@ function installedPluginSkills(runCommand = captureCommand) {
   for (const plugin of plugins) {
     if (!plugin?.id || plugin.enabled === false) continue;
     // Nos propres skills sont déjà listés depuis le dépôt — ne pas les répéter.
-    if (plugin.id.endsWith(`@${CLAUDE_MARKETPLACE_NAME}`)) continue;
+    if (plugin.id.endsWith(`@${LEGACY_PIECEMAKER_MARKETPLACE_NAME}`)) continue;
     const installPath = typeof plugin.installPath === 'string' ? plugin.installPath : '';
     if (!installPath) continue;
     const skillsDir = path.join(installPath, 'skills');
@@ -1191,7 +1103,7 @@ function pluginComponentFrontMatter(absolutePath) {
 }
 
 /**
- * Les skills et agents du plugin PieceMaker, avec leur état d'enregistrement
+ * Les skills et agents PieceMaker, avec leur état d'enregistrement
  * auprès de Claude Code — support du pop-up de sélection de
  * « Ajouter le plugin legal Claude ». S'appuie sur `repositoryAssets` /
  * `claudeAssetStatus` (claude-assets.cjs), la même source que la liste de
@@ -1794,7 +1706,7 @@ function createAdminRouter({
   getRuntimeStatus = () => ({}),
   fetchImpl = global.fetch,
   pickFolder = selectLocalFolder,
-  projectPluginInstaller = installProjectPlugin,
+  claudeAssetsInstaller = installClaudeAssets,
 } = {}) {
   // Lazy import keeps the pure filesystem/Git helpers testable before npm
   // dependencies are installed. The running server already depends on Express.
@@ -1970,8 +1882,7 @@ function createAdminRouter({
   router.post('/files', (req, res) => {
     try {
       const file = createManagedFile(repoRoot, homeDir, req.body);
-      // Enregistrement immédiat auprès de Claude Code : sans cela le skill ou
-      // l'agent n'apparaîtrait qu'après publication et « claude plugin update ».
+      // Enregistrement immédiat auprès de Claude Code, sans manifest ni cache.
       const claudeCode = registerClaudeAsset(repoRoot, userHome, file.path);
       res.status(201).json({ ok: true, file: { ...file, claudeCode } });
     } catch (error) {
@@ -1988,21 +1899,21 @@ function createAdminRouter({
   });
 
   // Support du bouton « Ajouter le plugin legal Claude » (onglet Skills et
-  // agents) : liste les composants du plugin PieceMaker avec leur état
+  // agents) : liste les composants PieceMaker avec leur état
   // d'enregistrement, pour le pop-up de sélection.
   router.get('/plugin/components', (req, res) => {
     try {
-      const plugin = installedClaudePlugin();
+      const components = listPluginComponents(repoRoot, userHome);
       res.json({
-        plugin: { installed: Boolean(plugin), version: plugin?.version || '' },
-        components: listPluginComponents(repoRoot, userHome),
+        plugin: { installed: components.some((component) => component.registered), version: '' },
+        components,
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  // Installe/rafraîchit le plugin (marketplace + plugin) puis enregistre
+  // Enregistre directement dans ~/.claude
   // uniquement les composants cochés dans le pop-up — désenregistre ceux
   // décochés. `components` : chemins relatifs (piecemaker-plugin/agents/...
   // ou piecemaker-plugin/skills/.../SKILL.md) tels que renvoyés par
@@ -2190,7 +2101,8 @@ function createAdminRouter({
         configFile,
         repoRoot,
         homeDir,
-        projectPluginInstaller,
+        userHome,
+        claudeAssetsInstaller,
       });
       res.status(201).json({ ok: true, ...result });
     } catch (error) {
@@ -2657,7 +2569,7 @@ module.exports = {
   ensureClaudePluginActive,
   folderPickerCommands,
   installedPluginSkills,
-  installProjectPlugin,
+  installClaudeAssets,
   isLocalOrigin,
   listDossiers,
   listManagedFiles,

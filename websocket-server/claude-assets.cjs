@@ -1,14 +1,9 @@
 /**
  * Enregistrement des skills et agents PieceMaker auprès de Claude Code.
  *
- * Le plugin `piecemaker` est installé depuis un marketplace : Claude Code en
- * garde une copie figée sous ~/.claude/plugins/cache/…, rafraîchie uniquement
- * par `claude plugin update`. Un skill ou un agent créé depuis
- * l'administration n'apparaîtrait donc dans la liste de Claude Code qu'après
- * publication du dépôt.
- *
- * On complète donc l'installation du plugin par les deux emplacements que
- * Claude Code découvre automatiquement au démarrage d'une session :
+ * Aucun manifest ni marketplace PieceMaker n'est utilisé. Les composants sont
+ * déposés dans les deux emplacements que Claude Code découvre automatiquement
+ * au démarrage d'une session :
  *   ~/.claude/agents/<slug>.md          (agents utilisateur)
  *   ~/.claude/skills/<slug>/SKILL.md    (skills utilisateur)
  *
@@ -234,7 +229,7 @@ function registerClaudeAsset(repoRoot, userHome, relativePath) {
 /**
  * Inverse de `registerClaudeAsset` : retire le lien/copie que PieceMaker a
  * déposé pour un skill ou un agent, pour honorer un décochage explicite dans
- * le pop-up « Ajouter le plugin legal Claude » (onglet Skills et agents). Ne
+ * le sélecteur de composants Claude (onglet Skills et agents). Ne
  * touche jamais un fichier personnel — seul un état reconnu comme nôtre par
  * `claudeAssetStatus` (`linked`, `copied`, `stale`) est retiré ; `conflict`
  * (fichier personnel homonyme) et `missing` (déjà absent) sont laissés tels

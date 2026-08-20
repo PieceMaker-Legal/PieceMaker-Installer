@@ -740,7 +740,7 @@ function restoreConfigurationForm() {
 }
 
 const CONFIGURATION_DESCRIPTIONS = {
-  client: 'Pilote le projet et charge le plugin PieceMaker. Réglages généraux, signature des commits et identifiants Légifrance ci-dessous.',
+  client: 'Pilote le projet et charge les composants PieceMaker. Réglages généraux, signature des commits et identifiants Légifrance ci-dessous.',
   terminal: 'Shell local interactif ouvert depuis le volet Word, dans le contexte du dossier actif.',
   mcp: 'Relie le client aux outils documentaires PieceMaker et à la recherche juridique Légifrance.',
   telegram: 'Deux bots séparés — un Assistant conversationnel et une surveillance sans LLM — chacun avec son propre token BotFather.',
@@ -834,7 +834,7 @@ function openConfigurationDetail(kind, reference = '', origin = null) {
     if (kind === 'client') {
       appendConfigurationDetails(body, [
         ['Client détecté', component.name],
-        ['Plugin PieceMaker', component.pluginInstalled ? `Installé${component.pluginVersion ? ` · v${component.pluginVersion}` : ''}` : 'Non installé'],
+        ['Composants Claude PieceMaker', component.pluginInstalled ? 'Enregistrés' : 'Non enregistrés'],
       ]);
       if (component.clients.length > 1) appendConfigurationDetails(body, component.clients.map((client) => [client.name, client.version || 'Détecté']), 'Clients détectés');
       mountConfigurationForm('settingsConfigurationGroup', loadSettings);
@@ -1312,10 +1312,8 @@ async function controlTelegram(role, action, button) {
 
 // ---------------------------------------------------------------------------
 // Pop-up « Ajouter le plugin legal Claude » (bouton de l'onglet Skills et
-// agents). Deux onglets :
-//  - « Plugin PieceMaker » : installe/rafraîchit le plugin puis enregistre
-//    auprès de Claude Code les skills et agents cochés (arborescence
-//    repliable — voir GET/POST /api/admin/plugin/{components,install}).
+// agents). Deux onglets de plugins tiers :
+//  - « Plugin legal Claude » : marketplace anthropics/claude-for-legal.
 //  - « Marketplace officiel » : parcourt/recherche les plugins-connecteurs
 //    des marketplaces Claude Code déjà enregistrées sur ce poste (hors
 //    PieceMaker) et installe/active/désactive la sélection — voir
@@ -3905,7 +3903,7 @@ async function selectAndRegisterCase() {
     }
     selectedFolder = result.folder.path;
     await loadRepositoryHistory();
-    toast('Dossier enregistré · plugin PieceMaker actif pour toutes ses sessions');
+    toast('Dossier enregistré · composants PieceMaker actifs pour toutes ses sessions');
   } catch (error) {
     toast(error.message);
   } finally {

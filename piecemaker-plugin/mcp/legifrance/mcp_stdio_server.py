@@ -3,7 +3,7 @@
 """
 Serveur MCP PieceMaker - Légifrance (transport stdio local)
 
-Serveur JSON-RPC 2.0 sur stdio lancé localement par le plugin PieceMaker.
+Serveur JSON-RPC 2.0 sur stdio lancé localement par PieceMaker.
 La logique métier (handlers d'outils, clients Légifrance/BODACC et définitions
 MCP) reste entièrement locale ; seules les API juridiques officielles sont
 appelées par les clients dédiés.
