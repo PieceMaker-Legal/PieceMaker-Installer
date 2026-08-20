@@ -73,3 +73,10 @@ Les hooks décrits par `hooks/hooks.json` sont fusionnés directement dans
 `~/.claude/settings.json` avec le chemin absolu des scripts du dépôt. Ils ne
 dépendent donc d'aucun cache de plugin. `piecemaker update`, le démarrage du
 serveur et l'étape 06 réconcilient cet enregistrement.
+
+## Serveur MCP Légifrance
+
+Le serveur MCP supporté est `mcp/legifrance/mcp_stdio_server.py`. Le fichier
+`.mcp.json` conserve sa configuration stdio portable pour une installation
+explicite du plugin ; l'étape `07-legifrance` configure et valide ses clés
+PISTE dans `.env`.

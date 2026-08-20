@@ -1,8 +1,13 @@
 {
   "mcpServers": {
     "legifrance": {
-      "command": "npx",
-      "args": ["mcp-remote", "http://127.0.0.1:8765/mcp"]
+      "command": "${PYTHON_PATH:-python3}",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/legifrance/mcp_stdio_server.py"],
+      "env": {
+        "LEGIFRANCE_CLIENT_ID": "${LEGIFRANCE_CLIENT_ID:-}",
+        "LEGIFRANCE_CLIENT_SECRET": "${LEGIFRANCE_CLIENT_SECRET:-}",
+        "LEGIFRANCE_ENV": "${LEGIFRANCE_ENV:-production}"
+      }
     }
   }
 }

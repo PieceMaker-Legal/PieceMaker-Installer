@@ -26,6 +26,8 @@ export const meta = {
 
 const PLUGIN_ROOT = path.join(REPO_ROOT, 'piecemaker-plugin');
 const MCP_SERVER_PATH = path.join(PLUGIN_ROOT, 'mcp', 'legifrance', 'mcp_stdio_server.py');
+// Configuration stdio du plugin (utilisée si le plugin est installé
+// explicitement par Claude Code).
 const MCP_JSON_PATH = path.join(PLUGIN_ROOT, '.mcp.json');
 
 const REGISTRATION_URL = 'https://piste.gouv.fr/registration';
@@ -161,7 +163,7 @@ export async function install(ctx) {
     log.ok('Clés PISTE de production enregistrées dans .env (permissions restreintes 0600).');
 
     if (!fs.existsSync(MCP_SERVER_PATH) || !fs.existsSync(MCP_JSON_PATH)) {
-      log.warn(`Fichiers du serveur MCP Légifrance introuvables sous ${PLUGIN_ROOT} — les clés sont enregistrées mais le serveur ne pourra pas démarrer.`);
+      log.warn(`mcp_stdio_server.py ou .mcp.json introuvable sous ${PLUGIN_ROOT} — les clés sont enregistrées mais le serveur MCP ne pourra pas démarrer.`);
     }
 
     const spin = spinner("Validation des clés PISTE de production (jeton OAuth2 puis recherche de test)...");
@@ -205,7 +207,7 @@ export async function check(ctx) {
   const mcpJsonExists = fs.existsSync(MCP_JSON_PATH);
 
   if (!serverExists || !mcpJsonExists) {
-    return { status: 'failed', note: `Fichiers du serveur MCP Légifrance manquants sous ${PLUGIN_ROOT} — réinstallez piecemaker-plugin/.` };
+    return { status: 'failed', note: `mcp_stdio_server.py ou .mcp.json manquant sous ${PLUGIN_ROOT} — réinstallez piecemaker-plugin/.` };
   }
   if (!hasKeys) {
     return { status: 'failed', note: 'Clés PISTE absentes de .env — relancez cette étape.' };
