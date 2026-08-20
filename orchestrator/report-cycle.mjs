@@ -1,28 +1,45 @@
 #!/usr/bin/env node
-// Stop hook: à la fin de chaque cycle de réflexion Claude, envoie un rapport
-// (tokens utilisés) sur Telegram via le daemon nommé par l'utilisateur.
-// AUCUN LLM, aucune session conversationnelle.
+// Point d'entrée manuel facultatif : hook Stop Claude Code qui envoie un
+// rapport de cycle (tokens utilisés) au bot de surveillance PieceMaker.
+// AUCUN LLM, aucune session conversationnelle. L'étape 08 ne pose pas ce hook
+// dans settings.json : elle installe le daemon et laisse chaque utilisateur
+// décider quelles sessions doivent produire un rapport.
 //
-// Câblage (dans le .claude/settings.json de CHAQUE session projet) :
+// Pour l'activer, ajouter dans le settings.json de la session concernée :
 //   "hooks": { "Stop": [ { "hooks": [ {
 //       "type": "command",
-//       "command": "PROJECT=trading node '/Users/tsardet/Sites/00 - Lord of the bots/report-cycle.mjs'"
+//       "command": "PROJECT=mon-projet node '/chemin/vers/PieceMaker/orchestrator/report-cycle.mjs'"
 //   } ] } ] }
+// Le chemin du dépôt est volontairement laissé à l'installation ; aucun
+// fichier d'un projet externe n'est requis.
 //
 // Variables :
-//   PROJECT   label affiché (trading|app|dashboard|website). Défaut = basename(cwd).
-//   LORD_ENV  chemin du .env contenant le token Lord. Défaut = state-dir telegram-lord.
-//   CHAT_ID   destinataire. Défaut = 5609576448 (toi).
+//   PROJECT   label affiché. Défaut = basename(cwd) ou du state-dir Telegram.
+//   LORD_ENV  .env du bot de surveillance. Défaut = état PieceMaker historique.
+//   CHAT_ID   destinataire. Défaut = premier identifiant de l'allowlist du daemon.
 //
-// Ne bloque JAMAIS la session : toute erreur => exit 0 silencieux.
+// Prérequis : la session doit avoir été lancée avec TELEGRAM_STATE_DIR (comme
+// par orchestrator/launch-telegram.sh). Sans cela, ou sans token/destinataire,
+// le hook ne fait rien. Il ne bloque JAMAIS la session : toute erreur => exit 0.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, basename } from 'node:path';
 import { isLimitEntry, entryText, alreadyAlerted, markAlerted, readLedger } from './limit-watch.mjs';
 
-const CHAT_ID = process.env.CHAT_ID || '5609576448';
-const LORD_ENV = process.env.LORD_ENV || join(homedir(), '.claude', 'channels', 'telegram-piecemaker-lord', '.env');
+const DAEMON_STATE_DIR = join(homedir(), '.claude', 'channels', 'telegram-piecemaker-lord');
+const LORD_ENV = process.env.LORD_ENV || join(DAEMON_STATE_DIR, '.env');
+
+function readChatId() {
+  if (String(process.env.CHAT_ID || '').trim()) return String(process.env.CHAT_ID).trim();
+  try {
+    const access = JSON.parse(readFileSync(join(DAEMON_STATE_DIR, 'access.json'), 'utf8'));
+    const first = Array.isArray(access?.allowFrom) ? access.allowFrom[0] : '';
+    return first == null ? '' : String(first).trim();
+  } catch { return ''; }
+}
+
+const CHAT_ID = readChatId();
 
 function readToken() {
   try {
@@ -41,7 +58,7 @@ function num(x) { return typeof x === 'number' && isFinite(x) ? x : 0; }
 function main() {
   // Ne reporter QUE depuis une session bridgée Telegram (lancée avec
   // TELEGRAM_STATE_DIR). Une session CLI de dev normale n'envoie rien.
-  if (!process.env.TELEGRAM_STATE_DIR) process.exit(0);
+  if (!process.env.TELEGRAM_STATE_DIR || !CHAT_ID) process.exit(0);
 
   const token = readToken();
   if (!token) process.exit(0); // pas de token Lord => on ne fait rien

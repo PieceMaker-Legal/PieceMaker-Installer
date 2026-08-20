@@ -67,6 +67,12 @@ environnement virtuel Python et modèles GLiNER2 + spaCy.
 
 Les secrets Telegram vont dans `~/.claude/channels/` en 0600. Sur macOS, le
 daemon est installé comme service utilisateur dans `~/Library/LaunchAgents/`.
+Le rapport de cycle `orchestrator/report-cycle.mjs` est un hook `Stop`
+facultatif : l'installateur ne l'ajoute pas automatiquement à
+`settings.json`. Pour l'activer dans une session lancée par le daemon, ajoutez
+manuellement une commande `node "/chemin/vers/PieceMaker/orchestrator/report-cycle.mjs"`
+au hook `Stop` ; le token et le destinataire sont alors ceux du bot de
+surveillance (ou `LORD_ENV` et `CHAT_ID` si vous les surchargez).
 
 ## Utilisation
 
