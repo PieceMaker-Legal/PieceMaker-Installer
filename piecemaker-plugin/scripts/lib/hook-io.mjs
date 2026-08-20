@@ -32,24 +32,34 @@ export const SYNTHESIS_DIR = path.join(BILLING_DIR, 'synthese');
 const FLUSH_TIMEOUT_MS = 2000;
 
 /**
- * Read stdin fully as text, bounded by timeoutMs. Never rejects — resolves
- * with whatever was collected (possibly '') on timeout, error, or a TTY with
- * nothing piped in (e.g. a manual test run).
+ * Read stdin fully as text, tracking whether the stream reached a clean `end`.
+ * Never rejects — resolves with `{ data, complete }`:
+ *  - `data`     : everything collected so far (possibly '').
+ *  - `complete` : true only when the stream ended cleanly (EOF). false on a
+ *                 timeout or a stream error, where `data` may be partial.
+ *
+ * A TTY with nothing piped in resolves `{ data: '', complete: true }`: there is
+ * genuinely no input, which is not a truncation.
+ *
+ * The timeout is only a safety net against a producer that never closes the
+ * pipe. It must be generous enough that a large-but-live payload always reaches
+ * `end` before it fires — a premature timeout that returns partial bytes is the
+ * root cause of the size-dependent leak this guards against.
  */
-export function readStdin(timeoutMs = 3000) {
+export function readStdinDetailed(timeoutMs = 3000) {
   return new Promise((resolve) => {
     if (process.stdin.isTTY) {
-      resolve('');
+      resolve({ data: '', complete: true });
       return;
     }
     let data = '';
     let done = false;
-    const finish = () => {
+    const finish = (complete) => {
       if (done) return;
       done = true;
-      resolve(data);
+      resolve({ data, complete });
     };
-    const timer = setTimeout(finish, timeoutMs);
+    const timer = setTimeout(() => finish(false), timeoutMs);
     try {
       process.stdin.setEncoding('utf8');
       process.stdin.on('data', (chunk) => {
@@ -57,17 +67,29 @@ export function readStdin(timeoutMs = 3000) {
       });
       process.stdin.on('end', () => {
         clearTimeout(timer);
-        finish();
+        finish(true);
       });
       process.stdin.on('error', () => {
         clearTimeout(timer);
-        finish();
+        finish(false);
       });
     } catch {
       clearTimeout(timer);
-      finish();
+      finish(false);
     }
   });
+}
+
+/**
+ * Read stdin fully as text, bounded by timeoutMs. Never rejects — resolves
+ * with whatever was collected (possibly '') on timeout, error, or a TTY with
+ * nothing piped in (e.g. a manual test run). Thin wrapper over
+ * `readStdinDetailed` that drops the completeness flag, for callers that only
+ * need the text.
+ */
+export async function readStdin(timeoutMs = 3000) {
+  const { data } = await readStdinDetailed(timeoutMs);
+  return data;
 }
 
 /** Parse the hook JSON payload from stdin. Returns null on any failure. */
@@ -78,6 +100,31 @@ export async function readHookPayload(timeoutMs = 3000) {
     return JSON.parse(raw);
   } catch {
     return null;
+  }
+}
+
+/**
+ * Like `readHookPayload`, but never hides a truncated/garbled input as "nothing
+ * to do". Returns `{ payload, raw, complete }`:
+ *  - `payload`  : the parsed object, or null when parsing failed.
+ *  - `raw`      : the exact stdin text (possibly partial).
+ *  - `complete` : true only when the stream reached a clean EOF.
+ *
+ * A hook that guards a privacy boundary must tell apart three cases that
+ * `readHookPayload` collapses into a single `null`:
+ *  1. empty input (TTY / nothing piped)      → raw '' , complete true  → fail open;
+ *  2. a valid, fully-read payload            → payload set             → normal;
+ *  3. non-empty input that will not parse    → payload null, raw set   → fail CLOSED,
+ *     whether because it was cut off mid-stream (`complete` false) or arrived
+ *     whole but malformed (`complete` true).
+ */
+export async function readHookPayloadStrict(timeoutMs = 3000) {
+  const { data: raw, complete } = await readStdinDetailed(timeoutMs);
+  if (!raw || !raw.trim()) return { payload: null, raw: raw || '', complete };
+  try {
+    return { payload: JSON.parse(raw), raw, complete };
+  } catch {
+    return { payload: null, raw, complete };
   }
 }
 

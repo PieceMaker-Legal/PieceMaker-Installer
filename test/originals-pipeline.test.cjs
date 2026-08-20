@@ -28,7 +28,7 @@ const {
   anonymizationStateFile,
   markFilesAnonymized,
 } = require('../piecemaker-plugin/scripts/lib/anonymization-state.cjs');
-const { WORKSPACE_SUBDIR } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
+const { WORKSPACE_SUBDIR, writeProtection } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-originals-test-'));
@@ -595,6 +595,22 @@ test('un traitement refuse une pièce hors du dossier et une action inconnue', a
     /Aucune pièce à traiter/
   );
   assert.equal(getJob('inexistant'), null);
+});
+
+test('une ressource est hors périmètre : ni conversion ni scan', async (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  writeProtection(data.caseRoot, { resources: ['pièces originales/contrat.pdf'] });
+  // Même cochée explicitement, la ressource est écartée : il ne reste rien à traiter.
+  await assert.rejects(
+    startOriginalsJob({
+      casesRoot: data.casesRoot,
+      caseName: 'Dossier Alpha',
+      action: 'convert',
+      files: ['pièces originales/contrat.pdf'],
+    }),
+    /Aucune pièce à traiter/
+  );
 });
 
 test('un convertisseur qui échoue termine le travail en erreur, jamais bloqué', async (t) => {

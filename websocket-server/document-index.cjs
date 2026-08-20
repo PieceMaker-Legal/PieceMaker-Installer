@@ -279,6 +279,7 @@ async function buildChronology(caseRoot, { deanonymize = false } = {}) {
       extension: file.extension,
       status: file.status,
       protected: file.protected,
+      resource: file.resource,
       scanned: file.scanned,
       indexed: Boolean(entry),
       edited: Boolean(override),

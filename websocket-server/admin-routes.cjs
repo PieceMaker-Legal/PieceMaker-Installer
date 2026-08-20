@@ -2332,6 +2332,7 @@ function createAdminRouter({
         case: legalCase.id,
         files,
         protectedCount: files.filter((file) => file.protected).length,
+        resourceCount: files.filter((file) => file.resource).length,
         truncated: Boolean(files.truncated),
       });
     } catch (error) {
@@ -2344,12 +2345,19 @@ function createAdminRouter({
       if (!Array.isArray(req.body?.unprotected)) {
         throw new Error('« unprotected » doit être la liste des pièces laissées accessibles à l’IA.');
       }
+      if (req.body?.resources !== undefined && !Array.isArray(req.body.resources)) {
+        throw new Error('« resources » doit être la liste des pièces marquées comme ressources.');
+      }
       const legalCase = selectedCase(req.body?.case);
-      const saved = writeProtection(legalCase.root, { unprotected: req.body.unprotected });
+      const saved = writeProtection(legalCase.root, {
+        unprotected: req.body.unprotected,
+        resources: req.body.resources,
+      });
       res.json({
         ok: true,
         case: legalCase.id,
         unprotected: [...saved.unprotected],
+        resources: [...saved.resources],
       });
     } catch (error) {
       res.status(400).json({ error: error.message });

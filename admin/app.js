@@ -1991,45 +1991,109 @@ function visibleOriginals() {
 }
 
 /**
- * Bascule de protection. L'état complet est renvoyé au serveur à chaque clic :
- * `protection.json` ne stocke que les exceptions, donc la liste des pièces
- * laissées accessibles est la seule chose à écrire.
+ * Trois états d'accès pour une pièce, dérivés des deux drapeaux renvoyés par le
+ * serveur (`protected`, `resource`). L'ordre suit la surface d'exposition
+ * croissante à l'IA : coffre-fort (rien) → espace de travail (le texte
+ * anonymisé) → ressource (le texte brut).
  */
-async function toggleProtection(original, button) {
-  const unprotected = caseOriginals()
-    .filter((file) => (file.path === original.path ? original.protected : !file.protected))
-    .map((file) => file.path);
-  button.disabled = true;
+const PIECE_STATES = [
+  {
+    key: 'vault',
+    short: '🛡 Coffre',
+    label: 'Coffre-fort',
+    icon: '🛡',
+    className: 'protected',
+    title: 'L’IA ne peut pas ouvrir cette pièce : elle ne lit que la copie Markdown anonymisée.',
+    empty: 'Aucune pièce au coffre-fort',
+    toast: 'Pièce placée au coffre-fort',
+  },
+  {
+    key: 'workspace',
+    short: '🔓 Travail',
+    label: 'Espace de travail',
+    icon: '🔓',
+    className: 'accessible',
+    title: 'Accessible à l’IA et anonymisée à la lecture — pour les documents de travail (brouillons).',
+    empty: 'Aucune pièce dans l’espace de travail',
+    toast: 'Pièce dans l’espace de travail',
+  },
+  {
+    key: 'resource',
+    short: '📖 Ressource',
+    label: 'Ressources',
+    icon: '📖',
+    className: 'resource',
+    title: 'Accessible à l’IA sans anonymisation, et exclue du scan GLiNER comme de la conversion Markdown.',
+    empty: 'Aucune ressource',
+    toast: 'Pièce marquée comme ressource',
+  },
+];
+
+const PIECE_STATE_BY_KEY = new Map(PIECE_STATES.map((state) => [state.key, state]));
+
+function pieceState(original) {
+  if (original.resource) return 'resource';
+  return original.protected ? 'vault' : 'workspace';
+}
+
+/**
+ * Applique un nouvel état à une pièce. `protection.json` ne stocke que les
+ * exceptions : on renvoie donc à chaque clic les deux listes recalculées à
+ * partir de l'état voulu de *toutes* les pièces (l'espace de travail est
+ * `unprotected`, les ressources `resources`, le coffre-fort le défaut). En cas
+ * d'échec, on rétablit l'état précédent avant de re-rendre.
+ */
+async function setPieceState(original, target, selector) {
+  const previous = pieceState(original);
+  if (target === previous) return;
+  original.protected = target === 'vault';
+  original.resource = target === 'resource';
+  const all = caseOriginals();
+  const unprotected = all.filter((file) => !file.protected && !file.resource).map((file) => file.path);
+  const resources = all.filter((file) => file.resource).map((file) => file.path);
+  for (const button of selector.querySelectorAll('button')) button.disabled = true;
   try {
     await api('/api/admin/protection', {
       method: 'PUT',
-      body: JSON.stringify({ case: selectedFolder, unprotected }),
+      body: JSON.stringify({ case: selectedFolder, unprotected, resources }),
     });
-    original.protected = !original.protected;
-    toast(original.protected ? 'Pièce protégée' : 'Pièce accessible à l’IA');
+    toast(PIECE_STATE_BY_KEY.get(target).toast);
   } catch (error) {
+    original.protected = previous === 'vault';
+    original.resource = previous === 'resource';
     toast(error.message);
   } finally {
-    button.disabled = false;
     renderOriginals();
   }
 }
 
-function shieldButton(original) {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = `shield-toggle ${original.protected ? 'on' : 'off'}`;
-  button.textContent = original.protected ? '🛡 Protégé' : '🔓 Accessible';
-  button.title = original.protected
-    ? 'L’IA ne peut pas ouvrir cette pièce. Cliquez pour la lui rendre accessible.'
-    : 'L’IA peut ouvrir cette pièce. Cliquez pour la protéger.';
-  button.addEventListener('click', (event) => {
-    // La ligne est un <label> : sans ça, le clic cocherait aussi la sélection.
-    event.preventDefault();
-    event.stopPropagation();
-    toggleProtection(original, button);
-  });
-  return button;
+/**
+ * Sélecteur segmenté à trois positions. La ligne est un `<label>` : chaque clic
+ * doit stopper la propagation, sinon il cocherait aussi la case de sélection.
+ */
+function stateSelector(original) {
+  const current = pieceState(original);
+  const group = document.createElement('span');
+  group.className = 'state-selector';
+  group.setAttribute('role', 'group');
+  group.setAttribute('aria-label', 'Niveau d’accès de la pièce');
+  for (const state of PIECE_STATES) {
+    const active = current === state.key;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `state-option ${state.className}${active ? ' active' : ''}`;
+    button.textContent = state.short;
+    button.title = state.title;
+    button.setAttribute('aria-pressed', String(active));
+    button.disabled = active;
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setPieceState(original, state.key, group);
+    });
+    group.append(button);
+  }
+  return group;
 }
 
 function originalStatusBadge(className, label) {
@@ -2047,10 +2111,7 @@ function statusLabel(original) {
 function renderOriginals() {
   const t0 = performance.now();
   const mosaic = byId('originalMosaic');
-  const originals = visibleOriginals().slice().sort((a, b) => {
-    if (a.protected !== b.protected) return a.protected ? 1 : -1;
-    return a.path.localeCompare(b.path, 'fr');
-  });
+  const originals = visibleOriginals().slice().sort((a, b) => a.path.localeCompare(b.path, 'fr'));
   mosaic.textContent = '';
   if (historyView === 'protected') {
     byId('historyCount').textContent = `${originals.length} pièce${originals.length > 1 ? 's' : ''}`;
@@ -2084,16 +2145,13 @@ function renderOriginals() {
   }
 
   const fragment = document.createDocumentFragment();
-  const groups = [
-    { protected: false, label: 'Accessibles à l’IA', icon: '🔓', className: 'accessible' },
-    { protected: true, label: 'Pièces protégées', icon: '🛡', className: 'protected' },
-  ];
-  for (const group of groups) {
-    const groupOriginals = originals.filter((original) => original.protected === group.protected);
+  for (const group of PIECE_STATES) {
+    const groupOriginals = originals.filter((original) => pieceState(original) === group.key);
     const column = document.createElement('section');
     column.className = `original-mosaic-column ${group.className}`;
     const heading = document.createElement('header');
     heading.className = 'original-mosaic-heading';
+    heading.title = group.title;
     const headingLabel = document.createElement('strong');
     headingLabel.textContent = `${group.icon} ${group.label}`;
     const headingCount = document.createElement('span');
@@ -2103,7 +2161,10 @@ function renderOriginals() {
     const cards = document.createElement('div');
     cards.className = 'original-card-grid';
     for (const original of groupOriginals) {
-      const selectable = known.has(original.path);
+      // Une ressource est hors périmètre du pipeline : ni conversion, ni scan.
+      // On désactive donc sa case de sélection pour éviter une action sans effet.
+      const isResource = group.key === 'resource';
+      const selectable = known.has(original.path) && !isResource;
       const row = document.createElement('label');
       row.className = `original-card ${group.className}${selectedOriginals.has(original.path) ? ' selected' : ''}`;
       const controls = document.createElement('span');
@@ -2112,32 +2173,34 @@ function renderOriginals() {
       checkbox.type = 'checkbox';
       checkbox.checked = selectedOriginals.has(original.path);
       checkbox.disabled = !selectable;
-      checkbox.title = selectable ? 'Sélectionner pour la conversion ou l’analyse' : 'Pièce déjà convertie et analysée';
+      checkbox.title = isResource
+        ? 'Ressource : exclue de la conversion et du scan'
+        : (selectable ? 'Sélectionner pour la conversion ou l’analyse' : 'Pièce déjà convertie et analysée');
       checkbox.addEventListener('change', () => {
         if (checkbox.checked) selectedOriginals.add(original.path);
         else selectedOriginals.delete(original.path);
         row.classList.toggle('selected', checkbox.checked);
         updateOriginalsActions();
       });
-      controls.append(checkbox, shieldButton(original));
+      controls.append(checkbox, stateSelector(original));
       const body = document.createElement('span');
       body.className = 'original-body';
       const name = document.createElement('strong');
       name.textContent = original.path;
       const detail = document.createElement('span');
-      detail.textContent = `${formatBytes(original.size)} · ${statusLabel(original)}`;
+      detail.textContent = `${formatBytes(original.size)} · ${isResource ? 'Exclue du traitement' : statusLabel(original)}`;
       body.append(name, detail);
       const badges = document.createElement('span');
       badges.className = 'original-badges';
-      if (original.converted) badges.append(originalStatusBadge('converted', 'Converti'));
-      if (original.scanned) badges.append(originalStatusBadge('scanned', 'Anonymisé'));
+      if (!isResource && original.converted) badges.append(originalStatusBadge('converted', 'Converti'));
+      if (!isResource && original.scanned) badges.append(originalStatusBadge('scanned', 'Anonymisé'));
       row.append(controls, body, badges);
       cards.append(row);
     }
     if (!groupOriginals.length) {
       const empty = document.createElement('p');
       empty.className = 'original-column-empty';
-      empty.textContent = group.protected ? 'Aucune pièce protégée' : 'Aucune pièce accessible';
+      empty.textContent = group.empty;
       cards.append(empty);
     }
     column.append(heading, cards);

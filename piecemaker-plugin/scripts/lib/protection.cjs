@@ -142,6 +142,24 @@ function locateCase(casesRoot, target) {
   return { casesRoot: root, caseName, caseRoot, absolute, relative: rest.join('/') };
 }
 
+/** Normalise une liste de chemins relatifs en Set de clés POSIX. */
+function normalizeKeySet(list) {
+  return new Set(
+    (Array.isArray(list) ? list : [])
+      .map((entry) => String(entry || '').replaceAll('\\', '/').trim())
+      .filter(Boolean)
+  );
+}
+
+/**
+ * Trois états possibles pour une pièce, encodés comme deux listes d'exceptions
+ * dans `protection.json` (le défaut, liste vide, est le coffre-fort) :
+ *  - **Coffre-fort** : hors des deux listes — protégé, l'IA ne lit que le `.md` ;
+ *  - **Espace de travail** : dans `unprotected` — accessible, anonymisé à la
+ *    lecture par les hooks ;
+ *  - **Ressource** : dans `resources` — accessible, et exclu du scan GLiNER et de
+ *    la conversion Markdown (documents publics sans donnée personnelle).
+ */
 function readProtection(caseRoot) {
   const file = protectionFile(caseRoot);
   let raw = null;
@@ -150,42 +168,77 @@ function readProtection(caseRoot) {
   } catch {
     raw = null;
   }
-  const list = Array.isArray(raw?.unprotected) ? raw.unprotected : [];
-  const unprotected = new Set(
-    list
-      .map((entry) => String(entry || '').replaceAll('\\', '/').trim())
-      .filter(Boolean)
-  );
-  return { file, exists: raw !== null, unprotected };
+  return {
+    file,
+    exists: raw !== null,
+    unprotected: normalizeKeySet(raw?.unprotected),
+    resources: normalizeKeySet(raw?.resources),
+  };
 }
 
-function writeProtection(caseRoot, { unprotected = [] } = {}) {
+/**
+ * Écrit les deux listes d'exceptions. Une liste laissée à `undefined` est
+ * *préservée* (relue depuis le disque) : un appelant historique qui ne connaît
+ * que `unprotected` — l'initialisation d'un dossier — n'efface pas les
+ * ressources déjà déclarées.
+ */
+function writeProtection(caseRoot, { unprotected, resources } = {}) {
   const file = protectionFile(caseRoot);
-  const list = [...new Set(
-    (Array.isArray(unprotected) ? unprotected : [])
+  const existing = readProtection(caseRoot);
+  const clean = (list, fallback) => [...new Set(
+    (Array.isArray(list) ? list : [...fallback])
       .map((entry) => String(entry || '').replaceAll('\\', '/').trim())
       .filter((entry) => entry && !entry.startsWith('../') && !path.isAbsolute(entry))
   )].sort((a, b) => a.localeCompare(b, 'fr'));
+  // Une pièce ne peut être à la fois « espace de travail » et « ressource » :
+  // `resources` a priorité, on la retire donc de `unprotected`.
+  const resourcesList = clean(resources, existing.resources);
+  const resourceSet = new Set(resourcesList);
+  const unprotectedList = clean(unprotected, existing.unprotected).filter((key) => !resourceSet.has(key));
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify({ version: 1, unprotected: list }, null, 2)}\n`, 'utf8');
-  return { file, unprotected: new Set(list) };
+  fs.writeFileSync(
+    file,
+    `${JSON.stringify({ version: 1, unprotected: unprotectedList, resources: resourcesList }, null, 2)}\n`,
+    'utf8'
+  );
+  return { file, unprotected: new Set(unprotectedList), resources: resourceSet };
+}
+
+/** Vrai pour un chemin recevable dans une des deux listes d'exceptions. */
+function exceptionKey(absolutePath, caseRoot) {
+  const key = relativeKey(absolutePath, caseRoot);
+  if (!key) return null;
+  // Les dotfiles sont de la configuration du dossier, jamais des pièces —
+  // `.piecemaker/protection.json` inclus, qui doit rester lisible par l'admin.
+  if (key.split('/').some((segment) => segment.startsWith('.'))) return null;
+  if (READABLE_EXTENSIONS.has(path.extname(key).toLowerCase())) return null;
+  return key;
 }
 
 /**
  * Un fichier est protégé s'il est dans le dossier, qu'il n'est ni Markdown ni
- * JSON, et qu'il ne figure pas dans les exceptions. `state` évite de relire le
- * fichier d'exceptions à chaque appel dans une boucle.
+ * JSON, et qu'il ne figure dans *aucune* des deux listes d'exceptions (espace
+ * de travail ou ressource, toutes deux accessibles à l'IA). `state` évite de
+ * relire le fichier d'exceptions à chaque appel dans une boucle.
  */
 function isProtectedFile(absolutePath, caseRoot, state = null) {
   if (!absolutePath || !caseRoot) return false;
-  const key = relativeKey(absolutePath, caseRoot);
+  const key = exceptionKey(absolutePath, caseRoot);
   if (!key) return false;
-  // Les dotfiles sont de la configuration du dossier, jamais des pièces —
-  // `.piecemaker/protection.json` inclus, qui doit rester lisible par l'admin.
-  if (key.split('/').some((segment) => segment.startsWith('.'))) return false;
-  if (READABLE_EXTENSIONS.has(path.extname(key).toLowerCase())) return false;
-  const { unprotected } = state || readProtection(caseRoot);
-  return !unprotected.has(key);
+  const { unprotected, resources } = state || readProtection(caseRoot);
+  return !unprotected.has(key) && !(resources && resources.has(key));
+}
+
+/**
+ * Vrai pour une pièce marquée « ressource » : accessible à l'IA et exclue du
+ * scan GLiNER comme de la conversion Markdown.
+ */
+function isResourceFile(absolutePath, caseRoot, state = null) {
+  if (!absolutePath || !caseRoot) return false;
+  const key = exceptionKey(absolutePath, caseRoot);
+  if (!key) return false;
+  const { resources } = state || readProtection(caseRoot);
+  return Boolean(resources && resources.has(key));
 }
 
 /**
@@ -226,6 +279,7 @@ module.exports = {
   isMappingFile,
   locateCase,
   isProtectedFile,
+  isResourceFile,
   markdownCounterpart,
   normalizeOriginalName,
   protectionFile,

@@ -7,6 +7,7 @@ const test = require('node:test');
 const {
   isMappingFile,
   isProtectedFile,
+  isResourceFile,
   locateCase,
   markdownCounterpart,
   readProtection,
@@ -61,6 +62,34 @@ test('une exception enregistrée libère exactement une pièce', (t) => {
   // protégée sans que personne ait à repasser dans l'administration.
   fs.writeFileSync(path.join(data.caseRoot, 'nouvelle.pdf'), 'ORIGINAL');
   assert.equal(isProtectedFile(path.join(data.caseRoot, 'nouvelle.pdf'), data.caseRoot), true);
+});
+
+test('une ressource est accessible à l’IA et distincte de l’espace de travail', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+
+  writeProtection(data.caseRoot, { unprotected: [], resources: ['contrat.pdf'] });
+  // Une ressource n'est pas protégée (l'IA l'ouvre telle quelle)…
+  assert.equal(isProtectedFile(path.join(data.caseRoot, 'contrat.pdf'), data.caseRoot), false);
+  // …et se reconnaît comme ressource, contrairement à une pièce d'espace de travail.
+  assert.equal(isResourceFile(path.join(data.caseRoot, 'contrat.pdf'), data.caseRoot), true);
+  assert.equal(isResourceFile(path.join(data.caseRoot, 'annexes', 'pièce jointe.docx'), data.caseRoot), false);
+});
+
+test('écrire une seule liste préserve l’autre, et les deux listes s’excluent', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+
+  writeProtection(data.caseRoot, { unprotected: ['contrat.pdf'], resources: ['annexes/pièce jointe.docx'] });
+  // Réécrire `unprotected` seul ne doit pas effacer les ressources.
+  writeProtection(data.caseRoot, { unprotected: ['contrat.pdf'] });
+  assert.deepEqual([...readProtection(data.caseRoot).resources], ['annexes/pièce jointe.docx']);
+
+  // Une même pièce ne peut être dans les deux listes : `resources` l'emporte.
+  writeProtection(data.caseRoot, { unprotected: ['contrat.pdf'], resources: ['contrat.pdf'] });
+  const state = readProtection(data.caseRoot);
+  assert.deepEqual([...state.resources], ['contrat.pdf']);
+  assert.deepEqual([...state.unprotected], []);
 });
 
 test('la liste d’exceptions rejette les chemins qui sortent du dossier', (t) => {
