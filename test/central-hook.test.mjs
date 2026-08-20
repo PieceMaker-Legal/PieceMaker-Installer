@@ -98,6 +98,35 @@ test('un Edit restitue les deux chaînes', (t) => {
   assert.equal(out.hookSpecificOutput.updatedInput.new_string, 'cher Jean Dupont');
 });
 
+test('un Read restitue le vrai chemin avant exécution', (t) => {
+  const home = fixture();
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+
+  const out = runHook({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Read',
+    cwd: '/tmp',
+    tool_input: { file_path: '/tmp/06_PERSONNE_PHYSIQUE_01.md' },
+  }, home);
+  assert.equal(out.hookSpecificOutput.updatedInput.file_path, '/tmp/06_Jean Dupont.md');
+});
+
+test('une commande Bash restitue les vrais noms avant exécution', (t) => {
+  const home = fixture();
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+
+  const out = runHook({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Bash',
+    cwd: '/tmp',
+    tool_input: { command: 'cat /tmp/06_PERSONNE_PHYSIQUE_01.md && echo PERSONNE_PHYSIQUE_07' },
+  }, home);
+  const command = out.hookSpecificOutput.updatedInput.command;
+  assert.match(command, /Jean Dupont/);
+  assert.match(command, /Marie Martin/);
+  assert.doesNotMatch(command, /PERSONNE_PHYSIQUE_01|PERSONNE_PHYSIQUE_07/);
+});
+
 test('un fichier de mapping n’est jamais « anonymisé » à la lecture', (t) => {
   const home = fixture();
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));

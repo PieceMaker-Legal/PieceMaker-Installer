@@ -39,6 +39,11 @@ const CONFIG_FILE = path.join(HOME_DIR, 'config.json');
 
 const READ_TOOLS = new Set(['Read', 'Grep', 'Glob', 'Bash']);
 const WRITE_FIELDS = { Write: ['content'], Edit: ['old_string', 'new_string'] };
+// Défaut A — chemins/commandes EN ENTRÉE des outils de lecture : le modèle a vu
+// un nom de fichier CODÉ (anonymize-read code les noms listés), un Read/Grep/
+// Glob/Bash sur ce chemin codé est donc introuvable sur disque. On rétablit le
+// vrai chemin (code → entité), symétrique du codage de la sortie.
+const READ_INPUT_FIELDS = { Read: ['file_path'], Grep: ['path'], Glob: ['path'], Bash: ['command'] };
 const TELEGRAM_TOOLS = /^mcp__[^_]*telegram[^_]*__(reply|edit_message)$/;
 /** Un mapping/scan ne doit jamais être « anonymisé » puis relu : on n'y touche pas. */
 const MAPPING_FILE_PATTERNS = [/^mapping.*\.json$/i, /_sensitive_map\.json$/i, /^central-mapping\.json$/i];
@@ -125,6 +130,7 @@ function resultText(toolResponse) {
 
 function fieldsFor(toolName) {
   if (WRITE_FIELDS[toolName]) return WRITE_FIELDS[toolName];
+  if (READ_INPUT_FIELDS[toolName]) return READ_INPUT_FIELDS[toolName];
   if (TELEGRAM_TOOLS.test(toolName)) return ['text'];
   return null;
 }
