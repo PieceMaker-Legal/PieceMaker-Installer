@@ -1805,6 +1805,20 @@ function createAdminRouter({
   const registryConfig = () => readRegistryConfig(configFile);
   const selectedCase = (reference) => resolveCaseReference(registryConfig(), reference);
 
+  // Migration : l'identité de commit ne vivait que dans le `.env` du clone
+  // runtime, invisible au hook d'édition qui tourne depuis le cache du plugin.
+  // On la recopie une fois dans config.json, lu par resolveCommitIdentity.
+  try {
+    const bootConfig = readJson(configFile, {});
+    const bootName = String(readEnvFile(envFile)[COMMIT_USER_NAME_KEY] || '').trim();
+    if (bootName && !bootConfig?.commits?.userName) {
+      bootConfig.commits = { ...(bootConfig.commits || {}), userName: bootName };
+      atomicWrite(configFile, `${JSON.stringify(bootConfig, null, 2)}\n`);
+    }
+  } catch {
+    // La migration est opportuniste ; son échec ne doit pas empêcher l'admin.
+  }
+
   router.use((req, res, next) => {
     res.set('Cache-Control', 'no-store');
     if (!isLocalOrigin(req.get('Origin'))) {
@@ -1903,6 +1917,18 @@ function createAdminRouter({
       }
       if (patch.pythonPath !== undefined) next.pythonPath = String(patch.pythonPath || '').trim() || null;
       if (patch.adminTheme !== undefined) next.adminTheme = validateAdminTheme(patch.adminTheme);
+
+      // L'identité de commit est aussi mémorisée dans config.json : le hook
+      // d'édition (lancé depuis le cache du plugin) ne peut pas lire le `.env`
+      // du clone runtime, mais lit config.json.
+      const rawName = req.body?.env?.[COMMIT_USER_NAME_KEY];
+      if (rawName !== undefined) {
+        const requested = String(rawName || '').trim();
+        if (requested && requested !== '********') {
+          const { name } = resolveCommitIdentity({ identity: { name: requested } });
+          next.commits = { ...(next.commits || {}), userName: name };
+        }
+      }
 
       atomicWrite(configFile, `${JSON.stringify(next, null, 2)}\n`);
       updateEnvFile(envFile, req.body?.env || {}, req.body?.clearSecrets || []);
