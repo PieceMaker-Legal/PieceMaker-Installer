@@ -62,6 +62,13 @@ const PERF_LOG_ALL = process.env.PIECEMAKER_PERF_LOG === '1';
 const COMMIT_USER_NAME_KEY = 'PIECEMAKER_USER_NAME';
 const TECHNICAL_COMMIT_EMAIL = 'commits@piecemaker.local';
 const GLOBAL_ENV_FILE = path.resolve(__dirname, '..', '..', '..', '.env');
+// Identité de commit partagée par tous les clones. `GLOBAL_ENV_FILE` est résolu
+// relativement à ce module : lancé depuis le cache du plugin (hook d'édition),
+// il pointe à côté du clone runtime et n'existe pas — le `.env` de l'identité
+// vit dans le clone runtime, hors de portée. `config.json` sous ~/.piecemaker
+// est le seul emplacement stable que le hook lit à coup sûr, quel que soit le
+// clone d'où il tourne.
+const IDENTITY_CONFIG_FILE = path.join(os.homedir(), '.piecemaker', 'config.json');
 const inflateRaw = promisify(zlib.inflateRaw);
 const deflateRaw = promisify(zlib.deflateRaw);
 
@@ -99,11 +106,28 @@ function readCommitIdentityEnv(file = GLOBAL_ENV_FILE) {
   return value || process.env[COMMIT_USER_NAME_KEY] || '';
 }
 
+/** Nom de l'utilisateur mémorisé dans ~/.piecemaker/config.json (tous clones). */
+function readCommitIdentityConfig(file = IDENTITY_CONFIG_FILE) {
+  try {
+    if (file && fs.existsSync(file)) {
+      const config = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const name = config?.commits?.userName ?? config?.userName;
+      if (typeof name === 'string' && name.trim()) return name.trim();
+    }
+  } catch {
+    // Config illisible : on retombe sur les autres sources d'identité.
+  }
+  return '';
+}
+
 /** Identité personnelle appliquée à l'auteur et au validateur Git. */
-function resolveCommitIdentity({ identity = null, envFile = GLOBAL_ENV_FILE } = {}) {
+function resolveCommitIdentity({ identity = null, envFile = GLOBAL_ENV_FILE, configFile = IDENTITY_CONFIG_FILE } = {}) {
   const requestedName = typeof identity === 'string' ? identity : identity?.name;
+  // Sans identité explicite (hook d'édition), on tente le `.env` du clone
+  // courant puis, à défaut, config.json — le hook tourne depuis le cache du
+  // plugin où `envFile` par défaut n'existe pas.
   const name = validateCommitUserName(
-    identity ? requestedName : readCommitIdentityEnv(envFile)
+    identity ? requestedName : readCommitIdentityEnv(envFile) || readCommitIdentityConfig(configFile)
   );
   return {
     name,
@@ -1499,7 +1523,9 @@ async function restoreRevision({ casesRoot, caseName, homeDir = path.join(os.hom
 module.exports = {
   COMMIT_USER_NAME_KEY,
   GLOBAL_ENV_FILE,
+  IDENTITY_CONFIG_FILE,
   SAFE_EXTENSIONS,
+  readCommitIdentityConfig,
   caseOverview,
   checkoutHistoryBranch,
   createCommit,

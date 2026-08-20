@@ -1,7 +1,7 @@
 {
   "name": "piecemaker",
   "displayName": "PieceMaker",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Assistant juridique PieceMaker pour Claude Code : anonymisation, conversion Markdown, rédaction juridique, tamponnage de pièces, checkpoints Git automatiques, garde-fous PII et agents dédiés.",
   "author": {
     "name": "PieceMaker",

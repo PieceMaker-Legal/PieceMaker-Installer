@@ -1,12 +1,8 @@
 /**
  * Step 05 — HTTPS certificates for the Word taskpane.
  *
- * IMPORTANT — a note on file selection:
- * create-certificate.sh / create-certificate-windows.ps1 generate a CODE
- * SIGNING certificate ("PieceMaker Developer Certificate") from the legacy
- * Electron packaging flow. They do not touch localhost.crt/localhost.key.
- * The certificate Word's taskpane actually
- * needs — a CA + a localhost server cert, read directly by server.cjs at
+ * The certificate Word's taskpane needs — a CA + a localhost server cert,
+ * read directly by server.cjs at
  * websocket-server/localhost.{crt,key} — is produced by
  * websocket-server/generate-ca-certificates.cjs. That is what this step
  * drives; verify-certificates.cjs's checks are reproduced inline via openssl
