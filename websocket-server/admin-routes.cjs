@@ -1024,6 +1024,51 @@ function installedPluginSkills(runCommand = captureCommand) {
   return skills.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// Registre persistant des skills officiels supprimés par l'utilisateur. Un
+// skill de plugin de marketplace vit dans le cache Claude Code, que
+// `claude plugin install`/`update` restaure : sans ce registre, la suppression
+// serait annulée à la première mise à jour. On mémorise donc le chemin
+// synthétique retiré et on réapplique le retrait au démarrage du serveur et à
+// chaque listing (voir `reapplyDeletedOfficialSkills`).
+function deletedOfficialSkillsFile(homeDir) {
+  return path.join(homeDir, 'deleted-official-skills.json');
+}
+
+function readDeletedOfficialSkills(homeDir) {
+  const data = readJson(deletedOfficialSkillsFile(homeDir), null);
+  const paths = Array.isArray(data?.paths) ? data.paths : [];
+  return new Set(paths.filter((value) => typeof value === 'string'));
+}
+
+function recordDeletedOfficialSkill(homeDir, pathValue) {
+  const set = readDeletedOfficialSkills(homeDir);
+  set.add(pathValue);
+  atomicWrite(
+    deletedOfficialSkillsFile(homeDir),
+    `${JSON.stringify({ version: 1, paths: [...set].sort() }, null, 2)}\n`,
+  );
+}
+
+// Réapplique le registre : retire du cache Claude Code tout dossier de skill
+// officiel réapparu après une mise à jour/réinstallation de plugin. Best-effort
+// et idempotent — un skill déjà absent n'est pas une erreur. Renvoie le nombre
+// de dossiers effectivement retirés, pour la journalisation au démarrage.
+function reapplyDeletedOfficialSkills(homeDir = path.join(os.homedir(), '.piecemaker'), runCommand = captureCommand) {
+  const deleted = readDeletedOfficialSkills(homeDir);
+  if (!deleted.size) return 0;
+  let removed = 0;
+  for (const skill of installedPluginSkills(runCommand)) {
+    if (!deleted.has(skill.path) || !skill.absolute || !fs.existsSync(skill.absolute)) continue;
+    try {
+      fs.rmSync(path.dirname(skill.absolute), { recursive: true, force: true });
+      removed += 1;
+    } catch {
+      // Cache verrouillé ou déjà retiré : on n'interrompt pas le balayage.
+    }
+  }
+  return removed;
+}
+
 // Nombre maximal d'annexes listées pour un skill (panneau « Skills et
 // agents ») — borne défensive contre un dossier de skill pathologique.
 const MAX_SKILL_ASSETS = 200;
@@ -1114,7 +1159,17 @@ function listManagedFiles(repoRoot, homeDir = path.join(os.homedir(), '.piecemak
   // « Skills officiels ». Un plugin installé depuis les onglets marketplace du
   // pop-up apparaît ainsi dans la liste dès qu'il expose des skills.
   const installedSkills = options.installedSkills || installedPluginSkills();
+  const deletedOfficial = readDeletedOfficialSkills(homeDir);
   for (const skill of installedSkills) {
+    // Skill officiel supprimé mais réapparu (mise à jour/réinstallation du
+    // plugin) : on le re-retire du cache et on ne le liste pas — la suppression
+    // reste effective par-delà les mises à jour.
+    if (deletedOfficial.has(skill.path)) {
+      if (skill.absolute && fs.existsSync(skill.absolute)) {
+        try { fs.rmSync(path.dirname(skill.absolute), { recursive: true, force: true }); } catch { /* best-effort */ }
+      }
+      continue;
+    }
     files.push({
       path: skill.path,
       name: skill.name,
@@ -1464,6 +1519,11 @@ function deleteManagedAsset(repoRoot, homeDir, assetRelPath) {
  * agent, le seul fichier `.md`.
  */
 function deleteManagedFile(repoRoot, homeDir, relativePath) {
+  // Skill de plugin de marketplace : on retire son dossier directement dans le
+  // cache Claude Code — voir `deleteOfficialSkill`.
+  if (typeof relativePath === 'string' && relativePath.startsWith(OFFICIAL_SKILL_PREFIX)) {
+    return deleteOfficialSkill(relativePath, homeDir);
+  }
   const { absolute, normalized } = managedAbsolutePath(repoRoot, relativePath, homeDir);
   const kind = managedFileKind(normalized);
   if (!['skill', 'agent'].includes(kind)) {
@@ -1476,6 +1536,27 @@ function deleteManagedFile(repoRoot, homeDir, relativePath) {
   const target = kind === 'skill' ? path.dirname(absolute) : absolute;
   fs.rmSync(target, { recursive: true, force: true });
   return { path: normalized, kind, deletedAt: new Date().toISOString() };
+}
+
+/**
+ * Supprime le dossier d'un skill de plugin de marketplace directement dans le
+ * cache Claude Code (~/.claude/plugins/cache/…) : le chemin synthétique
+ * `official-skill:<pluginId>/<slug>` est re-résolu vers son SKILL.md via
+ * `installedPluginSkills`, puis le dossier `skills/<slug>/` entier est retiré.
+ * Le retrait est mémorisé dans le registre `deleted-official-skills.json` puis
+ * réappliqué (`reapplyDeletedOfficialSkills`) au démarrage du serveur et à
+ * chaque listing : la suppression survit donc à une réinstallation ou mise à
+ * jour du plugin, qui restaurerait sinon le dossier. C'est une suppression
+ * chirurgicale dans un cache géré, pas une désinstallation, et sans sauvegarde.
+ */
+function deleteOfficialSkill(pathValue, homeDir = path.join(os.homedir(), '.piecemaker'), runCommand = captureCommand) {
+  const skill = installedPluginSkills(runCommand).find((entry) => entry.path === pathValue);
+  if (!skill || !fs.existsSync(skill.absolute)) throw new Error('Skill de plugin introuvable ou plugin désactivé.');
+  // Enregistrer avant de retirer : même si le rm échoue, une mise à jour
+  // ultérieure ne doit pas ressusciter un skill que l'utilisateur a supprimé.
+  recordDeletedOfficialSkill(homeDir, pathValue);
+  fs.rmSync(path.dirname(skill.absolute), { recursive: true, force: true });
+  return { path: pathValue, kind: 'official-skill', deletedAt: new Date().toISOString() };
 }
 
 // Le slug qui identifie un skill/agent sur le disque : le dossier pour un
@@ -1788,6 +1869,15 @@ function createAdminRouter({
     }
   } catch {
     // La migration est opportuniste ; son échec ne doit pas empêcher l'admin.
+  }
+
+  // Réapplique au démarrage les suppressions de skills officiels : une mise à
+  // jour de plugin (`claude plugin update`) survenue serveur éteint aurait pu
+  // restaurer leur dossier dans le cache Claude Code.
+  try {
+    reapplyDeletedOfficialSkills(homeDir);
+  } catch {
+    // Best-effort : le balayage ne doit jamais empêcher l'admin de démarrer.
   }
 
   router.use((req, res, next) => {
@@ -2636,6 +2726,7 @@ module.exports = {
   ensureClaudePluginActive,
   folderPickerCommands,
   installedPluginSkills,
+  reapplyDeletedOfficialSkills,
   installClaudeAssets,
   isLocalOrigin,
   listDossiers,

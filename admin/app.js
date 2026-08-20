@@ -1806,9 +1806,13 @@ async function selectFile(file, button) {
       // seule n'exposent pas le bouton.
       byId('insertAssetBtn').hidden = data.readonly || data.kind !== 'skill' || !data.exists;
       byId('saveFile').disabled = data.readonly;
-      // Suppression réservée aux skills et agents du dépôt qui existent déjà —
-      // ni instructions, ni skills officiels, ni fichiers en lecture seule.
-      byId('deleteFile').hidden = !(data.exists && !data.readonly && (data.kind === 'skill' || data.kind === 'agent'));
+      // Suppression réservée aux skills et agents du dépôt qui existent déjà,
+      // et aux skills officiels (retrait du dossier dans le cache Claude Code) —
+      // ni instructions, ni autres fichiers en lecture seule.
+      byId('deleteFile').hidden = !(data.exists && (
+        (!data.readonly && (data.kind === 'skill' || data.kind === 'agent'))
+        || data.kind === 'official-skill'
+      ));
       byId('metadataEditor').hidden = !documentParts.frontMatter || data.readonly || data.kind === 'instructions';
       byId('metadataName').value = documentParts.metadata.name || '';
       byId('metadataDescription').value = documentParts.metadata.description || '';
@@ -1883,10 +1887,16 @@ function resetFileEditor() {
 }
 
 async function deleteFile() {
-  if (!selectedFile || selectedFile.readonly || !selectedFile.exists) return;
-  if (!['skill', 'agent'].includes(selectedFile.kind)) return;
-  const label = selectedFile.kind === 'skill' ? 'ce skill' : 'cet agent';
-  if (!confirm(`Supprimer définitivement ${label} « ${selectedFile.name || selectedFile.path} » ?\nUne sauvegarde est conservée, mais le fichier disparaît de Claude Code.`)) return;
+  if (!selectedFile || !selectedFile.exists) return;
+  const official = selectedFile.kind === 'official-skill';
+  // Les skills/agents du dépôt sont éditables ; un skill officiel est en lecture
+  // seule mais reste supprimable (retrait de son dossier dans le cache).
+  if (!official && (selectedFile.readonly || !['skill', 'agent'].includes(selectedFile.kind))) return;
+  const label = selectedFile.kind === 'agent' ? 'cet agent' : 'ce skill';
+  const warning = official
+    ? 'Son dossier est retiré du cache Claude Code — sans sauvegarde. La suppression est mémorisée et réappliquée après les mises à jour du plugin.'
+    : 'Une sauvegarde est conservée, mais le fichier disparaît de Claude Code.';
+  if (!confirm(`Supprimer définitivement ${label} « ${selectedFile.name || selectedFile.path} » ?\n${warning}`)) return;
   const button = byId('deleteFile');
   button.disabled = true;
   setMessage(byId('fileMessage'), 'Suppression…');
