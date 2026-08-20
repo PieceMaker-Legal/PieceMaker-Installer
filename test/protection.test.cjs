@@ -40,6 +40,34 @@ test('tout ce qui n’est ni Markdown ni JSON est protégé par défaut', (t) =>
   assert.equal(isProtectedFile(path.join(data.casesRoot, 'ailleurs.pdf'), data.caseRoot), false);
 });
 
+test('une copie extraite …-ooxml sous le workspace est un espace de travail', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+
+  const ooxmlDir = path.join(data.caseRoot, 'Fichiers convertis PieceMaker', 'doc-ooxml');
+  fs.mkdirSync(path.join(ooxmlDir, 'word'), { recursive: true });
+  fs.writeFileSync(path.join(ooxmlDir, '[Content_Types].xml'), '<Types/>');
+  fs.writeFileSync(path.join(ooxmlDir, 'word', 'document.xml'), '<w:document/>');
+  fs.writeFileSync(path.join(ooxmlDir, 'word', 'media.png'), 'PNG');
+
+  // Les parties du .docx extrait sont accessibles sans inscription d'exception.
+  assert.equal(isProtectedFile(path.join(ooxmlDir, '[Content_Types].xml'), data.caseRoot), false);
+  assert.equal(isProtectedFile(path.join(ooxmlDir, 'word', 'document.xml'), data.caseRoot), false);
+  assert.equal(isProtectedFile(path.join(ooxmlDir, 'word', 'media.png'), data.caseRoot), false);
+
+  // Le .docx original, hors du sous-dossier -ooxml, reste protégé.
+  assert.equal(isProtectedFile(path.join(data.caseRoot, 'annexes', 'pièce jointe.docx'), data.caseRoot), true);
+  // Un fichier isolé nommé …-ooxml sous le workspace (pas un dossier) reste protégé.
+  const bare = path.join(data.caseRoot, 'Fichiers convertis PieceMaker', 'contrat-ooxml.pdf');
+  fs.writeFileSync(bare, 'ORIGINAL');
+  assert.equal(isProtectedFile(bare, data.caseRoot), true);
+  // Un dossier -ooxml hors du workspace ne bénéficie pas de la règle.
+  const stray = path.join(data.caseRoot, 'doc-ooxml', 'word', 'document.xml');
+  fs.mkdirSync(path.dirname(stray), { recursive: true });
+  fs.writeFileSync(stray, '<w:document/>');
+  assert.equal(isProtectedFile(stray, data.caseRoot), true);
+});
+
 test('le mapping et les scans PII sont reconnus où qu’ils soient rangés', () => {
   assert.equal(isMappingFile('mapping_dossier.json'), true);
   assert.equal(isMappingFile('/dossier/annexes/mapping_default.json'), true);

@@ -36,6 +36,15 @@ const PROTECTION_FILE = 'protection.json';
  */
 const WORKSPACE_SUBDIR = 'Fichiers convertis PieceMaker';
 
+/**
+ * Suffixe d'un sous-dossier de travail OOXML : une copie extraite d'un `.docx`
+ * (`unzip`), rangée sous `WORKSPACE_SUBDIR`. Ses parties (`word/document.xml`,
+ * `_rels`, médias…) ne sont ni `.md` ni `.json` : sans règle dédiée elles
+ * tomberaient dans le coffre-fort et l'édition OOXML serait impossible. On les
+ * classe donc d'office en espace de travail (voir `isOoxmlWorkspacePath`).
+ */
+const OOXML_WORKDIR_SUFFIX = '-ooxml';
+
 /** Extensions lisibles par l'IA, sous réserve du mapping appliqué à la lecture. */
 const READABLE_EXTENSIONS = new Set(['.md', '.json']);
 
@@ -216,6 +225,23 @@ function exceptionKey(absolutePath, caseRoot) {
 }
 
 /**
+ * Vrai pour un chemin situé dans un sous-dossier de travail OOXML — la copie
+ * extraite d'un `.docx`, rangée sous `WORKSPACE_SUBDIR` dans un sous-dossier
+ * dont le nom finit par `OOXML_WORKDIR_SUFFIX`. Tout son sous-arbre est classé
+ * espace de travail (accessible, filtré à la lecture) sans inscription dans
+ * `protection.json`. Le `.docx` original n'est pas dans ce sous-dossier : il
+ * reste protégé. Seul un *dossier* intermédiaire compte — un fichier isolé
+ * nommé `…-ooxml` sous `WORKSPACE_SUBDIR` reste, lui, protégé.
+ */
+function isOoxmlWorkspacePath(absolutePath, caseRoot) {
+  const key = relativeKey(absolutePath, caseRoot);
+  if (!key) return false;
+  const segments = key.split('/');
+  if (segments[0] !== WORKSPACE_SUBDIR) return false;
+  return segments.slice(1, -1).some((segment) => segment.toLowerCase().endsWith(OOXML_WORKDIR_SUFFIX));
+}
+
+/**
  * Un fichier est protégé s'il est dans le dossier, qu'il n'est ni Markdown ni
  * JSON, et qu'il ne figure dans *aucune* des deux listes d'exceptions (espace
  * de travail ou ressource, toutes deux accessibles à l'IA). `state` évite de
@@ -225,6 +251,8 @@ function isProtectedFile(absolutePath, caseRoot, state = null) {
   if (!absolutePath || !caseRoot) return false;
   const key = exceptionKey(absolutePath, caseRoot);
   if (!key) return false;
+  // Copie extraite d'un .docx : espace de travail implicite, jamais coffre-fort.
+  if (isOoxmlWorkspacePath(absolutePath, caseRoot)) return false;
   const { unprotected, resources } = state || readProtection(caseRoot);
   return !unprotected.has(key) && !(resources && resources.has(key));
 }
@@ -279,6 +307,7 @@ module.exports = {
   isMappingFile,
   locateCase,
   isProtectedFile,
+  isOoxmlWorkspacePath,
   isResourceFile,
   markdownCounterpart,
   normalizeOriginalName,
@@ -291,4 +320,5 @@ module.exports = {
   READABLE_EXTENSIONS,
   FORBIDDEN_JSON_PATTERNS,
   WORKSPACE_SUBDIR,
+  OOXML_WORKDIR_SUFFIX,
 };
