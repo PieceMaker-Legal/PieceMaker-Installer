@@ -11,10 +11,10 @@ const path = require('path');
 const execPromise = promisify(exec);
 
 async function verifyCertificates() {
-  const addonDir = __dirname;
-  const caCert = path.join(addonDir, 'piecemaker-ca.crt');
-  const serverCert = path.join(addonDir, 'localhost.crt');
-  const serverKey = path.join(addonDir, 'localhost.key');
+  const certDir = __dirname;
+  const caCert = path.join(certDir, 'piecemaker-ca.crt');
+  const serverCert = path.join(certDir, 'localhost.crt');
+  const serverKey = path.join(certDir, 'localhost.key');
 
   console.log('🔍 Vérification des certificats SSL PieceMaker\n');
   console.log('='.repeat(60));
@@ -36,7 +36,7 @@ async function verifyCertificates() {
 
   if (!allFilesExist) {
     console.log('\n❌ Certains fichiers sont manquants.');
-    console.log('   Exécutez: node generate-ca-certificates.js');
+    console.log('   Exécutez depuis la racine du dépôt: node websocket-server/generate-ca-certificates.cjs');
     return;
   }
 

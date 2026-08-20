@@ -3263,10 +3263,10 @@ app.post('/api/modify-ooxml-styles', async (req, res) => {
     });
   }
 });
-// Chemins des certificats SSL signés par CA (UNIQUEMENT localhost.crt/localhost.key)
+// Chemins des certificats SSL et de la CA générés dans websocket-server/
 const keyPath = path.join(__dirname, 'localhost.key');
 const certPath = path.join(__dirname, 'localhost.crt');
-const caCertPath = path.join(__dirname, '..', 'certificates', 'piecemaker-ca.crt');
+const caCertPath = path.join(__dirname, 'piecemaker-ca.crt');
 
 // Vérifier la présence des certificats
 if (!fs.existsSync(keyPath) || !fs.existsSync(certPath)) {
@@ -3277,11 +3277,8 @@ if (!fs.existsSync(keyPath) || !fs.existsSync(certPath)) {
   console.error(`  - ${certPath}`);
   console.error(`  - ${caCertPath} (CA - optionnel mais recommandé)`);
   console.error('');
-  console.error('Générez-les via l\'application PieceMaker :');
-  console.error('  → Cliquez sur "🔐 Approuver les certificats SSL"');
-  console.error('');
-  console.error('Ou générez-les manuellement :');
-  console.error('  node websocket-server/generate-ca-certificates.js');
+  console.error('Générez-les avec l\'étape d\'installation 05 — Certificats HTTPS — ou manuellement depuis la racine du dépôt :');
+  console.error('  node websocket-server/generate-ca-certificates.cjs');
   console.error('');
   process.exit(1);
 }
@@ -3290,11 +3287,11 @@ console.log(`✅ Certificats SSL trouvés: ${path.basename(certPath)} / ${path.b
 
 // Vérifier si le CA est disponible pour la chaîne complète
 if (fs.existsSync(caCertPath)) {
-  console.log(`🔐 Certificat serveur signé par CA: ${path.basename(caCertPath)}`);
-  console.log('📋 Chaîne de confiance: PieceMaker Root CA → localhost.crt');
+  console.log(`🔐 Certificat CA disponible pour la chaîne TLS: ${path.basename(caCertPath)}`);
+  console.log('📋 Chaîne présentée: localhost.crt → PieceMaker Root CA');
 } else {
-  console.log('⚠️ Certificat CA (piecemaker-ca.crt) non trouvé - la chaîne de confiance ne sera pas complète');
-  console.log('   Générez le CA avec: node websocket-server/generate-ca-certificates.js');
+  console.log('⚠️ Certificat CA (piecemaker-ca.crt) non trouvé — seul le certificat serveur sera présenté');
+  console.log('   Générez les certificats avec: node websocket-server/generate-ca-certificates.cjs');
 }
 
 // Options HTTPS avec chaîne de certificats complète
@@ -3324,10 +3321,10 @@ if (caCertPath && fs.existsSync(caCertPath)) {
   console.log(`🔐 Le certificat affiché sur https://localhost:${PORT} est:`);
   console.log('   ✅ localhost.crt (CN=localhost)');
   console.log('   ✅ Signé par: PieceMaker Root CA');
-  console.log('   ✅ Installé dans les certificats racine du système');
+  console.log('   ℹ️ À installer dans les autorités racines de confiance du système');
   console.log('');
-  console.log('✅ Word et les navigateurs accepteront automatiquement ce certificat');
-  console.log('   car le CA est dans les autorités racines de confiance.');
+  console.log('ℹ️ Le CA doit être installé dans les autorités racines de confiance');
+  console.log('   pour que Word et les navigateurs approuvent automatiquement la connexion.');
   console.log('═══════════════════════════════════════════════════════════');
   console.log('');
 } else {
@@ -3336,7 +3333,7 @@ if (caCertPath && fs.existsSync(caCertPath)) {
   console.log(`   Certificat utilisé: ${path.basename(certPath)} (sans chaîne CA)`);
   console.log('   Cela peut causer des avertissements de sécurité.');
   console.log('');
-  console.log('   Pour résoudre: Cliquez sur "🔐 Approuver les certificats SSL" dans l\'app');
+  console.log('   Pour résoudre: générez les certificats avec: node websocket-server/generate-ca-certificates.cjs');
   console.log('');
 }
 
