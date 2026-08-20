@@ -23,12 +23,14 @@ const { isSocieteCode } = require('./legal-forms.cjs');
 const DOCUMENT_INDEX_RELATIVE_PATH = '.piecemaker/document-index.json';
 
 // Corrections manuelles du cabinet (nature / date / lieu + champs libres), dans
-// un fichier SÉPARÉ que le pipeline Python ne réécrit jamais : un re-scan ne
-// peut donc pas écraser ce qu'un utilisateur a corrigé à la main. Clé identique
-// à l'index (`stateKey` du chemin relatif). C'est une annotation propre à la vue
-// cabinet : elle n'est appliquée qu'en mode ré-identifié, jamais en mode
-// « codes seuls » (elle porte du texte libre saisi en clair).
-const DOCUMENT_INDEX_OVERRIDES_RELATIVE_PATH = '.piecemaker/document-index-overrides.json';
+// la racine `overrides` du MÊME index. Le pipeline Python préserve cette racine
+// lors d'un re-scan. Clé identique aux documents (`stateKey` du chemin relatif).
+// C'est une annotation propre à la vue cabinet : elle n'est appliquée qu'en mode
+// ré-identifié, jamais en mode « codes seuls » (elle porte du texte libre saisi
+// en clair).
+//
+// Ancien fichier lu uniquement pour migration lors de la prochaine correction.
+const LEGACY_DOCUMENT_INDEX_OVERRIDES_RELATIVE_PATH = '.piecemaker/document-index-overrides.json';
 
 const OVERRIDE_MAX_FIELDS = 24;
 
@@ -36,8 +38,8 @@ function documentIndexFile(caseRoot) {
   return path.join(caseRoot, ...DOCUMENT_INDEX_RELATIVE_PATH.split('/'));
 }
 
-function documentIndexOverridesFile(caseRoot) {
-  return path.join(caseRoot, ...DOCUMENT_INDEX_OVERRIDES_RELATIVE_PATH.split('/'));
+function legacyDocumentIndexOverridesFile(caseRoot) {
+  return path.join(caseRoot, ...LEGACY_DOCUMENT_INDEX_OVERRIDES_RELATIVE_PATH.split('/'));
 }
 
 function cleanOverrideString(value, max) {
@@ -75,24 +77,26 @@ function isEmptyOverride(entry) {
   return entry.nature == null && entry.dateIso == null && entry.juridiction == null && entry.fields.length === 0;
 }
 
-/** Lecture tolérante des corrections manuelles ; fichier absent → aucune correction. */
-function readDocumentIndexOverrides(caseRoot) {
-  let raw;
-  try {
-    raw = JSON.parse(fs.readFileSync(documentIndexOverridesFile(caseRoot), 'utf8').replace(/^﻿/, ''));
-  } catch {
-    return { version: 1, documents: {} };
-  }
-  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
-  const documents = source.documents && typeof source.documents === 'object' && !Array.isArray(source.documents)
-    ? source.documents
-    : {};
+function normalizeOverrides(documents) {
+  const source = documents && typeof documents === 'object' && !Array.isArray(documents) ? documents : {};
   const clean = {};
-  for (const [key, entry] of Object.entries(documents)) {
+  for (const [key, entry] of Object.entries(source)) {
     if (!/^[a-f0-9]{64}$/i.test(key)) continue;
     clean[key.toLowerCase()] = normalizeOverrideEntry(entry);
   }
-  return { version: 1, documents: clean };
+  return clean;
+}
+
+/** Lit l'ancien fichier séparé, uniquement pour le migrer sans perte. */
+function readLegacyDocumentIndexOverrides(caseRoot) {
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(legacyDocumentIndexOverridesFile(caseRoot), 'utf8').replace(/^﻿/, ''));
+  } catch {
+    return {};
+  }
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  return normalizeOverrides(source.documents);
 }
 
 /**
@@ -104,19 +108,28 @@ function readDocumentIndexOverrides(caseRoot) {
 function writeDocumentIndexOverride(caseRoot, relativePath, override) {
   const key = stateKey(relativePath);
   if (!key) throw new Error('Chemin de pièce invalide.');
-  const current = readDocumentIndexOverrides(caseRoot);
+  const current = readDocumentIndex(caseRoot);
+  // L'index courant prime ; les autres anciennes corrections sont rapatriées.
+  current.overrides = { ...readLegacyDocumentIndexOverrides(caseRoot), ...current.overrides };
   const normalized = normalizeOverrideEntry({ ...override, updatedAt: new Date().toISOString() });
   if (isEmptyOverride(normalized)) {
-    delete current.documents[key];
+    delete current.overrides[key];
   } else {
-    current.documents[key] = normalized;
+    current.overrides[key] = normalized;
   }
-  const file = documentIndexOverridesFile(caseRoot);
+  const file = documentIndexFile(caseRoot);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temporary = `${file}.piecemaker-${process.pid}.tmp`;
-  fs.writeFileSync(temporary, `${JSON.stringify(current, null, 2)}\n`, { mode: 0o600 });
+  // Fichier interne compact : moins de volume et de tokens si un outil le lit.
+  fs.writeFileSync(temporary, `${JSON.stringify(current)}\n`, { mode: 0o600 });
   fs.renameSync(temporary, file);
-  return current.documents[key] || null;
+  // Suppression seulement après l'écriture atomique réussie de la migration.
+  try {
+    fs.unlinkSync(legacyDocumentIndexOverridesFile(caseRoot));
+  } catch (error) {
+    if (error && error.code !== 'ENOENT') throw error;
+  }
+  return current.overrides[key] || null;
 }
 
 /** Lecture tolérante : un index absent ou corrompu donne un index vide. */
@@ -125,7 +138,7 @@ function readDocumentIndex(caseRoot) {
   try {
     raw = JSON.parse(fs.readFileSync(documentIndexFile(caseRoot), 'utf8').replace(/^﻿/, ''));
   } catch {
-    return { version: 1, documents: {} };
+    return { version: 1, documents: {}, overrides: readLegacyDocumentIndexOverrides(caseRoot) };
   }
   const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   const documents = source.documents && typeof source.documents === 'object' && !Array.isArray(source.documents)
@@ -144,7 +157,17 @@ function readDocumentIndex(caseRoot) {
       updatedAt: typeof entry.updatedAt === 'string' ? entry.updatedAt : null,
     };
   }
-  return { version: 1, documents: clean };
+  const embeddedOverrides = normalizeOverrides(source.overrides);
+  return {
+    version: 1,
+    documents: clean,
+    overrides: { ...readLegacyDocumentIndexOverrides(caseRoot), ...embeddedOverrides },
+  };
+}
+
+/** Vue de compatibilité des corrections manuelles. */
+function readDocumentIndexOverrides(caseRoot) {
+  return { version: 1, documents: readDocumentIndex(caseRoot).overrides };
 }
 
 /** Catégorie d'un code, déduite de sa famille (même vocabulaire que le pipeline). */
@@ -203,7 +226,7 @@ async function buildChronology(caseRoot, { deanonymize = false } = {}) {
   // Les corrections manuelles n'existent que pour la vue cabinet : elles portent
   // du texte libre saisi en clair (lieu, champs), qui n'a rien à faire dans la
   // sortie « codes seuls ». En mode codes, on garde strictement les valeurs GLiNER.
-  const overrides = deanonymize ? readDocumentIndexOverrides(caseRoot) : { documents: {} };
+  const overrides = deanonymize ? index.overrides : {};
   const mapping = readCaseMapping(caseRoot);
   const reverse = mapping.reverse_mapping || {};
   // Un code renuméroté/supprimé dans l'éditeur ne doit pas rester fantôme dans le
@@ -237,7 +260,7 @@ async function buildChronology(caseRoot, { deanonymize = false } = {}) {
   for (const file of originals) {
     const key = stateKey(file.path);
     const entry = index.documents[key] || null;
-    const override = overrides.documents[key] || null;
+    const override = overrides[key] || null;
     const docId = file.path;
     const codes = [];
     if (entry) {
@@ -343,9 +366,7 @@ async function buildChronology(caseRoot, { deanonymize = false } = {}) {
 
 module.exports = {
   DOCUMENT_INDEX_RELATIVE_PATH,
-  DOCUMENT_INDEX_OVERRIDES_RELATIVE_PATH,
   documentIndexFile,
-  documentIndexOverridesFile,
   readDocumentIndex,
   readDocumentIndexOverrides,
   writeDocumentIndexOverride,

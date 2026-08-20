@@ -1483,7 +1483,14 @@ def load_document_index(index_path: Path) -> Dict:
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         raw = {}
     documents = raw.get("documents", {}) if isinstance(raw, dict) else {}
-    return {"version": 1, "documents": documents if isinstance(documents, dict) else {}}
+    overrides = raw.get("overrides", {}) if isinstance(raw, dict) else {}
+    return {
+        "version": 1,
+        "documents": documents if isinstance(documents, dict) else {},
+        # Corrections manuelles écrites par le serveur Node : un re-scan met à
+        # jour `documents`, mais ne doit jamais les effacer.
+        "overrides": overrides if isinstance(overrides, dict) else {},
+    }
 
 
 def _mapping_code_lookup(final_mapping_data: Dict) -> Dict[str, str]:
@@ -1611,7 +1618,8 @@ def write_document_index(
     index_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = index_path.with_name(f"{index_path.name}.piecemaker-{os.getpid()}.tmp")
     with open(temporary, "w", encoding="utf-8") as handle:
-        json.dump(index, handle, indent=2, ensure_ascii=False)
+        # Index interne compact : moins de volume et de tokens à la lecture.
+        json.dump(index, handle, ensure_ascii=False, separators=(",", ":"))
         handle.write("\n")
     os.chmod(temporary, 0o600)
     os.replace(temporary, index_path)

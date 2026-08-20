@@ -89,6 +89,23 @@ def test_write_document_index_merges_across_runs():
     print("✓ write_document_index merges documents across runs")
 
 
+def test_write_document_index_preserves_manual_overrides():
+    final = {"mapping": {}}
+    with tempfile.TemporaryDirectory() as directory:
+        index_path = Path(directory) / "document-index.json"
+        key = hashlib.sha256(b"A.pdf").hexdigest()
+        index_path.write_text(json.dumps({
+            "version": 1,
+            "documents": {},
+            "overrides": {key: {"nature": "jugement"}},
+        }), encoding="utf-8")
+        write_document_index(index_path, "/case",
+                             [{"source": "/case/A.pdf", "entities": {}, "document_meta": {}}], final)
+        data = json.loads(index_path.read_text(encoding="utf-8"))
+        assert data["overrides"][key]["nature"] == "jugement"
+    print("✓ write_document_index preserves manual overrides")
+
+
 def test_juridiction_scrub_drops_party_names_keeps_courts():
     final = {"mapping": {"URGOT SA": "SOCIETE_SA_06", "CAITLYN SA": "SOCIETE_SA_02",
                          "Bernard Gilly": "PERSONNE_PHYSIQUE_01"}}
@@ -139,6 +156,7 @@ if __name__ == "__main__":
     test_codes_for_entities_dedups_and_sorts()
     test_write_document_index_keys_by_hash_of_relpath()
     test_write_document_index_merges_across_runs()
+    test_write_document_index_preserves_manual_overrides()
     test_juridiction_scrub_drops_party_names_keeps_courts()
     test_write_document_index_never_persists_a_leaked_juridiction()
     test_state_key_is_nfc_stable()

@@ -8,7 +8,6 @@ const test = require('node:test');
 const {
   readDocumentIndex,
   documentIndexFile,
-  documentIndexOverridesFile,
   readDocumentIndexOverrides,
   writeDocumentIndexOverride,
   categoryForCode,
@@ -75,9 +74,9 @@ test('categoryForCode maps every code family', () => {
 
 test('readDocumentIndex tolerates a missing or corrupt file', () => {
   const caseRoot = fixture();
-  assert.deepEqual(readDocumentIndex(caseRoot), { version: 1, documents: {} });
+  assert.deepEqual(readDocumentIndex(caseRoot), { version: 1, documents: {}, overrides: {} });
   fs.writeFileSync(documentIndexFile(caseRoot), 'not json {{{');
-  assert.deepEqual(readDocumentIndex(caseRoot), { version: 1, documents: {} });
+  assert.deepEqual(readDocumentIndex(caseRoot), { version: 1, documents: {}, overrides: {} });
   fs.rmSync(caseRoot, { recursive: true, force: true });
 });
 
@@ -232,15 +231,39 @@ test('an emptied override deletes the entry (reverts to detection)', async () =>
   fs.rmSync(caseRoot, { recursive: true, force: true });
 });
 
-test('override files are written 0600 and keyed by the same hash as the index', async () => {
+test('manual overrides live in the sole document-index.json, mode 0600', async () => {
   const caseRoot = fixture({ index: SAMPLE_INDEX(), mapping: SAMPLE_MAPPING() });
   writeDocumentIndexOverride(caseRoot, 'Assignation.pdf', { nature: 'jugement' });
-  const file = documentIndexOverridesFile(caseRoot);
+  const file = documentIndexFile(caseRoot);
   assert.ok(fs.existsSync(file));
   if (process.platform !== 'win32') {
     assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   }
   const stored = JSON.parse(fs.readFileSync(file, 'utf8'));
-  assert.ok(stored.documents[stateKey('Assignation.pdf')]);
+  assert.equal(stored.documents[stateKey('Assignation.pdf')].nature, 'assignation');
+  assert.equal(stored.overrides[stateKey('Assignation.pdf')].nature, 'jugement');
+  assert.deepEqual(
+    fs.readdirSync(path.dirname(file)).filter((name) => name.startsWith('document-index')),
+    ['document-index.json'],
+  );
+  fs.rmSync(caseRoot, { recursive: true, force: true });
+});
+
+test('a legacy override file is migrated into document-index.json without loss', () => {
+  const caseRoot = fixture({ index: SAMPLE_INDEX(), mapping: SAMPLE_MAPPING() });
+  const legacyFile = path.join(caseRoot, '.piecemaker', 'document-index-overrides.json');
+  fs.writeFileSync(legacyFile, JSON.stringify({
+    version: 1,
+    documents: {
+      [stateKey('Courrier.pdf')]: { nature: 'mise en demeure' },
+    },
+  }));
+
+  writeDocumentIndexOverride(caseRoot, 'Assignation.pdf', { nature: 'jugement' });
+
+  const stored = JSON.parse(fs.readFileSync(documentIndexFile(caseRoot), 'utf8'));
+  assert.equal(stored.overrides[stateKey('Courrier.pdf')].nature, 'mise en demeure');
+  assert.equal(stored.overrides[stateKey('Assignation.pdf')].nature, 'jugement');
+  assert.equal(fs.existsSync(legacyFile), false);
   fs.rmSync(caseRoot, { recursive: true, force: true });
 });
