@@ -169,24 +169,37 @@ test('la vue Dossiers suit le bureau Git avec trois onglets et des détails int�
   assert.match(html, /id="telegramCaseView" class="inline-detail/);
   assert.doesNotMatch(html, /id="mappingDialog"|Restaurer cet état/);
   assert.doesNotMatch(app, /showModal\(\).*mapping|restoreSelectedRevision|restoreRevision/);
-  assert.match(app, /a\.protected !== b\.protected/);
+  // Les pièces sont affichées dans un ordre stable ; leur état d’accès est
+  // rendu ensuite dans les trois colonnes de la mosaïque.
+  assert.match(app, /visibleOriginals\(\)\.slice\(\)\.sort\(\(a, b\) => a\.path\.localeCompare\(b\.path, 'fr'\)\)/);
+  assert.match(app, /for \(const group of PIECE_STATES\)/);
   assert.match(app, /\/api\/admin\/repository\/cases/);
   assert.match(app, /\/api\/admin\/branches\/current/);
   assert.match(app, /\/api\/admin\/telegram\/dossiers/);
 });
 
-test('la liste des pièces affiche les états converti, anonymisé et protégé', () => {
+test('la liste des pièces expose les trois états d’accès et le traitement associé', () => {
   const app = read('admin/app.js');
   const css = read('admin/styles.css');
 
-  assert.match(app, /if \(original\.converted\) badges\.append\(originalStatusBadge\('converted', 'Converti'\)\)/);
-  assert.match(app, /if \(original\.scanned\) badges\.append\(originalStatusBadge\('scanned', 'Anonymisé'\)\)/);
-  assert.match(app, /controls\.append\(checkbox, shieldButton\(original\)\)/);
+  for (const state of ['vault', 'workspace', 'resource']) {
+    assert.match(app, new RegExp(`key: '${state}'`));
+  }
+  assert.match(app, /function pieceState\(original\) \{[\s\S]*if \(original\.resource\) return 'resource';[\s\S]*return original\.protected \? 'vault' : 'workspace';[\s\S]*\}/);
+  assert.match(app, /function stateSelector\(original\)/);
+  assert.match(app, /controls\.append\(checkbox, stateSelector\(original\)\)/);
+  // Une ressource ne peut pas être envoyée au pipeline de conversion/analyse.
+  assert.match(app, /const selectable = known\.has\(original\.path\) && !isResource/);
+  assert.match(app, /if \(!isResource && original\.converted\) badges\.append\(originalStatusBadge\('converted', 'Converti'\)\)/);
+  assert.match(app, /if \(!isResource && original\.scanned\) badges\.append\(originalStatusBadge\('scanned', 'Anonymisé'\)\)/);
   assert.match(css, /\.protection-badge\.converted/);
   assert.match(css, /\.protection-badge\.scanned/);
+  for (const stateClass of ['protected', 'accessible', 'resource']) {
+    assert.match(css, new RegExp(`\\.state-option\\.active\\.${stateClass}`));
+  }
 });
 
-test('les trois outils des pièces protégées partagent le volet de révision sans titres redondants', () => {
+test('les trois outils des pièces protégées partagent le volet de révision et la mosaïque à trois états', () => {
   const html = read('admin/index.html');
   const app = read('admin/app.js');
   const css = read('admin/styles.css');
@@ -203,9 +216,10 @@ test('les trois outils des pièces protégées partagent le volet de révision s
   }
   assert.match(app, /byId\('originalsView'\)\.hidden = view !== 'originals'/);
   assert.match(css, /\.revision-column\.protected-detail-mode \.revision-header \{ display: none; \}/);
-  assert.match(css, /\.original-mosaic \{[^}]*grid-template-columns: repeat\(2,/);
+  assert.match(css, /\.original-mosaic \{[^}]*grid-template-columns: repeat\(3,/);
   assert.match(css, /\.original-mosaic-column\.accessible/);
   assert.match(css, /\.original-mosaic-column\.protected/);
+  assert.match(css, /\.original-mosaic-column\.resource/);
 });
 
 test('le graphe des liens masque complètement la frise chronologique', () => {
