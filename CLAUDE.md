@@ -5,6 +5,12 @@ il vit dans le clone de développement et n'est jamais poussé. La persona
 utilisateur (« Avocat ») livrée au clone d'exécution est le gabarit versionné
 `installer/templates/root-CLAUDE.md`, déposé par l'étape d'installation 09.
 
+## Audit du projet
+
+Le rapport complet de l'audit du code, avec les résultats Graphify, les éléments
+obsolètes, les défauts confirmés et les limites de l'analyse, est disponible
+dans [`docs/AUDIT-Project.md`](docs/AUDIT-Project.md).
+
 ## Ce qu'est ce dépôt
 
 Un monorepo qui est à la fois :
