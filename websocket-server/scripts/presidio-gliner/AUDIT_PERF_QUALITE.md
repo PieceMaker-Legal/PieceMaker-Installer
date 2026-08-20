@@ -11,11 +11,11 @@
 >   la correction de la fuite liée aux tirets Unicode ;
 > - [`eval/BACKENDS_MESURES.md`](eval/BACKENDS_MESURES.md) rassemble les mesures comparatives des
 >   backends ;
-> - les scripts [`eval/verify_substitution.cjs`](eval/verify_substitution.cjs) et
->   [`eval/verify_whitespace.py`](eval/verify_whitespace.py), ainsi que les résultats
->   [`eval/eval_results.json`](eval/eval_results.json), [`eval/bench_results.json`](eval/bench_results.json)
->   et [`eval/sweep_results.json`](eval/sweep_results.json), indiquent les vérifications
->   effectivement rejouables ou leurs sorties conservées.
+> - les scripts [`eval/verify_substitution.cjs`](eval/verify_substitution.cjs),
+>   [`eval/verify_whitespace.py`](eval/verify_whitespace.py), [`eval/evaluate.py`](eval/evaluate.py)
+>   et [`eval/bench_backend.py`](eval/bench_backend.py) indiquent les vérifications
+>   effectivement rejouables. Leurs JSON de sortie sont régénérables localement et ne sont
+>   volontairement pas conservés dans le dépôt.
 >
 > Les sections historiques ci-dessous sont volontairement laissées inchangées : leurs mentions
 > « à faire », estimations et résultats partiels ne donnent pas le statut courant et ne prouvent

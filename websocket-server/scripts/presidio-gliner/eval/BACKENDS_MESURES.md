@@ -5,7 +5,8 @@ trois tranches annotées (`slice_A/B/C`, 33 chunks) et scoré avec `evaluate.py`
 le sweep de configuration : **rappel sur entités distinctes**, précision, et nombre de mots que les
 faux positifs réécriraient.
 
-Reproduire : `bench_backend.py {fp32,int8}` · `evaluate.py bench_results.json bench_eval.json` ·
+Reproduire (les JSON de sortie sont locaux et ignorés par Git) :
+`bench_backend.py {fp32,int8}` · `evaluate.py bench_results.json bench_eval.json` ·
 `encoder_backends.py {capture,export,bench <backend>}` · `profile_split.py`.
 
 ---

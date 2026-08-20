@@ -5,3 +5,10 @@ artifacts/
 # Cartes d entites produites par les verifications (contiennent de la PII)
 gensight_map/
 fr_maps/
+
+# Benchmark/evaluation outputs: reproducible from the scripts and retained
+# locally only; the source corpus and gold annotation remain versioned.
+bench_results.json
+bench_eval.json
+eval_results.json
+sweep_results.json

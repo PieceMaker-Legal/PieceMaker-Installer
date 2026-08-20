@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gold import GOLD, PERSON_KEY
 
 S = os.path.dirname(os.path.abspath(__file__))
-# Defaults to the configuration sweep; bench_eval.py passes bench_results.json to score
+# Defaults to the configuration sweep; pass bench_results.json explicitly to score
 # inference backends with this exact scoring.
 RESULTS_FILE = sys.argv[1] if len(sys.argv) > 1 else "sweep_results.json"
 OUT_FILE = sys.argv[2] if len(sys.argv) > 2 else "eval_results.json"
