@@ -3,8 +3,9 @@
  *
  * Read-only probe of the toolchain the rest of the installer depends on:
  * Node >= 18 (this process already proves Node exists, only the version is
- * checked), npm, git, Python >= 3.10 (via findPython()) and LibreOffice
- * (conversion des pièces Excel/Word en PDF avant tamponnage). Disk space is
+ * checked), npm, git, Python >= 3.10 (via findPython()), LibreOffice
+ * (conversion des pièces Excel/Word en PDF avant tamponnage) et pandoc/typst
+ * (facultatifs, voie génération — chronologie/historique). Disk space is
  * intentionally not checked — out of scope per the installer spec.
  */
 
@@ -14,6 +15,7 @@ import { commandExists, compareVersions, npmBin, npmEnv, runCapture, IS_WINDOWS,
 
 const require = createRequire(import.meta.url);
 const { findSoffice } = require(`${REPO_ROOT}/websocket-server/lib/office-to-pdf.cjs`);
+const { findPandoc, findTypst } = require(`${REPO_ROOT}/websocket-server/lib/doc-generate.cjs`);
 
 export const meta = {
   id: '01-prerequis',
@@ -46,11 +48,17 @@ function probe(ctx) {
   // doit être convertie en PDF au préalable (websocket-server/lib/office-to-pdf.cjs).
   const soffice = findSoffice();
 
-  return { nodeVersion, nodeOk, npmOk, npmVersion, gitOk, pythonOk, winToolchainOk, soffice };
+  // pandoc/typst : facultatifs, améliorent la qualité des exports de la
+  // chronologie et de l'historique (voie génération) ; sans eux, repli
+  // intégral et fonctionnel sur LibreOffice (installer/steps/10-pandoc.mjs).
+  const pandoc = findPandoc();
+  const typst = findTypst();
+
+  return { nodeVersion, nodeOk, npmOk, npmVersion, gitOk, pythonOk, winToolchainOk, soffice, pandoc, typst };
 }
 
 function report(probeResult, ctx) {
-  const { nodeVersion, nodeOk, npmOk, npmVersion, gitOk, pythonOk, winToolchainOk, soffice } = probeResult;
+  const { nodeVersion, nodeOk, npmOk, npmVersion, gitOk, pythonOk, winToolchainOk, soffice, pandoc, typst } = probeResult;
 
   if (nodeOk) log.ok(`Node.js ${nodeVersion} (>= ${MIN_NODE} requis)`);
   else log.error(`Node.js ${nodeVersion} — version >= ${MIN_NODE} requise`);
@@ -66,6 +74,12 @@ function report(probeResult, ctx) {
 
   if (soffice) log.ok(`LibreOffice détecté (${soffice})`);
   else log.warn('LibreOffice introuvable — l\'étape "10-libreoffice" l\'installera (requis pour tamponner les pièces Excel et Word)');
+
+  if (pandoc) log.ok(`pandoc détecté (${pandoc})`);
+  else log.warn('pandoc introuvable — facultatif, améliore la qualité des exports de la chronologie et de l\'historique (piecemaker --step 10-pandoc)');
+
+  if (typst) log.ok(`typst détecté (${typst})`);
+  else log.warn('typst introuvable — facultatif, sert de moteur PDF à pandoc pour ces exports (piecemaker --step 10-pandoc)');
 
   if (IS_WINDOWS) {
     if (winToolchainOk) log.ok('Outils de compilation C++ détectés (nécessaires à node-pty)');

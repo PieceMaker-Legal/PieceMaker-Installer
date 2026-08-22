@@ -293,6 +293,7 @@ module.exports = {
   SPREADSHEET_EXTENSIONS,
   classify,
   convertToPdf,
+  execFilePromise,
   findSoffice,
   imageToPdfBytes,
   isSpreadsheet,

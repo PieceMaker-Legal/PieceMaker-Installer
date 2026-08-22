@@ -125,6 +125,7 @@ environnement virtuel Python et modèles GLiNER2 + spaCy.
 | 09-claude-assets | Composants Claude Code PieceMaker | enregistre les skills, agents et hooks PieceMaker lorsque Claude Code est présent |
 | 09-codex-plugin | Skills Codex PieceMaker | enregistre les skills PieceMaker lorsque la CLI Codex est présente |
 | 10-libreoffice | Conversion des pièces en PDF (LibreOffice) | installe LibreOffice, requis pour tamponner les pièces Excel et Word |
+| 10-pandoc | Génération PDF/DOCX (pandoc + typst) | installe pandoc et typst, utilisés pour l’export de la chronologie et de l’historique |
 | 11-document-skills | Skill docx (documents Word) | installe et active le plugin officiel document-skills |
 | 12-word-taskpane | Ouverture automatique du volet Word | permet à PieceMaker d’ouvrir Word avec le volet déjà affiché |
 | 13-garde-secrets | Garde-fou secrets (Claude Code) | empêche Claude Code de lire le `.env` du serveur |

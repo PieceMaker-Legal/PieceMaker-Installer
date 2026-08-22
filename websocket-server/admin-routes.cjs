@@ -54,7 +54,8 @@ const {
   graphifyErrorGraph,
 } = require('./graphify-document-graph.cjs');
 const { renderChronologyHtml, renderHistoryHtml } = require('./lib/export-render.cjs');
-const { officeToPdf, outputExtension } = require('./lib/office-to-pdf.cjs');
+const { outputExtension } = require('./lib/office-to-pdf.cjs');
+const { generateDocument } = require('./lib/doc-generate.cjs');
 const {
   readInstitutionalTerms,
   writeInstitutionalTerms,
@@ -1880,8 +1881,10 @@ function asciiFallbackFilename(name) {
 
 /**
  * Génère un document imprimable (PDF/DOCX) à partir d'un HTML déjà rendu, via
- * LibreOffice (`office-to-pdf.cjs`), et l'envoie en téléchargement. Factorisée
- * entre les deux routes d'export : seule leur mise en forme HTML diffère.
+ * pandoc (`doc-generate.cjs`) — avec repli intégral sur LibreOffice
+ * (`office-to-pdf.cjs`) si pandoc est absent du poste —, et l'envoie en
+ * téléchargement. Factorisée entre les deux routes d'export : seule leur
+ * mise en forme HTML diffère.
  *
  * Le dossier temporaire contient le HTML source PUIS le document produit —
  * potentiellement en clair, avec les vrais noms des clients (vue cabinet
@@ -1889,8 +1892,8 @@ function asciiFallbackFilename(name) {
  * compris si la conversion échoue : aucun fichier ne doit survivre dans /tmp.
  *
  * Les en-têtes ne sont posés qu'une fois le document produit : tant que
- * `officeToPdf` n'a pas résolu, l'appelant peut encore répondre en JSON en cas
- * d'erreur (voir les routes `/repository/chronology/export` et
+ * `generateDocument` n'a pas résolu, l'appelant peut encore répondre en JSON
+ * en cas d'erreur (voir les routes `/repository/chronology/export` et
  * `/history/export`).
  */
 async function sendGeneratedDocument(res, { html, filename, format }) {
@@ -1906,11 +1909,15 @@ async function sendGeneratedDocument(res, { html, filename, format }) {
     }
   };
 
-  let produced;
+  let producedPath;
   try {
-    const htmlPath = path.join(dir, 'export.html');
-    fs.writeFileSync(htmlPath, html, 'utf8');
-    produced = await officeToPdf(htmlPath, dir, { format });
+    const { path: generatedPath, engine } = await generateDocument(html, dir, { format });
+    producedPath = generatedPath;
+    // Trace serveur uniquement (jamais en en-tête ni en corps de réponse) :
+    // permet de diagnostiquer, a posteriori, quel moteur a réellement produit
+    // le document sur ce poste (pandoc+typst, pandoc+libreoffice, ou le
+    // repli libreoffice pur si pandoc est absent).
+    console.log(`[export] ${filename}.${outputExtension(format)} généré via ${engine}`);
   } catch (error) {
     cleanup();
     throw error;
@@ -1924,7 +1931,7 @@ async function sendGeneratedDocument(res, { html, filename, format }) {
     `attachment; filename="${asciiFallbackFilename(fullName)}"; filename*=UTF-8''${encodeURIComponent(fullName)}`,
   );
 
-  const stream = fs.createReadStream(produced);
+  const stream = fs.createReadStream(producedPath);
   // Le nettoyage doit survenir quoi qu'il arrive une fois l'envoi entamé : fin
   // normale (`close`, émis par un ReadStream après `end` comme après un
   // `destroy` sur erreur) ou coupure côté client (`close` sur la réponse).

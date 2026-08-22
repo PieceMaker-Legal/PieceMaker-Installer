@@ -3,10 +3,21 @@
  *
  * Fonctions pures : aucune lecture disque, aucun appel git, aucun accès
  * réseau — uniquement des données en entrée, une chaîne HTML en sortie. Le
- * HTML produit ici est ensuite converti par LibreOffice (headless), ailleurs
- * dans le pipeline ; c'est pourquoi le CSS reste volontairement pauvre
- * (aucun flexbox/grid, aucune ressource externe) : le moteur de rendu de
- * LibreOffice ne les supporte pas.
+ * HTML produit ici est ensuite converti, ailleurs dans le pipeline
+ * (`doc-generate.cjs`) : par pandoc dans le cas nominal, avec un repli
+ * intégral sur LibreOffice (headless) si pandoc est absent du poste. C'est
+ * précisément ce repli qui oblige à garder le CSS volontairement pauvre
+ * (aucun flexbox/grid, aucune ressource externe) et les attributs HTML
+ * dupliqués sur chaque `<table>` : le moteur de rendu de LibreOffice ne
+ * supporte ni l'un ni l'autre autrement.
+ *
+ * Attention : le lecteur HTML de pandoc est bien plus strict que celui de
+ * LibreOffice et jette intégralement le CSS, `@page` compris — la mise en
+ * page du PDF vient donc des métadonnées passées à pandoc, pas de ce
+ * fichier. Si le rendu pandoc casse, trois constructions d'ici sont à
+ * surveiller en priorité : les `colspan` (séparateur de jour ~ligne 312 et
+ * ligne de total ~ligne 340), le `<tfoot>` (~ligne 339), et les `<br>` en
+ * cellule (~lignes 239 et 243).
  */
 
 const { formatDurationFr } = require('../../piecemaker-plugin/scripts/lib/session-timing.cjs');
@@ -164,7 +175,9 @@ function documentHtml({ title, subtitle, bodyHtml }) {
      l'import, LibreOffice ignore la largeur et les bordures déclarées en CSS :
      seuls les attributs HTML width/border/cellspacing posés sur chaque table
      survivent à la conversion. Les deux sont donc nécessaires — ne retirer ni
-     l'un ni l'autre. */
+     l'un ni l'autre. Ces attributs sont inutiles à pandoc (qui jette tout le
+     CSS et ignore ces attributs HTML de toute façon), mais indispensables au
+     repli LibreOffice : à conserver pour cette seule raison. */
   table {
     width: 100%;
     border-collapse: collapse;
