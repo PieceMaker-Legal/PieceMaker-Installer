@@ -315,6 +315,12 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .history-switch button.active { border-bottom-color: #0969da; background: #fff; color: #0969da; }
 .history-summary { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #d8dee4; padding: 9px 13px; font-size: .75rem; }
 .history-summary span { color: #6e7781; font-size: .68rem; }
+
+/* Barre d'export de l'historique mensuel, visible uniquement sous l'onglet
+   « Historique ». */
+.history-export-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; border-bottom: 1px solid #d8dee4; padding: 9px 13px; background: #fff; }
+.history-export-bar select { flex: 1 1 150px; min-width: 0; }
+.history-export-actions { display: flex; flex: none; gap: 6px; }
 .history-list { min-height: 0; flex: 1; overflow: auto; }
 .manual-commit { display: grid; flex: 0 0 auto; gap: 9px; border-top: 1px solid #d8dee4; padding: 12px; background: #f6f8fa; }
 .manual-commit[hidden] { display: none; }
@@ -569,6 +575,8 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .chronology-pane { display: flex; flex-direction: column; min-height: 0; }
 .chronology-body { flex: 1; min-height: 0; overflow: auto; padding: 2px 2px 8px; }
 .chronology-empty { border: 1px dashed #cbd6d4; border-radius: 10px; padding: 22px; color: var(--muted); text-align: center; }
+
+.chronology-toolbar-actions { display: flex; align-items: center; gap: 8px; }
 
 .chronology-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
 .chronology-summary span { border-radius: 999px; background: #edf1ef; padding: 3px 10px; color: var(--brand-dark); font-size: .74rem; font-weight: 700; }
@@ -960,9 +968,9 @@ html[data-theme="dark"] #history .repository-toolbar { border-bottom-color: #075
 html[data-theme="dark"] #history .toolbar-select-row select { border-color: rgba(255, 255, 255, .38); background: #0d3f3a; color: #e6fffb; color-scheme: dark; }
 html[data-theme="dark"] #history .toolbar-select-row select option { background: var(--dark-surface); color: var(--ink); }
 html[data-theme="dark"] #history .history-column { border-right-color: var(--dark-border); background: var(--dark-surface-muted); }
-html[data-theme="dark"] :is(.protected-tools, #history .originals-note, #history .manual-commit) { background: var(--dark-surface-muted); }
+html[data-theme="dark"] :is(.protected-tools, #history .originals-note, #history .manual-commit, .history-export-bar) { background: var(--dark-surface-muted); }
 html[data-theme="dark"] :is(#history .history-summary, .protected-navigation-button, #history .revision-column, .inline-detail, .history-column, .revision-column, .diff-pane, .diff-content) { background: var(--dark-surface); }
-html[data-theme="dark"] :is(.protected-navigation-button, .inline-detail-toolbar, .history-switch, .history-summary, .manual-commit, .revision-header, .changed-files-pane, .diff-toolbar, .mapping-editor, .mapping-editor-head, .originals-scope) { border-color: var(--line); }
+html[data-theme="dark"] :is(.protected-navigation-button, .inline-detail-toolbar, .history-switch, .history-summary, .history-export-bar, .manual-commit, .revision-header, .changed-files-pane, .diff-toolbar, .mapping-editor, .mapping-editor-head, .originals-scope) { border-color: var(--line); }
 html[data-theme="dark"] :is(.protected-navigation-button, .inline-detail-toolbar, .commit-row, .change-row, .history-date, .changed-file-row, .changed-files-more, .original-mosaic-heading) { border-color: var(--line); }
 html[data-theme="dark"] :is(.protected-navigation-button, .commit-row, .change-row, .changed-files-more, .piece-row, .original-card, .original-mosaic-heading) { background: var(--dark-surface); color: var(--ink); }
 html[data-theme="dark"] :is(.history-switch button, .history-date, .manual-commit, .changed-files-pane, .diff-toolbar, .inline-detail-toolbar, .mapping-editor-head, .original-mosaic-column) { background: var(--dark-surface-muted); }

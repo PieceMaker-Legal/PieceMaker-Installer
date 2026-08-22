@@ -12,11 +12,14 @@ const {
   checkoutHistoryBranch,
   createCommit,
   createHistoryBranch,
+  historyMonths,
   historyRepo,
   historyBranches,
   listCases,
   logPerformance,
   listHistory,
+  listHistoryPeriod,
+  parseCommitTrailers,
   repositoryOverview,
   resolveCommitIdentity,
   resolveCase,
@@ -579,6 +582,74 @@ test('sans sessionId ni durationMs, le commit reste sans trailer PieceMaker', as
   const betaCase = resolveCase(data.casesRoot, 'Dossier Beta');
   const body = git(historyRepo(data.home, betaCase), data.caseB, ['log', '-1', '--pretty=%b', commit.commit]);
   assert.doesNotMatch(body, /PieceMaker-Session|PieceMaker-Temps/);
+});
+
+test('parseCommitTrailers extrait sessionId et durationMs, et nettoie le corps', () => {
+  const body = 'Un commentaire de session.\n\nPieceMaker-Session: sess-42\nPieceMaker-Temps-Session: 5 min 07 s (307000 ms)\n';
+  const parsed = parseCommitTrailers(body);
+  assert.equal(parsed.sessionId, 'sess-42');
+  assert.equal(parsed.durationMs, 307000);
+  assert.equal(parsed.comment, 'Un commentaire de session.');
+  assert.doesNotMatch(parsed.comment, /PieceMaker-/);
+});
+
+test('parseCommitTrailers renvoie durationMs nul quand le trailer de temps est absent', () => {
+  const parsed = parseCommitTrailers('Juste un commentaire.\nPieceMaker-Session: sess-99\n');
+  assert.equal(parsed.sessionId, 'sess-99');
+  assert.equal(parsed.durationMs, null);
+  assert.equal(parsed.comment, 'Juste un commentaire.');
+});
+
+test('parseCommitTrailers sur un corps sans trailer ne renvoie ni session ni durée', () => {
+  const parsed = parseCommitTrailers('');
+  assert.equal(parsed.sessionId, null);
+  assert.equal(parsed.durationMs, null);
+  assert.equal(parsed.comment, '');
+});
+
+test('historyMonths et listHistoryPeriod exposent l’historique par mois avec les fichiers touchés', async (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+
+  const first = await createCommit({
+    casesRoot: data.casesRoot,
+    caseName: 'Dossier Alpha',
+    homeDir: data.home,
+    label: 'Version 1',
+    sessionId: 'sess-mois-1',
+    durationMs: 12_000,
+  });
+  fs.writeFileSync(path.join(data.caseA, 'contrat.md'), '# Contrat anonymisé v2\n');
+  const second = await createCommit({ casesRoot: data.casesRoot, caseName: 'Dossier Alpha', homeDir: data.home, label: 'Version 2' });
+
+  const now = new Date();
+  const currentMonth = now.toISOString().slice(0, 7);
+  const since = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString().slice(0, 10);
+  const until = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString().slice(0, 10);
+
+  assert.deepEqual(await historyMonths(data.casesRoot, data.home, { caseName: 'Dossier Alpha' }), [currentMonth]);
+  // Un dossier sans commit ne casse rien : court-circuit vide, comme listHistory.
+  assert.deepEqual(await historyMonths(data.casesRoot, data.home, { caseName: 'Dossier Beta' }), []);
+
+  const period = await listHistoryPeriod(data.casesRoot, data.home, { caseName: 'Dossier Alpha', since, until });
+  assert.equal(period.length, 2);
+  assert.deepEqual(period.map((entry) => entry.hash), [second.commit, first.commit]);
+
+  const secondEntry = period.find((entry) => entry.hash === second.commit);
+  const firstEntry = period.find((entry) => entry.hash === first.commit);
+  assert.deepEqual(secondEntry.files, ['contrat.md']);
+  assert.deepEqual(firstEntry.files.sort(), ['contrat.md', 'contrat_sensitive_map.json']);
+  assert.equal(firstEntry.filesCount, 2);
+  assert.equal(firstEntry.sessionId, 'sess-mois-1');
+  assert.equal(firstEntry.durationMs, 12000);
+  assert.equal(secondEntry.sessionId, null);
+  assert.equal(secondEntry.durationMs, null);
+
+  // Une période ne couvrant aucun de ces commits renvoie une liste vide.
+  assert.deepEqual(
+    await listHistoryPeriod(data.casesRoot, data.home, { caseName: 'Dossier Alpha', since: '2000-01-01', until: '2000-02-01' }),
+    [],
+  );
 });
 
 test('session-timing dérive le début de session et met en forme la durée', () => {

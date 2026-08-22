@@ -19,10 +19,12 @@ const {
   createCommit,
   createHistoryBranch,
   historyBranches,
+  historyMonths,
   historyRepo,
   isTechnicalCaseDirectoryName,
   listCases,
   listHistory,
+  listHistoryPeriod,
   resolveCase,
   resolveCasesRoot,
   resolveCommitIdentity,
@@ -51,6 +53,8 @@ const {
   buildGraphifyDocumentGraph,
   graphifyErrorGraph,
 } = require('./graphify-document-graph.cjs');
+const { renderChronologyHtml, renderHistoryHtml } = require('./lib/export-render.cjs');
+const { officeToPdf, outputExtension } = require('./lib/office-to-pdf.cjs');
 const {
   readInstitutionalTerms,
   writeInstitutionalTerms,
@@ -861,7 +865,7 @@ async function configurationOverview({ repoRoot, homeDir, userHome, getRuntimeSt
         name: 'Terminal intégré',
         installed: runtime.terminalReady ?? nodePtyReady,
         summary: runtime.terminalReady ?? nodePtyReady
-          ? `PTY local · ${os.userInfo().shell || process.env.COMSPEC || 'shell système'}`
+          ? 'PTY local · second client GNU Screen'
           : 'Le pont PTY optionnel est absent',
         shell: os.userInfo().shell || process.env.COMSPEC || '',
       },
@@ -1839,6 +1843,106 @@ function publicInstallJob(job) {
   return { id: job.id, component: job.component, state: job.state, progress: job.progress, error: job.error };
 }
 
+// `AAAA-MM` : seule forme acceptée pour le mois de l'export d'historique. Cette
+// valeur part ensuite dans des arguments `git log` (`--since`/`--until`) et
+// dans un nom de fichier — on la valide donc avant tout usage.
+const HISTORY_MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+// Formats acceptés par les routes d'export « papier » (chronologie, historique).
+const EXPORT_FORMATS = new Set(['pdf', 'docx']);
+const EXPORT_CONTENT_TYPES = {
+  pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+};
+
+function validateExportFormat(format) {
+  if (!EXPORT_FORMATS.has(format)) throw new Error('Format d’export invalide (pdf ou docx).');
+  return format;
+}
+
+/**
+ * Repli ASCII d'un nom de fichier pour l'en-tête `Content-Disposition` : les
+ * vieux clients HTTP ignorent le paramètre `filename*` et n'affichent que
+ * `filename`, qui doit rester dans le jeu de caractères historique de l'en-tête
+ * (RFC 6266 §4.3). Nos noms contiennent accents, tiret cadratin et guillemets
+ * français (« Chronologie — Dossier Martin ») : on translittère les accents,
+ * puis on réduit le reste du hors-ASCII (tirets, guillemets…) à un tiret
+ * simple, et on retire pour finir tout guillemet droit ou caractère de
+ * contrôle — les deux interdits dans la valeur de l'en-tête.
+ */
+function asciiFallbackFilename(name) {
+  const withoutAccents = String(name).normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+  return withoutAccents
+    .replace(/[^\x20-\x7E]/g, '-')
+    .replace(/["\x00-\x1F\x7F]/g, '')
+    .trim() || 'export';
+}
+
+/**
+ * Génère un document imprimable (PDF/DOCX) à partir d'un HTML déjà rendu, via
+ * LibreOffice (`office-to-pdf.cjs`), et l'envoie en téléchargement. Factorisée
+ * entre les deux routes d'export : seule leur mise en forme HTML diffère.
+ *
+ * Le dossier temporaire contient le HTML source PUIS le document produit —
+ * potentiellement en clair, avec les vrais noms des clients (vue cabinet
+ * ré-identifiée). Il est donc systématiquement détruit après l'envoi, y
+ * compris si la conversion échoue : aucun fichier ne doit survivre dans /tmp.
+ *
+ * Les en-têtes ne sont posés qu'une fois le document produit : tant que
+ * `officeToPdf` n'a pas résolu, l'appelant peut encore répondre en JSON en cas
+ * d'erreur (voir les routes `/repository/chronology/export` et
+ * `/history/export`).
+ */
+async function sendGeneratedDocument(res, { html, filename, format }) {
+  validateExportFormat(format);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-export-'));
+  const cleanup = () => {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Dossier temporaire : un échec de nettoyage n'a aucune conséquence
+      // fonctionnelle, seulement un déchet dans /tmp — on ne le remonte pas.
+    }
+  };
+
+  let produced;
+  try {
+    const htmlPath = path.join(dir, 'export.html');
+    fs.writeFileSync(htmlPath, html, 'utf8');
+    produced = await officeToPdf(htmlPath, dir, { format });
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+
+  const ext = outputExtension(format);
+  const fullName = `${filename}.${ext}`;
+  res.setHeader('Content-Type', EXPORT_CONTENT_TYPES[format]);
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="${asciiFallbackFilename(fullName)}"; filename*=UTF-8''${encodeURIComponent(fullName)}`,
+  );
+
+  const stream = fs.createReadStream(produced);
+  // Le nettoyage doit survenir quoi qu'il arrive une fois l'envoi entamé : fin
+  // normale (`close`, émis par un ReadStream après `end` comme après un
+  // `destroy` sur erreur) ou coupure côté client (`close` sur la réponse).
+  // `fs.rmSync` ci-dessus est idempotent : peu importe lequel des deux
+  // déclenche `cleanup()` en premier.
+  stream.once('close', cleanup);
+  res.once('close', cleanup);
+  // Sans écouteur, un `error` sur le flux remonterait en exception non
+  // interceptée et tuerait le serveur — or il sert aussi le volet Word et les
+  // WebSocket. Les en-têtes sont déjà partis : on ne peut que couper.
+  stream.once('error', (error) => {
+    console.warn(`[export] Lecture du document généré interrompue: ${error.message}`);
+    cleanup();
+    res.destroy();
+  });
+  stream.pipe(res);
+}
+
 function createAdminRouter({
   repoRoot = path.resolve(__dirname, '..'),
   homeDir = path.join(os.homedir(), '.piecemaker'),
@@ -2315,6 +2419,36 @@ function createAdminRouter({
     }
   });
 
+  // Export « papier » (PDF/DOCX) de la chronologie — même règle de vue
+  // (cabinet ré-identifiée par défaut) que la route JSON ci-dessus. Le graphe
+  // interactif (vis-network) n'a pas d'équivalent papier et coûte cher à
+  // construire (appel Graphify) : contrairement à `/repository/chronology`,
+  // cette route ne le construit jamais.
+  router.get('/repository/chronology/export', async (req, res) => {
+    const startedAt = performance.now();
+    try {
+      const format = validateExportFormat(String(req.query.format || ''));
+      const legalCase = selectedCase(req.query.case);
+      const deanonymize = req.query.deanonymize !== '0' && req.query.deanonymize !== 'false';
+      const chronology = await buildChronology(legalCase.root, { deanonymize });
+      const html = renderChronologyHtml(chronology, { caseName: legalCase.caseName });
+      finishAdminTiming(res, 'chronology-export', startedAt, {
+        documents: chronology.stats.documents,
+        format,
+      });
+      await sendGeneratedDocument(res, {
+        html,
+        filename: `Chronologie — ${legalCase.caseName}`,
+        format,
+      });
+    } catch (error) {
+      // Une fois l'envoi du document entamé, les en-têtes sont partis : on ne
+      // peut plus répondre en JSON, seulement couper la connexion.
+      if (res.headersSent) return res.destroy();
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   // Correction manuelle des métadonnées d'une pièce dans la chronologie —
   // nature (type), date, lieu (juridiction) et champs libres ajoutés/retirés par
   // le cabinet. Stocké dans un fichier d'override séparé que le pipeline ne
@@ -2609,6 +2743,55 @@ function createAdminRouter({
       const history = await listHistory(legalCase.casesRoot, homeDir, { limit, caseName: legalCase.caseName });
       finishAdminTiming(res, 'history', startedAt, { commits: history.length, limit });
       res.json({ history });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Export « papier » (PDF/DOCX) de l'historique des actes d'un mois donné.
+  router.get('/history/export', async (req, res) => {
+    const startedAt = performance.now();
+    try {
+      const format = validateExportFormat(String(req.query.format || ''));
+      const month = String(req.query.month || '');
+      if (!HISTORY_MONTH_RE.test(month)) throw new Error('Mois invalide (attendu AAAA-MM).');
+      const legalCase = selectedCase(req.query.case);
+
+      // Fenêtre du mois, bornes incluses. `--until` de git est INCLUSIF :
+      // prendre le 1er du mois suivant compterait deux fois un commit tombant
+      // exactement à minuit, à cheval entre les exports de deux mois
+      // consécutifs. On borne donc au dernier instant du mois lui-même, le
+      // dernier jour se déduisant du jour 0 du mois suivant.
+      const [year, monthNum] = month.split('-').map(Number);
+      const lastDay = new Date(Date.UTC(year, monthNum, 0)).getUTCDate();
+      const since = `${month}-01`;
+      const until = `${month}-${String(lastDay).padStart(2, '0')}T23:59:59`;
+
+      const entries = await listHistoryPeriod(legalCase.casesRoot, homeDir, {
+        caseName: legalCase.caseName,
+        since,
+        until,
+      });
+      const html = renderHistoryHtml(entries, { caseName: legalCase.caseName, month });
+      finishAdminTiming(res, 'history-export', startedAt, { commits: entries.length, format });
+      await sendGeneratedDocument(res, {
+        html,
+        filename: `Historique ${month} — ${legalCase.caseName}`,
+        format,
+      });
+    } catch (error) {
+      if (res.headersSent) return res.destroy();
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Mois disposant d'au moins un commit, du plus récent au plus ancien —
+  // alimente le menu déroulant de l'export mensuel côté admin.
+  router.get('/history/months', async (req, res) => {
+    try {
+      const legalCase = selectedCase(req.query.case);
+      const months = await historyMonths(legalCase.casesRoot, homeDir, { caseName: legalCase.caseName });
+      res.json({ months });
     } catch (error) {
       res.status(400).json({ error: error.message });
     }

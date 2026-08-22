@@ -77,20 +77,32 @@ function findSoffice() {
   return null;
 }
 
+// Filtre LibreOffice par format cible. Pour Word, le filtre nommé explicite
+// est plus stable entre versions que le simple « docx » nu.
+const SOFFICE_FILTERS = { pdf: 'pdf', docx: 'docx:MS Word 2007 XML' };
+
 /**
- * Arguments d'une conversion PDF. Le profil isolé évite l'erreur
+ * Arguments d'une conversion via LibreOffice. Le profil isolé évite l'erreur
  * « User installation could not be completed » quand une autre instance de
- * LibreOffice tourne déjà.
+ * LibreOffice tourne déjà. `format` accepte une extension simple (clé de
+ * `SOFFICE_FILTERS`) ou un filtre déjà complet (`docx:MS Word 2007 XML`) — on
+ * ne l'entoure jamais de guillemets, `spawn` ne passe pas par un shell et les
+ * guillemets finiraient dans le nom de fichier produit.
  */
-function sofficeArgs(sourcePath, outDir, profileDir) {
+function sofficeArgs(sourcePath, outDir, profileDir, format = 'pdf') {
   return [
     `-env:UserInstallation=${pathToFileURL(profileDir).href}`,
     '--headless',
     '--norestore',
-    '--convert-to', 'pdf',
+    '--convert-to', SOFFICE_FILTERS[format] || format,
     '--outdir', outDir,
     sourcePath,
   ];
+}
+
+/** Extension du fichier produit par un format/filtre (avant le `:` éventuel). */
+function outputExtension(format) {
+  return String(format).split(':')[0];
 }
 
 /**
@@ -98,18 +110,22 @@ function sofficeArgs(sourcePath, outDir, profileDir) {
  * plusieurs secondes, et `spawnSync` bloquerait la boucle d'événements de
  * `server.cjs` pendant tout ce temps — plus aucune réponse HTTP ni WebSocket,
  * le navigateur perd la connexion en plein tamponnage.
+ *
+ * `format` cible le PDF par défaut (usage historique, tamponnage) mais
+ * accepte tout format de `SOFFICE_FILTERS` (ex. `'docx'`) pour les futurs
+ * exports.
  */
-function officeToPdf(sourcePath, workDir, { timeout = 180000 } = {}) {
+function officeToPdf(sourcePath, workDir, { timeout = 180000, format = 'pdf' } = {}) {
   const soffice = findSoffice();
   if (!soffice) {
     const kind = isSpreadsheet(sourcePath) ? 'Un classeur Excel' : 'Ce format bureautique';
-    return Promise.reject(new Error(`${kind} exige LibreOffice pour être converti en PDF. ${SOFFICE_HINT}`));
+    return Promise.reject(new Error(`${kind} exige LibreOffice pour être converti en ${outputExtension(format).toUpperCase()}. ${SOFFICE_HINT}`));
   }
 
   const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-lo-'));
-  return execFilePromise(soffice, sofficeArgs(sourcePath, workDir, profileDir), { timeout })
+  return execFilePromise(soffice, sofficeArgs(sourcePath, workDir, profileDir, format), { timeout })
     .then((result) => {
-      const produced = path.join(workDir, `${path.basename(sourcePath, path.extname(sourcePath))}.pdf`);
+      const produced = path.join(workDir, `${path.basename(sourcePath, path.extname(sourcePath))}.${outputExtension(format)}`);
       if (result.status === 0 && fs.existsSync(produced)) return produced;
 
       const detail = (result.stderr || result.stdout || '').trim()
@@ -281,7 +297,9 @@ module.exports = {
   imageToPdfBytes,
   isSpreadsheet,
   officeToPdf,
+  outputExtension,
   sanitizeForWinAnsi,
   sofficeArgs,
+  SOFFICE_FILTERS,
   textToPdfBytes,
 };

@@ -38,6 +38,11 @@ const MAX_SAFE_FILES = 10_000;
 const MAX_SAFE_BYTES = 250 * 1024 * 1024;
 const HISTORY_REF = 'refs/heads/main';
 const LEGACY_HISTORY_REF = 'refs/heads/checkpoints';
+// Le hook PostToolUse commite à chaque Write/Edit : un mois d'activité peut
+// donc contenir des milliers de commits. `listHistory` plafonne à 250 pour un
+// affichage récent ; l'export mensuel a besoin de tout, mais reste borné pour
+// ne jamais renvoyer un volume qui exploserait MAX_GIT_BUFFER.
+const MAX_HISTORY_PERIOD_COMMITS = 5000;
 const SAFE_EXTENSIONS = new Set(['.md', '.json']);
 const DOCX_MANIFEST_PATH = '.piecemaker/history-docx-ooxml.json';
 const DOCX_MANIFEST_VERSION = 1;
@@ -1240,6 +1245,115 @@ async function listHistory(casesRoot, homeDir, { caseName, limit = 120 } = {}) {
   return history;
 }
 
+/**
+ * Les mois `YYYY-MM` où le dossier a des commits, du plus récent au plus
+ * ancien — alimente le menu déroulant de l'export mensuel. Une seule colonne
+ * (`%aI`) suffit : dériver le mois ne demande que les 7 premiers caractères
+ * d'une date ISO stricte, pas un `git log` structuré comme `listHistory`.
+ */
+async function historyMonths(casesRoot, homeDir, { caseName } = {}) {
+  const startedAt = performance.now();
+  const legalCase = resolveCase(casesRoot, caseName);
+  const gitDir = await ensureHistoryRepo(homeDir, legalCase);
+  if (!await latestCommit(legalCase, gitDir)) {
+    logPerformance('historyMonths', startedAt, { months: 0 });
+    return [];
+  }
+  const historyRef = await activeHistoryRef(legalCase, gitDir);
+  const raw = (await runGit(legalCase.root, ['log', '--date=iso-strict', '--pretty=format:%aI', historyRef], { gitDir })).stdout;
+  const months = [...new Set(
+    raw.split('\n').map((line) => line.trim().slice(0, 7)).filter(Boolean)
+  )].sort((left, right) => right.localeCompare(left));
+  logPerformance('historyMonths', startedAt, { months: months.length });
+  return months;
+}
+
+/**
+ * Variante de `parseLog` avec la liste des fichiers touchés par chaque
+ * commit. Le format ajoute un `%x1f` terminal après le corps (`%b`) : ce
+ * séparateur referme le champ « corps », multi-ligne, sans ambiguïté avec la
+ * liste de fichiers de `--name-only` qui le suit jusqu'au `\x1e` du commit
+ * suivant. `parseLog` reste inchangé pour `listHistory` (son format n'a pas
+ * ce dernier séparateur).
+ */
+function parseLogWithFiles(raw) {
+  return String(raw || '').split('\x1e').map((record) => record.trim()).filter(Boolean).map((record) => {
+    const fields = record.split('\x1f');
+    const [hash, shortHash, author, timestamp, subject] = fields;
+    // Entre le 5e séparateur et le dernier se trouve le corps (`%b`), qui ne
+    // devrait jamais contenir de \x1f mais est rejoint par défense, comme le
+    // fait déjà `parseLog` ; le tout dernier segment est la liste des
+    // fichiers, un par ligne.
+    const body = fields.slice(5, -1).join('\x1f').trim();
+    const files = String(fields.at(-1) || '').split('\n').map((line) => line.trim()).filter(Boolean);
+    return {
+      hash,
+      shortHash,
+      author,
+      timestamp,
+      subject,
+      body,
+      kind: 'commit',
+      files,
+      filesCount: files.length,
+    };
+  }).filter((entry) => entry.hash);
+}
+
+/**
+ * Sépare les trailers techniques `PieceMaker-*` du corps d'un commit (voir
+ * `buildCommitTrailers`). Miroir du parsing côté client
+ * (`admin/app.js` → `parsePieceMakerTrailers`), avec en plus la durée brute
+ * en millisecondes que l'affichage seul n'a pas besoin de connaître mais
+ * qu'un export chiffré (temps facturable par mois) exploite directement.
+ */
+function parseCommitTrailers(body) {
+  const lines = String(body || '').split('\n');
+  const kept = [];
+  let sessionId = null;
+  let durationMs = null;
+  for (const line of lines) {
+    const session = line.match(/^PieceMaker-Session:\s*(.+)$/);
+    if (session) { sessionId = session[1].trim(); continue; }
+    const time = line.match(/^PieceMaker-Temps-Session:\s*.+?\((\d+)\s*ms\)\s*$/);
+    if (time) { durationMs = Number(time[1]); continue; }
+    kept.push(line);
+  }
+  return { comment: kept.join('\n').trim(), sessionId, durationMs };
+}
+
+/**
+ * Commits d'une période `[since, until)`, fichiers touchés compris. `until`
+ * est exclusif côté appelant (premier jour du mois suivant, typiquement) :
+ * cette fonction ne fait aucune arithmétique de date, elle transmet telles
+ * quelles à `--since`/`--until`. Pas de plafond façon `listHistory` — le hook
+ * `PostToolUse` commite à chaque Write/Edit, un mois peut en compter des
+ * milliers — seulement un plafond de sécurité large pour ne pas exploser
+ * `MAX_GIT_BUFFER` sur un dossier anormalement actif.
+ */
+async function listHistoryPeriod(casesRoot, homeDir, { caseName, since, until } = {}) {
+  const startedAt = performance.now();
+  const legalCase = resolveCase(casesRoot, caseName);
+  const gitDir = await ensureHistoryRepo(homeDir, legalCase);
+  if (!await latestCommit(legalCase, gitDir)) {
+    logPerformance('listHistoryPeriod', startedAt, { commits: 0 });
+    return [];
+  }
+  const historyRef = await activeHistoryRef(legalCase, gitDir);
+  const raw = (await runGit(legalCase.root, [
+    'log', `--max-count=${MAX_HISTORY_PERIOD_COMMITS}`, '--date=iso-strict', '--name-only',
+    ...(since ? [`--since=${since}`] : []),
+    ...(until ? [`--until=${until}`] : []),
+    '--pretty=format:%x1e%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1f%b%x1f', historyRef,
+  ], { gitDir })).stdout;
+  const history = parseLogWithFiles(raw).map((entry) => {
+    const { sessionId, durationMs } = parseCommitTrailers(entry.body);
+    return { ...entry, sessionId, durationMs };
+  });
+  logPerformance('listHistoryPeriod', startedAt, { commits: history.length, since, until });
+  return history;
+}
+
 function normalizeRelativeHistoryPath(relativePath) {
   const normalized = String(relativePath || '').replaceAll('\\', '/').replace(/^\.\//, '');
   if (!normalized || path.posix.isAbsolute(normalized) || normalized.split('/').includes('..')) {
@@ -1533,13 +1647,16 @@ module.exports = {
   createCommit,
   createHistoryBranch,
   historyBranches,
+  historyMonths,
   historyRepo,
   isProtectedFile,
   isTechnicalCaseDirectoryName,
   listCases,
   logPerformance,
   listHistory,
+  listHistoryPeriod,
   locateCaseFile,
+  parseCommitTrailers,
   originalFilesOverview,
   repositoryOverview,
   resolveCommitIdentity,

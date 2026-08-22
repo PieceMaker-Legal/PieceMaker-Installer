@@ -70,6 +70,13 @@
               <div class="history-summary">
                 <span id="historyCount">0 fichier</span>
               </div>
+              <div id="historyExportBar" class="history-export-bar" hidden>
+                <select id="historyMonth" aria-label="Mois de l’historique" disabled></select>
+                <div class="history-export-actions">
+                  <button id="historyExportPdf" class="button ghost compact" type="button" disabled>Exporter PDF</button>
+                  <button id="historyExportDocx" class="button ghost compact" type="button" disabled>Exporter DOCX</button>
+                </div>
+              </div>
               <div id="protectedTools" class="protected-tools" hidden>
                 <nav class="protected-navigation" aria-label="Outils des pièces protégées">
                   <button id="showOriginals" class="protected-navigation-button active" type="button" data-protected-detail="originals" aria-pressed="true">
@@ -172,7 +179,11 @@
                 <div id="chronologyPane" class="inline-detail chronology-pane" hidden>
                   <div class="inline-detail-toolbar">
                     <div><strong>Chronologie du dossier</strong><span id="chronologyHint">Scans PII · nature et dates détectées automatiquement à titre indicatif.</span></div>
-                    <span id="chronologyStats" class="count-badge">0</span>
+                    <div class="chronology-toolbar-actions">
+                      <button id="chronologyExportPdf" class="button ghost compact" type="button" disabled>Exporter PDF</button>
+                      <button id="chronologyExportDocx" class="button ghost compact" type="button" disabled>Exporter DOCX</button>
+                      <span id="chronologyStats" class="count-badge">0</span>
+                    </div>
                   </div>
                   <div id="chronologyBody" class="chronology-body">
                     <p class="chronology-empty">Sélectionnez un dossier puis lancez un scan PII pour alimenter la chronologie.</p>

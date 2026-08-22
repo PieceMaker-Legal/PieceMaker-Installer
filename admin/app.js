@@ -105,6 +105,47 @@ const api = async (url, options = {}) => {
   }
 };
 
+// Contrairement à api(), qui suppose systématiquement une réponse JSON, ce
+// helper récupère un binaire (export PDF/DOCX) et déclenche son téléchargement
+// dans le navigateur.
+let __downloadCallCount = 0;
+
+const downloadFile = async (url, fallbackName) => {
+  const callId = ++__downloadCallCount;
+  const t0 = performance.now();
+  dlog('download', `download#${callId}: START ${url}`);
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `Erreur HTTP ${response.status}`);
+    }
+    const disposition = response.headers.get('Content-Disposition') || '';
+    let filename = fallbackName;
+    const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+    const asciiMatch = disposition.match(/filename="([^"]+)"/i);
+    if (utf8Match) filename = decodeURIComponent(utf8Match[1]);
+    else if (asciiMatch) filename = asciiMatch[1];
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    // Révocation différée : Safari interrompt le téléchargement si l'URL est
+    // révoquée dans la foulée du clic, avant qu'il ait pris la main sur le blob.
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+    const elapsed = performance.now() - t0;
+    dlog('download', `download#${callId}: DONE ${url} (${elapsed.toFixed(2)}ms, ${blob.size} octets)`);
+  } catch (error) {
+    const elapsed = performance.now() - t0;
+    dwarn('download', `download#${callId}: ERROR ${url} after ${elapsed.toFixed(2)}ms — ${error.message}`);
+    throw error;
+  }
+};
+
 const byId = (id) => document.getElementById(id);
 const ADMIN_THEME_STORAGE_KEY = 'piecemaker-admin-theme';
 let selectedFile = null;
@@ -119,6 +160,9 @@ let repositoryData = null;
 let historyItems = [];
 let selectedFolder = '';
 let historyView = 'changes';
+let historyMonths = [];
+let historyExportBusy = false;
+let chronologyExportBusy = false;
 let selectedRevision = null;
 let revisionRequestSerial = 0;
 let tamponImage = null;
@@ -741,7 +785,7 @@ function restoreConfigurationForm() {
 
 const CONFIGURATION_DESCRIPTIONS = {
   client: 'Pilote le projet et charge les composants PieceMaker. Réglages généraux, signature des commits et identifiants Légifrance ci-dessous.',
-  terminal: 'Shell local interactif ouvert depuis le volet Word, dans le contexte du dossier actif.',
+  terminal: 'Second affichage interactif de la session terminal qui a ouvert le document Word.',
   mcp: 'Relie le client aux outils documentaires PieceMaker et à la recherche juridique Légifrance.',
   telegram: 'Deux bots séparés — un Assistant conversationnel et une surveillance sans LLM — chacun avec son propre token BotFather.',
   gliner: 'Détection PII locale (Presidio + GLiNER2). Construit le mapping du dossier. Aucune donnée ne quitte le poste.',
@@ -3118,6 +3162,7 @@ async function loadRevision(hash, filePath = '') {
 }
 
 async function loadHistoryItems() {
+  await refreshHistoryMonths();
   if (historyView !== 'commits') {
     renderHistoryItems();
     return;
@@ -3134,6 +3179,89 @@ async function loadHistoryItems() {
   renderHistoryItems();
 }
 
+// Alimente le sélecteur de mois de la barre d'export de l'historique. Appelée
+// à l'entrée de la sous-vue « Historique » et à chaque changement de dossier
+// sélectionné pendant que cette sous-vue est active.
+async function refreshHistoryMonths() {
+  if (historyView !== 'commits' || !selectedFolder) {
+    historyMonths = [];
+    renderHistoryMonthOptions();
+    return;
+  }
+  try {
+    const data = await api(`/api/admin/history/months?${new URLSearchParams({ case: selectedFolder })}`);
+    historyMonths = data.months || [];
+  } catch (error) {
+    historyMonths = [];
+    toast(error.message);
+  }
+  renderHistoryMonthOptions();
+}
+
+function formatHistoryMonth(month) {
+  const [year, monthNumber] = String(month).split('-').map(Number);
+  if (!year || !monthNumber) return month;
+  const label = new Date(year, monthNumber - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function renderHistoryMonthOptions() {
+  const select = byId('historyMonth');
+  byId('historyExportBar').hidden = historyView !== 'commits';
+  const previous = select.value;
+  select.textContent = '';
+  if (!historyMonths.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'Aucun acte enregistré';
+    select.append(option);
+    select.disabled = true;
+  } else {
+    select.disabled = false;
+    for (const month of historyMonths) {
+      const option = document.createElement('option');
+      option.value = month;
+      option.textContent = formatHistoryMonth(month);
+      select.append(option);
+    }
+    select.value = historyMonths.includes(previous) ? previous : historyMonths[0];
+  }
+  updateHistoryExportState();
+}
+
+// Boutons désactivés tant qu'aucun dossier n'est sélectionné, qu'aucun mois
+// n'est disponible, ou qu'une génération est déjà en cours.
+function updateHistoryExportState() {
+  const disabled = !selectedFolder || !historyMonths.length || historyExportBusy;
+  byId('historyExportPdf').disabled = disabled;
+  byId('historyExportDocx').disabled = disabled;
+}
+
+async function exportHistoryMonth(format) {
+  const month = byId('historyMonth').value;
+  if (!selectedFolder || !month || historyExportBusy) return;
+  const button = byId(format === 'pdf' ? 'historyExportPdf' : 'historyExportDocx');
+  const otherButton = byId(format === 'pdf' ? 'historyExportDocx' : 'historyExportPdf');
+  historyExportBusy = true;
+  const previousLabel = button.textContent;
+  button.disabled = true;
+  otherButton.disabled = true;
+  byId('historyMonth').disabled = true;
+  button.textContent = 'Génération en cours…';
+  try {
+    const query = new URLSearchParams({ case: selectedFolder, month, format });
+    const fallbackName = `historique-${month}.${format}`;
+    await downloadFile(`/api/admin/history/export?${query}`, fallbackName);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    historyExportBusy = false;
+    button.textContent = previousLabel;
+    byId('historyMonth').disabled = !historyMonths.length;
+    updateHistoryExportState();
+  }
+}
+
 function mergeSelectedCase(folder) {
   const index = repositoryData?.folders?.findIndex((item) => item.path === folder.path) ?? -1;
   if (index >= 0) repositoryData.folders[index] = { ...repositoryData.folders[index], ...folder };
@@ -3144,6 +3272,7 @@ async function loadSelectedCase({ quiet = false } = {}) {
     historyItems = [];
     renderFolders();
     renderHistoryItems();
+    await refreshHistoryMonths();
     return;
   }
   if (!quiet) byId('historyList').textContent = 'Chargement du dossier…';
@@ -3168,6 +3297,7 @@ async function loadSelectedCase({ quiet = false } = {}) {
   updateCaseToolbar();
   renderFolders();
   renderHistoryItems();
+  await refreshHistoryMonths();
   historyLoaded = true;
   void loadCaseTelegramState();
 }
@@ -3388,6 +3518,7 @@ function escapeHtml(value) {
 
 async function loadChronology() {
   const body = byId('chronologyBody');
+  updateChronologyExportState();
   if (!selectedFolder) {
     chronologyData = null;
     byId('chronologyStats').textContent = '0';
@@ -3401,6 +3532,37 @@ async function loadChronology() {
     renderChronology(data);
   } catch (error) {
     body.innerHTML = `<p class="chronology-empty">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+// Boutons désactivés tant qu'aucun dossier n'est sélectionné ou qu'une
+// génération est déjà en cours (la conversion LibreOffice prend plusieurs
+// secondes).
+function updateChronologyExportState() {
+  const disabled = !selectedFolder || chronologyExportBusy;
+  byId('chronologyExportPdf').disabled = disabled;
+  byId('chronologyExportDocx').disabled = disabled;
+}
+
+async function exportChronology(format) {
+  if (!selectedFolder || chronologyExportBusy) return;
+  const button = byId(format === 'pdf' ? 'chronologyExportPdf' : 'chronologyExportDocx');
+  const otherButton = byId(format === 'pdf' ? 'chronologyExportDocx' : 'chronologyExportPdf');
+  chronologyExportBusy = true;
+  const previousLabel = button.textContent;
+  button.disabled = true;
+  otherButton.disabled = true;
+  button.textContent = 'Génération en cours…';
+  try {
+    const query = new URLSearchParams({ case: selectedFolder, format });
+    const fallbackName = `chronologie.${format}`;
+    await downloadFile(`/api/admin/repository/chronology/export?${query}`, fallbackName);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    chronologyExportBusy = false;
+    button.textContent = previousLabel;
+    updateChronologyExportState();
   }
 }
 
@@ -4123,6 +4285,11 @@ function initPerformanceMonitoring() {
 document.querySelectorAll('[data-history-view]').forEach((button) => button.addEventListener('click', () => setHistoryView(button.dataset.historyView)));
 byId('showOriginals').addEventListener('click', showOriginalsView);
 byId('showChronology').addEventListener('click', openChronologyView);
+byId('chronologyExportPdf').addEventListener('click', () => exportChronology('pdf'));
+byId('chronologyExportDocx').addEventListener('click', () => exportChronology('docx'));
+byId('historyMonth').addEventListener('change', updateHistoryExportState);
+byId('historyExportPdf').addEventListener('click', () => exportHistoryMonth('pdf'));
+byId('historyExportDocx').addEventListener('click', () => exportHistoryMonth('docx'));
 byId('refreshHistory').addEventListener('click', () => loadRepositoryHistory());
 byId('caseSelect').addEventListener('change', (event) => selectHistoryFolder(event.currentTarget.value));
 byId('branchSelect').addEventListener('change', selectHistoryBranch);

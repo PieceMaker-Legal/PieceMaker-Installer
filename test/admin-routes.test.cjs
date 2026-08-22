@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
@@ -9,6 +10,7 @@ const {
   applyMarketplaceSelection,
   applyPluginComponentSelection,
   checkOllamaModelUpdate,
+  createAdminRouter,
   createManagedFile,
   deleteManagedAsset,
   deleteManagedFile,
@@ -33,6 +35,8 @@ const {
   updateEnvFile,
   validateAdminTheme,
 } = require('../websocket-server/admin-routes.cjs');
+const { registerCaseFolder } = require('../websocket-server/case-registry.cjs');
+const { createCommit } = require('../piecemaker-plugin/scripts/lib/commits.cjs');
 
 test('le thème de l’administration accepte uniquement les deux modes pris en charge', () => {
   assert.equal(validateAdminTheme('light'), 'light');
@@ -844,4 +848,105 @@ test('applyMarketplaceSelection scopé sur legal ne touche pas les plugins de l�
   assert.equal(result.installed, 1);
   assert.deepEqual(calls, ['install-legal']);
   assert.ok(!calls.includes('disable-official'));
+});
+
+// --- Routes d'export « papier » (chronologie, historique) -----------------
+//
+// La conversion LibreOffice elle-même n'est pas testable en CI (dépendance
+// système absente) : ces tests s'arrêtent à la validation d'entrée, avant
+// tout appel à `sendGeneratedDocument`/`officeToPdf`. On exerce donc de
+// vraies requêtes HTTP (query string comprise), pas les fonctions internes,
+// et on isole systématiquement `repoRoot`/`homeDir` du fixture — le
+// constructeur du routeur lit et peut écrire dans `homeDir/config.json` dès
+// sa création (migration d'identité, purge des skills officiels supprimés) :
+// jamais le vrai `~/.piecemaker` de la machine qui fait tourner les tests.
+
+function exportRouterFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-export-test-'));
+  const repo = path.join(root, 'repo');
+  const home = path.join(root, 'home');
+  fs.mkdirSync(repo, { recursive: true });
+  fs.mkdirSync(home, { recursive: true });
+  return { root, repo, home };
+}
+
+/** Démarre le routeur admin sur un port éphémère et renvoie sa base URL. */
+function startExportServer({ repo, home }) {
+  const express = require('express');
+  const app = express();
+  app.use(createAdminRouter({ repoRoot: repo, homeDir: home, userHome: home }));
+  const server = http.createServer(app);
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      resolve({
+        baseUrl: `http://127.0.0.1:${port}`,
+        close: () => new Promise((done) => server.close(done)),
+      });
+    });
+  });
+}
+
+test('l’export de chronologie refuse un format inconnu avant d’ouvrir le dossier', async (t) => {
+  const data = exportRouterFixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const { baseUrl, close } = await startExportServer(data);
+  t.after(close);
+
+  // Aucun `case` fourni : si la route validait le format après avoir résolu
+  // le dossier, elle échouerait pour la mauvaise raison.
+  const response = await fetch(`${baseUrl}/repository/chronology/export?format=exe`);
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.match(body.error, /pdf ou docx/);
+});
+
+test('l’export d’historique refuse un format inconnu', async (t) => {
+  const data = exportRouterFixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const { baseUrl, close } = await startExportServer(data);
+  t.after(close);
+
+  const response = await fetch(`${baseUrl}/history/export?format=exe&month=2026-08`);
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.match(body.error, /pdf ou docx/);
+});
+
+test('l’export d’historique refuse un mois malformé', async (t) => {
+  const data = exportRouterFixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const { baseUrl, close } = await startExportServer(data);
+  t.after(close);
+
+  const invalidMonth = await fetch(`${baseUrl}/history/export?format=pdf&month=2026-13`);
+  assert.equal(invalidMonth.status, 400);
+  assert.match((await invalidMonth.json()).error, /Mois invalide/);
+
+  const notAMonth = await fetch(`${baseUrl}/history/export?format=pdf&month=aout`);
+  assert.equal(notAMonth.status, 400);
+  assert.match((await notAMonth.json()).error, /Mois invalide/);
+});
+
+test('GET /history/months renvoie le tableau des mois disposant d’au moins un commit', async (t) => {
+  const data = exportRouterFixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+
+  const casesRoot = path.join(data.root, 'PieceMaker');
+  const caseRoot = path.join(casesRoot, 'Dossier Export');
+  fs.mkdirSync(caseRoot, { recursive: true });
+  fs.writeFileSync(path.join(caseRoot, 'memoire.md'), '# Mémoire\n');
+  const { config, entry } = registerCaseFolder({}, caseRoot);
+  fs.writeFileSync(path.join(data.home, 'config.json'), `${JSON.stringify(config)}\n`);
+  await createCommit({ casesRoot, caseName: 'Dossier Export', homeDir: data.home, label: 'État initial' });
+
+  const { baseUrl, close } = await startExportServer(data);
+  t.after(close);
+
+  const response = await fetch(`${baseUrl}/history/months?case=${entry.id}`);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.ok(Array.isArray(body.months));
+  assert.equal(body.months.length, 1);
+  assert.match(body.months[0], /^\d{4}-\d{2}$/);
 });

@@ -9,6 +9,7 @@ const {
   convertToPdf,
   findSoffice,
   isSpreadsheet,
+  outputExtension,
   sanitizeForWinAnsi,
   sofficeArgs,
 } = require('../websocket-server/lib/office-to-pdf.cjs');
@@ -68,6 +69,23 @@ test('LibreOffice est appelé avec un profil isolé, sinon il refuse de converti
     '--outdir', '/tmp/out',
     '/pieces/bilan.xlsx',
   ]);
+});
+
+test('sofficeArgs cible le filtre DOCX nommé quand on demande un export Word', () => {
+  const args = sofficeArgs('/pieces/bilan.xlsx', '/tmp/out', '/tmp/profil', 'docx');
+  assert.deepEqual(args.slice(1), [
+    '--headless',
+    '--norestore',
+    '--convert-to', 'docx:MS Word 2007 XML',
+    '--outdir', '/tmp/out',
+    '/pieces/bilan.xlsx',
+  ]);
+});
+
+test('outputExtension isole l’extension avant le filtre LibreOffice explicite', () => {
+  assert.equal(outputExtension('pdf'), 'pdf');
+  assert.equal(outputExtension('docx'), 'docx');
+  assert.equal(outputExtension('docx:MS Word 2007 XML'), 'docx');
 });
 
 test('un classeur Excel sans LibreOffice échoue avec une consigne d’installation', async (t) => {
