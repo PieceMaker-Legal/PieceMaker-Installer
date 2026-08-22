@@ -2922,7 +2922,17 @@ function renderHistoryItems() {
     return;
   }
   if (historyView === 'changes') {
-    byId('historyCount').textContent = `${changes.length} fichier${changes.length > 1 ? 's' : ''}`;
+    const timestamps = changes.map((c) => c.modifiedAt).filter(Boolean).map((d) => new Date(d).getTime()).filter((t) => !Number.isNaN(t));
+    let timingSuffix = '';
+    if (timestamps.length) {
+      const earliest = new Date(Math.min(...timestamps));
+      const latest = new Date(Math.max(...timestamps));
+      const fmt = (d) => d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+      timingSuffix = earliest.getTime() === latest.getTime()
+        ? ` · ${fmt(earliest)}`
+        : ` · ${fmt(earliest)} → ${fmt(latest)}`;
+    }
+    byId('historyCount').textContent = `${changes.length} fichier${changes.length > 1 ? 's' : ''}${timingSuffix}`;
     if (!changes.length) {
       list.append(createHistoryEmpty('Aucune modification', 'Le dossier correspond au dernier commit.'));
       showRevisionPlaceholder('Aucune modification locale');

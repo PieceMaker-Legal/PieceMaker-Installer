@@ -1538,11 +1538,18 @@ async function caseOverview(casesRoot, homeDir, caseName) {
   const startedAt = performance.now();
   const state = await workingState(casesRoot, homeDir, caseName);
   const originals = await originalFilesOverview(state.legalCase.root, { safeFiles: state.current.files });
+  const enrichedChanges = await Promise.all(state.changes.map(async (change) => {
+    if (change.kind === 'deleted') return change;
+    try {
+      const stat = await fsp.stat(path.join(state.legalCase.root, ...change.path.split('/')));
+      return { ...change, modifiedAt: stat.mtime.toISOString() };
+    } catch { return change; }
+  }));
   const folder = {
     name: state.legalCase.name,
     path: state.legalCase.name,
-    changes: state.changes.length,
-    workingChanges: state.changes,
+    changes: enrichedChanges.length,
+    workingChanges: enrichedChanges,
     head: state.latest,
     shortHead: state.latest.slice(0, 7),
     snapshot: state.current.snapshot,
