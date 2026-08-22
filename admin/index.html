@@ -70,13 +70,6 @@
               <div class="history-summary">
                 <span id="historyCount">0 fichier</span>
               </div>
-              <div id="historyExportBar" class="history-export-bar" hidden>
-                <select id="historyMonth" aria-label="Mois de l’historique" disabled></select>
-                <div class="history-export-actions">
-                  <button id="historyExportPdf" class="button ghost compact" type="button" disabled>Exporter PDF</button>
-                  <button id="historyExportDocx" class="button ghost compact" type="button" disabled>Exporter DOCX</button>
-                </div>
-              </div>
               <div id="protectedTools" class="protected-tools" hidden>
                 <nav class="protected-navigation" aria-label="Outils des pièces protégées">
                   <button id="showOriginals" class="protected-navigation-button active" type="button" data-protected-detail="originals" aria-pressed="true">
@@ -94,6 +87,13 @@
                 </nav>
               </div>
               <div id="historyList" class="history-list" aria-live="polite"></div>
+              <div id="historyExportBar" class="history-export-bar" hidden>
+                <select id="historyMonth" aria-label="Mois de l’historique" disabled></select>
+                <div class="history-export-actions">
+                  <button id="historyExportPdf" class="button ghost compact" type="button" disabled>Exporter PDF</button>
+                  <button id="historyExportDocx" class="button ghost compact" type="button" disabled>Exporter DOCX</button>
+                </div>
+              </div>
               <form id="manualCommitForm" class="manual-commit" hidden>
                 <label class="manual-commit-field">
                   <span>Titre</span>
