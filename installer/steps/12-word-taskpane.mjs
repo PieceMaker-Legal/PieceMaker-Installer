@@ -25,6 +25,7 @@ import { createRequire } from 'node:module';
 import { log } from '../lib/ui.mjs';
 import { REPO_ROOT, IS_MAC, IS_WINDOWS, npmBin, runCapture } from '../lib/platform.mjs';
 import path from 'node:path';
+import { registerWordMcpClients, wordMcpClientStatus } from '../lib/word-mcp-clients.mjs';
 
 const require = createRequire(import.meta.url);
 const { ensureDevRegistration, isDevRegistered } = require(`${REPO_ROOT}/websocket-server/lib/word-launcher.cjs`);
@@ -72,14 +73,20 @@ export async function install(ctx) {
   if (!result.registered) {
     return { status: 'failed', note: result.error || 'Enregistrement de l\'add-in Word impossible.' };
   }
+  const mcpClients = registerWordMcpClients(REPO_ROOT);
+  const failedClients = mcpClients.filter((client) => client.available && !client.configured);
+  if (failedClients.length) {
+    return { status: 'partial', note: `Volet Word prêt, mais MCP non enregistré dans : ${failedClients.map((client) => client.name).join(', ')}.` };
+  }
+  const configuredClients = mcpClients.filter((client) => client.configured).map((client) => client.name);
   if (result.alreadyRegistered) {
-    return { status: 'done', note: 'Add-in Word déjà enregistré sur ce poste.' };
+    return { status: 'done', note: `Add-in Word déjà enregistré${configuredClients.length ? ` ; MCP prêt dans ${configuredClients.join(' et ')}` : ''}.` };
   }
   return {
     status: 'done',
     note: IS_WINDOWS
-      ? 'Volet Word prêt (registre Office HKCU…\\Wef\\Developer).'
-      : 'Volet Word prêt (dossier de sideload de Word).',
+      ? `Volet Word prêt (registre Office HKCU…\\Wef\\Developer)${configuredClients.length ? ` ; MCP prêt dans ${configuredClients.join(' et ')}` : ''}.`
+      : `Volet Word prêt (dossier de sideload de Word)${configuredClients.length ? ` ; MCP prêt dans ${configuredClients.join(' et ')}` : ''}.`,
   };
 }
 
@@ -87,7 +94,13 @@ export async function check(ctx) {
   if (!IS_MAC && !IS_WINDOWS) {
     return { status: 'skipped', note: 'Word n\'est disponible que sur macOS et Windows.' };
   }
-  return (await isDevRegistered(MANIFEST_PATH, ADDIN_ID))
+  const addinReady = await isDevRegistered(MANIFEST_PATH, ADDIN_ID);
+  const missingMcp = ['codex', 'claude']
+    .map((name) => wordMcpClientStatus(REPO_ROOT, name))
+    .filter((client) => client.available && !client.configured);
+  return addinReady && missingMcp.length === 0
     ? { status: 'done', note: '' }
+    : addinReady
+      ? { status: 'partial', note: `MCP Word non enregistré dans : ${missingMcp.map((client) => client.name).join(', ')}.` }
     : { status: 'partial', note: 'Add-in Word non enregistré — relancez cette étape (ou : npm start --prefix taskpane).' };
 }

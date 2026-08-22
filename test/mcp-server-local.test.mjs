@@ -76,6 +76,13 @@ test('le chat du volet limite aussi les outils locaux actifs', () => {
   assert.match(source, /type: 'pane-hello', docUrl, paneId/);
 });
 
+test('les instructions Word décrivent le lancement minimal sans ancienne commande', () => {
+  const skill = readFileSync(path.join(root, 'piecemaker-plugin', 'skills', 'word-taskpane', 'SKILL.md'), 'utf8');
+  assert.equal(skill.includes(['piecemaker', 'codex'].join(' ')), false);
+  assert.match(skill, /Lancer `codex` ou `claude`/);
+  assert.match(skill, /open_doc` démarre PieceMaker/);
+});
+
 test('un seul manifeste déclare le volet auto-ouvert', () => {
   const manifest = readFileSync(manifestPath, 'utf8');
   const wordServer = readFileSync(wordServerScript, 'utf8');
@@ -183,7 +190,9 @@ test('open_doc sans volet prêt ne lie pas la session et read_doc échoue locale
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => {
       res.setHeader('Content-Type', 'application/json');
-      if (req.url === '/api/word/open-doc') {
+      if (req.url === '/health') {
+        res.end(JSON.stringify({ status: 'ok' }));
+      } else if (req.url === '/api/word/open-doc') {
         const payload = JSON.parse(body);
         res.end(JSON.stringify({
           ok: true,
@@ -291,6 +300,8 @@ test('le serveur MCP local n’expose que open_doc, read_doc et edit_doc', async
     assert.equal(promptsResponse.error?.code, -32601);
     assert.match(promptsResponse.error?.message || '', /method not found/i);
     assert.doesNotMatch(stderr, /mcp-prompts\.json|Prompts: Enabled|addon\/output/);
+    assert.doesNotMatch(stderr, /NODE_TLS_REJECT_UNAUTHORIZED/);
+    assert.doesNotMatch(stderr, /MODULE_TYPELESS_PACKAGE_JSON/);
   } finally {
     child.kill('SIGTERM');
     await once(child, 'exit').catch(() => {});

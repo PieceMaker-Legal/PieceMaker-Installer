@@ -5,11 +5,13 @@ description: Ouvrir, lire ou modifier un document Word (.docx) avec le volet Pie
 
 # Travailler dans Word
 
-## Ouvrir un ou plusieurs volets
+## Parcours minimal
 
-Lancer chaque client depuis un terminal partagé : `piecemaker codex` ou
-`piecemaker claude`. Vérifier que le serveur tourne, puis lier la session au
-document :
+L'installation enregistre le serveur MCP Word dans les CLI présentes. Lancer
+directement le client normalement, sans commande intermédiaire PieceMaker.
+
+1. Lancer `codex` ou `claude` dans le dossier de travail.
+2. Demander l'ouverture du document, ou appeler directement :
 
 ```text
 open_doc { "path": "/chemin/absolu/document.docx" }
@@ -18,9 +20,15 @@ open_doc { "path": "/chemin/absolu/document.docx" }
 Chaque document Word possède son propre volet et chaque session IA reste liée
 au volet ouvert par son appel `open_doc`.
 
+Au premier appel, `open_doc` démarre PieceMaker s'il ne tourne pas, lance Word,
+prépare l'auto-ouverture du volet et attend qu'il soit prêt. Aucun clic dans le
+ruban ni dans le volet n'est normalement nécessaire.
+L'approbation éventuelle se fait dans Codex ou Claude, pas une seconde fois
+dans le volet.
+
 Pour travailler simultanément dans plusieurs documents :
 
-1. ouvrir une session `piecemaker codex` ou `piecemaker claude` par document ;
+1. ouvrir une session `codex` ou `claude` par document ;
 2. appeler `open_doc` avec le document correspondant dans chaque session ;
 3. employer ensuite `read_doc` et `edit_doc` dans cette même session.
 
@@ -35,8 +43,10 @@ Pour un gros document, commencer par `list_headings`, `heading` ou une plage
 
 ## Dépannage
 
-- Si `open_doc` réclame un terminal partagé, relancer le client avec
-  `piecemaker codex` ou `piecemaker claude`.
+- Si les outils `open_doc`, `read_doc` et `edit_doc` n'apparaissent pas,
+  relancer l'étape d'installation « volet Word », puis redémarrer le client.
+- Si le démarrage automatique échoue, suivre l'erreur précise renvoyée par
+  `open_doc` ; `piecemaker logs` fournit le journal du serveur.
 - Si `paneReady` vaut `false`, fermer le document — au besoin quitter Word —
   puis rappeler `open_doc`.
 - Si Word refuse le certificat, exécuter `piecemaker --step 05-certificats`,

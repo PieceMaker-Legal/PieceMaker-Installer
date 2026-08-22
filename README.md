@@ -200,6 +200,14 @@ Le tableau de bord est servi uniquement en local sur
 `https://localhost:43098/admin/`. Le volet Word reste disponible sur
 `https://localhost:43098/taskpane.html`.
 
+Pour travailler sur un document depuis Codex ou Claude Code, l'étape
+`12-word-taskpane` enregistre automatiquement le MCP `piecemaker-word` dans les
+CLI installées. Il suffit de lancer normalement `codex` ou `claude`, puis de
+demander l'ouverture du `.docx`. Au premier `open_doc`, le MCP démarre le
+serveur PieceMaker local s'il est arrêté, puis ouvre Word et son volet.
+`read_doc` et `edit_doc` utilisent ensuite ce même document. Aucun lanceur ni
+démarrage PieceMaker intermédiaire n'est nécessaire.
+
 ## Intégration avec Claude Code et Codex CLI
 
 PieceMaker n'installe aucun manifest ni marketplace pour ses propres

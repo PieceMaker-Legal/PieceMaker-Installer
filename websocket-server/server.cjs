@@ -6,6 +6,10 @@ const path = require('path');
 const os = require('os');
 const JSZip = require('jszip');
 const { WebSocketServer } = require('ws');
+const {
+  describeUnknownWebSocketMessage,
+  isWordToolResponse,
+} = require('./lib/websocket-message-diagnostics.cjs');
 const { Ollama } = require('ollama');
 const { z } = require('zod');
 const { createAdminRouter, isLocalOrigin } = require('./admin-routes.cjs');
@@ -4020,8 +4024,12 @@ wss.on('connection', (ws) => {
           break;
 
         default:
-          // Autres messages (pour d'autres fonctionnalités)
-          console.log('📥 Message WebSocket:', data.type);
+          // Les réponses Word sont déjà consommées par l'écouteur corrélé à
+          // requestId de la route HTTP. Elles n'ont pas de `type` et ne sont
+          // donc pas des messages inconnus.
+          if (!isWordToolResponse(data)) {
+            console.warn('⚠️ Message WebSocket inconnu:', describeUnknownWebSocketMessage(data));
+          }
       }
     } catch (error) {
       console.error('Erreur parsing message WebSocket:', error);

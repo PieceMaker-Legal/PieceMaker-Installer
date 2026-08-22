@@ -12,11 +12,9 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import fetch from 'node-fetch';
 import { EDIT_DOC_TOOL, READ_DOC_TOOL } from '../taskpane/modules/word-tool-schemas.js';
-
-// Désactiver la vérification SSL pour localhost
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+import { ensurePieceMakerServer } from './ensure-piecemaker-server.mjs';
+import { fetchPieceMaker } from './piecemaker-fetch.mjs';
 
 const PIECEMAKER_SERVER_URL = (process.env.PIECEMAKER_SERVER_URL || 'https://localhost:43098').replace(/\/+$/, '');
 
@@ -539,6 +537,13 @@ async function callLocalTool(toolName, toolArgs) {
     throw new Error('Aucun document lié à cette session. Appelez open_doc avant read_doc/edit_doc.');
   }
 
+  if (toolName === 'open_doc') {
+    const server = await ensurePieceMakerServer(PIECEMAKER_SERVER_URL);
+    if (!server.ready) {
+      throw new Error(`Serveur PieceMaker inaccessible à ${PIECEMAKER_SERVER_URL}. Démarrez le serveur configuré puis rappelez open_doc.`);
+    }
+  }
+
   let endpoint;
   switch (toolName) {
     case 'open_doc':
@@ -572,7 +577,7 @@ async function callLocalTool(toolName, toolArgs) {
       throw new Error(`Outil inconnu: ${toolName}`);
   }
 
-  const response = await fetch(endpoint, {
+  const response = await fetchPieceMaker(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -593,7 +598,7 @@ async function callLocalTool(toolName, toolArgs) {
     }
 
     // Sinon, c'est probablement un problème de connexion/serveur
-    throw new Error(`${errorMessage}\n\nAssurez-vous que:\n1. Le serveur est démarré (node server.js)\n2. Le complément Word est ouvert\n3. Le complément est bien connecté au serveur`);
+    throw new Error(`${errorMessage}\n\nVérifiez que le complément Word est installé et que son volet peut se connecter au serveur local.`);
   }
 
   if (typeof data === 'string') return data;

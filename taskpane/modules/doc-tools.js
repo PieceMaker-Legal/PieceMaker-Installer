@@ -9,7 +9,6 @@
  */
 
 import { FOOTNOTE_TOKEN_PATTERN, prepareMarkdownFootnotes } from './markdown-footnotes.js';
-import { footnoteOoxmlToMarkdownBlocks } from './word-footnotes.js';
 import { readRevisions, reviewRevisions } from './word-revisions.js';
 
 let deps = null;
@@ -213,14 +212,20 @@ export async function readDoc(params = {}) {
       await context.sync();
 
       const reviewedTextResults = [];
+      const paragraphCharacterRanges = [];
+      const paragraphHyperlinkRanges = [];
       const paragraphFootnotesData = [];
       const paragraphFootnotePrefixes = [];
-      const paragraphFootnoteOoxmlResults = [];
+      const paragraphFootnoteCharacterRanges = [];
+      const paragraphFootnoteHyperlinkRanges = [];
       const paragraphFootnoteOriginalTextResults = [];
       const paragraphFootnoteOriginalReferenceResults = [];
       const canMapComments = Boolean(
         comments
         && globalThis.Office?.context?.requirements?.isSetSupported?.('WordApi', '1.6')
+      );
+      const canReadHyperlinks = Boolean(
+        globalThis.Office?.context?.requirements?.isSetSupported?.('WordApi', '1.3')
       );
       const commentRangeData = [];
       const paragraphCommentPrefixes = Array.from(
@@ -233,6 +238,14 @@ export async function readDoc(params = {}) {
           ? 'text,style,font,listString,leftIndent,uniqueLocalId'
           : 'text,style,font,listString,leftIndent');
         p.font.load('bold,italic,underline');
+        paragraphCharacterRanges.push(null);
+        if (canReadHyperlinks) {
+          const hyperlinkRange = p.getRange();
+          hyperlinkRange.load('hyperlink');
+          paragraphHyperlinkRanges.push(hyperlinkRange);
+        } else {
+          paragraphHyperlinkRanges.push(null);
+        }
 
         if (reviewedVersion) {
           const reviewedText = p.getReviewedText(reviewedVersion);
@@ -246,13 +259,15 @@ export async function readDoc(params = {}) {
           pFootnotes.load('items/reference,items/body/paragraphs');
           paragraphFootnotesData.push(pFootnotes);
           paragraphFootnotePrefixes.push([]);
-          paragraphFootnoteOoxmlResults.push([]);
+          paragraphFootnoteCharacterRanges.push([]);
+          paragraphFootnoteHyperlinkRanges.push([]);
           paragraphFootnoteOriginalTextResults.push([]);
           paragraphFootnoteOriginalReferenceResults.push([]);
         } catch (e) {
           paragraphFootnotesData.push(null);
           paragraphFootnotePrefixes.push([]);
-          paragraphFootnoteOoxmlResults.push([]);
+          paragraphFootnoteCharacterRanges.push([]);
+          paragraphFootnoteHyperlinkRanges.push([]);
           paragraphFootnoteOriginalTextResults.push([]);
           paragraphFootnoteOriginalReferenceResults.push([]);
         }
@@ -273,6 +288,24 @@ export async function readDoc(params = {}) {
       }
 
       await context.sync();
+
+      const detailedRanges = loadDetailedParagraphRanges(
+        paragraphs.items,
+        revision_view === 'original',
+        canReadHyperlinks,
+        paragraphHyperlinkRanges.map((range) => range?.hyperlink)
+      );
+      if (detailedRanges.some(Boolean)) {
+        try {
+          await context.sync();
+        } catch (error) {
+          console.warn('[read_doc] Recherche des caractères indisponible, format agrégé utilisé :', error);
+          detailedRanges.fill(null);
+        }
+      }
+      for (let i = 0; i < detailedRanges.length; i++) {
+        paragraphCharacterRanges[i] = detailedRanges[i];
+      }
 
       if (commentRangeData.length > 0) {
         const paragraphIndexes = new Map(
@@ -305,7 +338,8 @@ export async function readDoc(params = {}) {
             const fn = pFootnotes.items[j];
             fn.reference.load('text');
             fn.body.load('text');
-            paragraphFootnoteOoxmlResults[i].push(fn.body.getOoxml());
+            paragraphFootnoteCharacterRanges[i].push([]);
+            paragraphFootnoteHyperlinkRanges[i].push([]);
             paragraphFootnoteOriginalTextResults[i].push(
               revision_view === 'original'
                 ? fn.body.getReviewedText(Word.ChangeTrackingVersion.original)
@@ -328,6 +362,13 @@ export async function readDoc(params = {}) {
                 const footnoteParagraph = fn.body.paragraphs.items[k];
                 footnoteParagraph.load('text,font');
                 footnoteParagraph.font.load('bold,italic,underline');
+                if (canReadHyperlinks) {
+                  const hyperlinkRange = footnoteParagraph.getRange();
+                  hyperlinkRange.load('hyperlink');
+                  paragraphFootnoteHyperlinkRanges[i][j].push(hyperlinkRange);
+                } else {
+                  paragraphFootnoteHyperlinkRanges[i][j].push(null);
+                }
               }
             }
           }
@@ -335,6 +376,32 @@ export async function readDoc(params = {}) {
       }
 
       await context.sync();
+
+      let hasDetailedFootnoteRanges = false;
+      for (let i = 0; i < paragraphFootnotesData.length; i++) {
+        const footnotes = paragraphFootnotesData[i]?.items || [];
+        for (let j = 0; j < footnotes.length; j++) {
+          const footnoteParagraphs = footnotes[j].body.paragraphs?.items || [];
+          const ranges = loadDetailedParagraphRanges(
+            footnoteParagraphs,
+            revision_view === 'original',
+            canReadHyperlinks,
+            (paragraphFootnoteHyperlinkRanges[i]?.[j] || []).map((range) => range?.hyperlink)
+          );
+          paragraphFootnoteCharacterRanges[i][j] = ranges;
+          if (ranges.some(Boolean)) hasDetailedFootnoteRanges = true;
+        }
+      }
+      if (hasDetailedFootnoteRanges) {
+        try {
+          await context.sync();
+        } catch (error) {
+          console.warn('[read_doc] Recherche des caractères des notes indisponible, format agrégé utilisé :', error);
+          for (const footnotes of paragraphFootnoteCharacterRanges) {
+            for (const ranges of footnotes) ranges.fill(null);
+          }
+        }
+      }
 
       const paragraphsData = [];
       let nextFootnoteNumber = 1;
@@ -367,10 +434,14 @@ export async function readDoc(params = {}) {
             const originalFootnoteText = paragraphFootnoteOriginalTextResults[i]?.[j]?.value;
             const blocks = revision_view === 'original'
               ? String(originalFootnoteText || '').split(/\r\n?|\n/).map((block) => block.trim()).filter(Boolean)
-              : footnoteOoxmlToMarkdownBlocks(paragraphFootnoteOoxmlResults[i]?.[j]?.value);
-            if (revision_view !== 'original' && blocks.length === 0 && fn.body.paragraphs && fn.body.paragraphs.items) {
+              : [];
+            if (revision_view !== 'original' && fn.body.paragraphs && fn.body.paragraphs.items) {
               for (const para of fn.body.paragraphs.items) {
-                const block = formatWordFootnoteParagraph(para);
+                const paragraphIndex = fn.body.paragraphs.items.indexOf(para);
+                const block = formatWordFootnoteParagraph(
+                  para,
+                  paragraphFootnoteCharacterRanges[i]?.[j]?.[paragraphIndex]
+                );
                 if (block) blocks.push(block);
               }
             }
@@ -384,7 +455,16 @@ export async function readDoc(params = {}) {
                 ? prefix.reviewedText.value
                 : prefix?.range.text
             || '').replace(/^\uFEFF/, '');
-            references.push({ offset: prefixText.length, number });
+            const offset = prefixText.length;
+            references.push({
+              offset,
+              number,
+              // Word expose l'appel de note dans Paragraph.text sous la forme
+              // du caractère de contrôle U+0002. La collection footnotes donne
+              // déjà la référence structurée : consommer seulement ce marqueur
+              // à son offset évite de le laisser fuiter dans le Markdown.
+              removeLength: text.charCodeAt(offset) === 0x0002 ? 1 : 0
+            });
             paragraphFootnotes.push({ number, blocks });
           }
         }
@@ -406,6 +486,7 @@ export async function readDoc(params = {}) {
             removeLength: anchorText === '\u200B' ? 1 : 0
           };
         });
+        const paragraphTextForOffsets = text;
         text = insertInlineAnnotations(text, references, inlineComments);
 
         const style = p.style || 'Normal';
@@ -415,14 +496,32 @@ export async function readDoc(params = {}) {
           listLevel = Math.floor((p.leftIndent || 0) / 36);
         }
 
-        const runs = [{
-          text: text,
-          font: {
-            bold: p.font.bold,
-            italic: p.font.italic,
-            underline: p.font.underline
-          }
-        }];
+        let runs = revision_view === 'original'
+          ? []
+          : characterRangesToRuns(paragraphCharacterRanges[i]);
+        if (runs.length > 0) {
+          // Les appels de note apparaissent comme U+0002 dans Paragraph.text,
+          // mais la recherche joker ne les restitue pas nécessairement comme
+          // plages de texte. Les offsets sont alignés sur les caractères vus.
+          const normalized = normalizeAnnotationsForRuns(
+            paragraphTextForOffsets,
+            references,
+            inlineComments
+          );
+          runs = insertAnnotationsIntoRuns(runs, normalized.references, normalized.comments);
+        } else {
+          runs = [{
+            text,
+            // `text` contient déjà les marqueurs Markdown des notes et
+            // commentaires injectés ci-dessus.
+            markdown: true,
+            font: {
+              bold: p.font.bold,
+              italic: p.font.italic,
+              underline: p.font.underline
+            }
+          }];
+        }
 
         paragraphsData.push({
           index: i,
@@ -489,7 +588,10 @@ function encodeMarkdownComment(text) {
     .replace(/\n/g, '&#10;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/-/g, '&#45;');
+    // Un tiret isolé est parfaitement valide et doit rester lisible. Seule
+    // une paire `--` est interdite dans un commentaire HTML ; casser chaque
+    // paire empêche notamment une terminaison `-->` injectée par le contenu.
+    .replace(/--/g, '-&#45;');
 }
 
 function decodeMarkdownComment(text) {
@@ -508,7 +610,7 @@ function insertInlineAnnotations(text, references = [], comments = []) {
     ...references.map((reference) => ({
       offset: reference.offset,
       marker: `[^${reference.number}]`,
-      removeLength: 0
+      removeLength: reference.removeLength || 0
     })),
     ...comments.map((comment) => ({
       offset: comment.offset,
@@ -535,17 +637,138 @@ function insertFootnoteReferences(text, references) {
   return insertInlineAnnotations(text, references, []);
 }
 
-function formatWordFootnoteParagraph(paragraph) {
+function paragraphNeedsDetailedRuns(paragraph) {
+  const font = paragraph?.font || {};
+  return [font.bold, font.italic, font.underline].some((value) => (
+    value == null || String(value).toLowerCase() === 'mixed'
+  ));
+}
+
+function loadDetailedParagraphRanges(
+  paragraphs,
+  skipDetailedRuns = false,
+  loadHyperlinks = false,
+  hyperlinks = []
+) {
+  return paragraphs.map((paragraph, index) => {
+    if (skipDetailedRuns || (!paragraphNeedsDetailedRuns(paragraph) && !hyperlinks[index])) return null;
+    if (typeof paragraph.search !== 'function') {
+      console.warn(`[read_doc] Paragraph.search indisponible au paragraphe ${index}, format agrégé utilisé.`);
+      return null;
+    }
+    try {
+      // Microsoft documente `?` comme le joker « un caractère » lorsque
+      // matchWildcards est activé. La recherche reste limitée aux paragraphes
+      // dont les propriétés Font agrégées sont mixtes.
+      const characters = paragraph.search('?', { matchWildcards: true });
+      // RangeCollectionLoadOptions décrit directement les propriétés de
+      // chaque Range ; le préfixe `items/` n'est pas un chemin de chargement
+      // valide pour cette surcharge Office.js.
+      characters.load({
+        text: true,
+        font: { bold: true, italic: true, underline: true },
+        ...(loadHyperlinks ? { hyperlink: true } : {})
+      });
+      return characters;
+    } catch (error) {
+      console.warn(`[read_doc] Recherche des caractères impossible au paragraphe ${index}, format agrégé utilisé :`, error);
+      return null;
+    }
+  });
+}
+
+function paragraphTextOffsetToRunOffset(paragraphText, offset) {
+  const prefix = String(paragraphText || '').slice(0, Math.max(0, offset));
+  return Math.max(0, offset - [...prefix].filter((character) => character === '\u0002').length);
+}
+
+function normalizeAnnotationsForRuns(paragraphText, references = [], comments = []) {
+  const normalize = (annotation) => ({
+    ...annotation,
+    offset: paragraphTextOffsetToRunOffset(paragraphText, annotation.offset)
+  });
+  return {
+    references: references.map(normalize),
+    comments: comments.map(normalize)
+  };
+}
+
+function characterRangesToRuns(collection) {
+  if (!collection?.items?.length) return [];
+  const runs = [];
+  for (const range of collection.items) {
+    const text = String(range.text || '').replace(/\u0002/g, '');
+    if (!text) continue;
+    const next = {
+      text,
+      font: {
+        bold: range.font?.bold === true,
+        italic: range.font?.italic === true,
+        underline: range.font?.underline
+      },
+      hyperlink: range.hyperlink || ''
+    };
+    const previous = runs.at(-1);
+    if (previous
+        && previous.font.bold === next.font.bold
+        && previous.font.italic === next.font.italic
+        && previous.font.underline === next.font.underline
+        && previous.hyperlink === next.hyperlink) {
+      previous.text += next.text;
+    } else {
+      runs.push(next);
+    }
+  }
+  return runs;
+}
+
+function insertAnnotationsIntoRuns(runs, references = [], comments = []) {
+  const markers = [
+    // La recherche joker Word omet normalement l'appel de note structuré : il
+    // n'y a donc aucun caractère U+0002 à consommer dans cette représentation.
+    ...references.map(({ offset, number }) => ({
+      offset,
+      marker: `[^${number}]`,
+      removeLength: 0
+    })),
+    ...comments.map(({ offset, text, removeLength = 0 }) => ({
+      offset,
+      marker: `<!-- ${encodeMarkdownComment(text)} -->`,
+      removeLength
+    }))
+  ].sort((left, right) => right.offset - left.offset || right.removeLength - left.removeLength);
+  const output = runs.map((run) => ({ ...run, font: { ...run.font } }));
+  for (const item of markers) {
+    let position = 0;
+    for (let index = 0; index < output.length; index++) {
+      const run = output[index];
+      const end = position + run.text.length;
+      if (item.offset <= end) {
+        const local = Math.max(0, item.offset - position);
+        const before = { ...run, text: run.text.slice(0, local) };
+        const after = { ...run, text: run.text.slice(local + item.removeLength) };
+        output.splice(index, 1, before, { text: item.marker, font: {}, markdown: true }, after);
+        break;
+      }
+      position = end;
+    }
+  }
+  return output.filter((run) => run.text);
+}
+
+function formatWordFootnoteParagraph(paragraph, characterRanges = null) {
   const text = (paragraph.text || '').trim();
   if (!text) return '';
-  return applyRunFormatting([{
+  const detailedRuns = characterRangesToRuns(characterRanges);
+  return applyRunFormatting(detailedRuns.length > 0 ? detailedRuns : [{
     text,
+    markdown: true,
     font: {
       bold: paragraph.font?.bold,
       italic: paragraph.font?.italic,
       underline: paragraph.font?.underline
     }
-  }]);
+  }]).trim();
 }
 
 function formatFootnoteDefinition(footnote) {
@@ -823,9 +1046,12 @@ function formatIndexedEntries(entries, options = {}) {
 function convertParagraphToMarkdown(para) {
   let text = para.text.trim();
   const style = para.style || 'Normal';
+  const formattedText = para.runs && para.runs.length > 0
+    ? applyRunFormatting(para.runs).trim()
+    : text;
 
   if (style === 'Title' || style.startsWith('Title,')) {
-    const cleanText = removeWordNumbering(text);
+    const cleanText = removeWordNumbering(formattedText);
     return `# ${cleanText}`;
   }
 
@@ -833,29 +1059,27 @@ function convertParagraphToMarkdown(para) {
   if (headingMatch) {
     const level = parseInt(headingMatch[1]);
     const hashes = '#'.repeat(level + 1);
-    const cleanText = removeWordNumbering(text);
+    const cleanText = removeWordNumbering(formattedText);
     return `${hashes} ${cleanText}`;
   }
 
   if (para.listString && para.listString !== '') {
     const level = para.listLevel >= 0 ? para.listLevel : 0;
     const indent = '  '.repeat(level);
-    const cleanText = removeWordNumbering(text);
+    const cleanText = removeWordNumbering(formattedText);
     return `${indent}- ${cleanText}`;
   }
 
-  if (para.runs && para.runs.length > 1) {
-    return applyRunFormatting(para.runs);
-  }
-
-  return text;
+  return formattedText;
 }
 
 function applyRunFormatting(runs) {
   let result = '';
 
   for (const run of runs) {
-    let text = run.text;
+    let text = run.markdown === true
+      ? run.text
+      : run.text.replace(/([\\*_[\]])/g, '\\$1');
 
     if (!text) continue;
 
@@ -871,8 +1095,12 @@ function applyRunFormatting(runs) {
       text = `*${text}*`;
     }
 
-    if (isUnderline && !isBold && !isItalic) {
+    if (isUnderline) {
       text = `<u>${text}</u>`;
+    }
+
+    if (run.hyperlink) {
+      text = `[${text}](${run.hyperlink})`;
     }
 
     result += text;
@@ -1647,6 +1875,28 @@ function parseMarkdownToSegments(markdown, footnoteDefinitions = []) {
   // Les marqueurs techniques peuvent se trouver à l'intérieur d'un segment
   // Markdown formaté (par exemple **texte[^n]**). Déplier récursivement ces
   // marqueurs évite de les insérer comme texte littéral dans Word.
+  function appendInlineFormatting(value, inherited = {}) {
+    const inlinePattern = /(\*\*\*([^*]+)\*\*\*|\*\*([^*]+)\*\*|\*([^*]+)\*|<u>([^<]+)<\/u>|(?<!_)_([^_]+)_(?!_))/g;
+    let lastEnd = 0;
+    let inlineMatch;
+    while ((inlineMatch = inlinePattern.exec(value)) !== null) {
+      appendDecoratedSegments(value.substring(lastEnd, inlineMatch.index), inherited);
+      if (inlineMatch[2]) {
+        appendDecoratedSegments(inlineMatch[2], { ...inherited, bold: true, italic: true });
+      } else if (inlineMatch[3]) {
+        appendDecoratedSegments(inlineMatch[3], { ...inherited, bold: true });
+      } else if (inlineMatch[4]) {
+        appendDecoratedSegments(inlineMatch[4], { ...inherited, italic: true });
+      } else if (inlineMatch[5]) {
+        appendInlineFormatting(inlineMatch[5], { ...inherited, underline: true });
+      } else if (inlineMatch[6]) {
+        appendDecoratedSegments(inlineMatch[6], { ...inherited, italic: true });
+      }
+      lastEnd = inlinePattern.lastIndex;
+    }
+    appendDecoratedSegments(value.substring(lastEnd), inherited);
+  }
+
   function appendDecoratedSegments(value, inherited = {}) {
     const markerPattern = /__(FOOTNOTE|COMMENT|CROSSREF|LINK|PAGEBREAK|USITALIC|UNDERLINE)_(\d+)__/g;
     let lastMarkerEnd = 0;
@@ -1702,7 +1952,7 @@ function parseMarkdownToSegments(markdown, footnoteDefinitions = []) {
       } else if (kind === 'LINK') {
         const link = links[markerIndex];
         if (link) {
-          appendDecoratedSegments(link.text, { ...inherited, hyperlink: link.url });
+          appendInlineFormatting(link.text, { ...inherited, hyperlink: link.url });
         }
       } else if (kind === 'PAGEBREAK') {
         segments.push({
@@ -1829,9 +2079,17 @@ export const __footnoteTestUtils = {
   formatFootnoteDefinition,
   formatIndexedEntries,
   formatParagraphRange,
+  formatWordFootnoteParagraph,
+  applyRunFormatting,
+  characterRangesToRuns,
+  convertParagraphToMarkdown,
   insertFootnoteReferences,
   insertInlineAnnotations,
+  insertAnnotationsIntoRuns,
+  loadDetailedParagraphRanges,
   markdownLineToWordFormat,
+  normalizeAnnotationsForRuns,
+  paragraphNeedsDetailedRuns,
   parseMarkdownToSegments
 };
 

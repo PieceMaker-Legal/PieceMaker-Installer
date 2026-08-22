@@ -257,6 +257,27 @@ function validateSnapshot(entries, suppliedSnapshot) {
   return { current };
 }
 
+async function applyRevisionTargetsSequentially(context, targetIndexes, accepts) {
+  // Accepter/rejeter une révision supprime son proxy Office.js. Un batch qui
+  // conserve plusieurs proxies peut donc échouer sur « Object has been
+  // deleted ». En partant de la fin, les index des cibles restantes restent
+  // stables ; chaque cible est rechargée dans un nouveau cycle Office.js.
+  const indexes = [...targetIndexes].sort((left, right) => right - left);
+  for (const index of indexes) {
+    const current = await loadAvailableRevisions(context);
+    const entry = current.entries.find((candidate) => candidate.index === index);
+    if (!entry) {
+      throw new Error(`Revision index ${index} disappeared before it could be ${accepts ? 'accepted' : 'rejected'}.`);
+    }
+    if (accepts) entry.source.accept();
+    else entry.source.reject();
+    await context.sync();
+  }
+
+  const remaining = await loadAvailableRevisions(context);
+  return remaining.entries.length;
+}
+
 async function displayRevisions(context, review) {
   if (!supportsRequirementSet('WordApiDesktop', '1.4')) {
     return { error: 'Revision display settings require WordApiDesktop 1.4.' };
@@ -327,18 +348,18 @@ export async function reviewRevisions(review = {}) {
 
       if (selected.length === 0) return { error: 'No revisions match this action.' };
       const accepts = review.action === 'accept' || review.action === 'accept_all';
-      for (const entry of selected) {
-        if (accepts) entry.source.accept();
-        else entry.source.reject();
-      }
-      await context.sync();
+      const remaining = await applyRevisionTargetsSequentially(
+        context,
+        selected.map((entry) => entry.index),
+        accepts
+      );
 
       return {
         success: true,
         action: accepts ? 'accept' : 'reject',
         selection,
         count: selected.length,
-        remaining: Math.max(0, loaded.entries.length - selected.length),
+        remaining,
         scope: loaded.scope
       };
     } catch (error) {

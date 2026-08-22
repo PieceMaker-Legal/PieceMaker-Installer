@@ -45,8 +45,9 @@ function installOfficeMock({ desktop = true, wordApi = true, context }) {
   };
 }
 
-function desktopContext(entries = sampleEntries) {
+function desktopContext(entries = sampleEntries, { rejectMultiActionBatch = false } = {}) {
   const calls = { accepted: [], rejected: [], selected: [], filter: [], sync: 0 };
+  const pending = [];
   const revisions = entries.map((entry) => {
     const source = {
       ...entry,
@@ -55,8 +56,8 @@ function desktopContext(entries = sampleEntries) {
         text: entry.text,
         select(mode) { calls.selected.push([entry.index, mode]); }
       },
-      accept() { calls.accepted.push(entry.index); },
-      reject() { calls.rejected.push(entry.index); }
+      accept() { pending.push({ action: 'accept', entry, source }); },
+      reject() { pending.push({ action: 'reject', entry, source }); }
     };
     return source;
   });
@@ -83,7 +84,20 @@ function desktopContext(entries = sampleEntries) {
         }
       }
     },
-    async sync() { calls.sync += 1; }
+    async sync() {
+      calls.sync += 1;
+      if (rejectMultiActionBatch && pending.length > 1) {
+        for (const item of pending) calls.rejected.push(item.entry.index);
+        pending.length = 0;
+        revisions.length = 0;
+        throw new Error('Microsoft Word: Object has been deleted.');
+      }
+      for (const item of pending.splice(0)) {
+        calls[item.action === 'accept' ? 'accepted' : 'rejected'].push(item.entry.index);
+        const position = revisions.indexOf(item.source);
+        if (position >= 0) revisions.splice(position, 1);
+      }
+    }
   };
   return { context, calls, reviewers };
 }
@@ -187,6 +201,8 @@ test('les actions refusent un snapshot périmé et exigent confirmation pour les
     scope: 'document'
   });
 
+  const globalDesktop = desktopContext();
+  installOfficeMock({ context: globalDesktop.context });
   const global = await reviewRevisions({ action: 'reject_all', snapshot });
   assert.match(global.error, /confirm/);
 
@@ -200,6 +216,31 @@ test('les actions refusent un snapshot périmé et exigent confirmation pour les
   });
   assert.equal(filtered.count, 1);
   assert.deepEqual(filteredDesktop.calls.rejected, [1]);
+});
+
+test('accept/reject synchronise chaque cible avant que Word invalide les proxies', async () => {
+  const entries = [
+    ...sampleEntries,
+    { ...sampleEntries[0], index: 3, text: 'Autre ajout' }
+  ];
+  const desktop = desktopContext(entries, { rejectMultiActionBatch: true });
+  installOfficeMock({ context: desktop.context });
+
+  const result = await reviewRevisions({
+    action: 'reject',
+    snapshot: revisionSnapshot(entries),
+    indexes: [1, 3]
+  });
+
+  assert.deepEqual(desktop.calls.rejected, [3, 1]);
+  assert.deepEqual(result, {
+    success: true,
+    action: 'reject',
+    selection: 'indexes',
+    count: 2,
+    remaining: 1,
+    scope: 'document'
+  });
 });
 
 test('show sélectionne la révision et display configure la vue Desktop', async () => {
