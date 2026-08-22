@@ -191,11 +191,97 @@ function activateWord() {
   }
 }
 
+const MAC_SHOW_TASKPANE_SCRIPT = `
+on run argv
+  set documentPath to item 1 of argv
+  set buttonLabel to item 2 of argv
+  set targetHfsPath to (POSIX file documentPath as alias) as text
+
+  tell application "${WORD_APP_MAC}"
+    set matchingDocuments to every document whose full name is targetHfsPath
+    if (count of matchingDocuments) is 0 then error "Document Word introuvable: " & documentPath
+    activate
+    activate object (item 1 of matchingDocuments)
+  end tell
+
+  delay 0.5
+  tell application "System Events"
+    tell process "${WORD_APP_MAC}"
+      set frontmost to true
+      tell tab group 1 of window 1
+        if value of radio button 1 is not 1 then click radio button 1
+        set ribbonReady to false
+        repeat 20 times
+          if exists scroll area 1 then
+            set ribbonReady to true
+            exit repeat
+          end if
+          delay 0.2
+        end repeat
+        if ribbonReady is false then error "Ruban Word indisponible"
+        repeat with ribbonGroup in every group of scroll area 1
+          if exists button buttonLabel of ribbonGroup then
+            click button buttonLabel of ribbonGroup
+            return "clicked"
+          end if
+        end repeat
+      end tell
+    end tell
+  end tell
+
+  error "Bouton PieceMaker introuvable dans le ruban Word"
+end run
+`.trim();
+
+/**
+ * Word pour Mac n'auto-ouvre parfois que le premier exemplaire d'un même
+ * complément quand plusieurs documents sont ouverts. Le bouton ShowTaskpane
+ * du manifeste reste toutefois disponible dans chaque fenêtre. Ce fallback
+ * active le document par son chemin complet (pas par son seul nom), puis
+ * déclenche ce bouton via l'API d'accessibilité macOS.
+ *
+ * Ne jette jamais. `options` permet d'injecter la plateforme et spawnSync dans
+ * les tests sans lancer Word.
+ */
+function showTaskpaneForDocument(docPath, options = {}) {
+  const platform = options.platform || process.platform;
+  const spawnSyncImpl = options.spawnSyncImpl || spawnSync;
+  const buttonLabel = options.buttonLabel || 'Ouvrir PieceMaker';
+
+  if (platform !== 'darwin') {
+    return { shown: false, method: 'unsupported' };
+  }
+  if (!fs.existsSync(docPath)) {
+    return { shown: false, method: 'ribbon-applescript', error: `Document introuvable: ${docPath}` };
+  }
+
+  try {
+    const result = spawnSyncImpl('osascript', [
+      '-e',
+      MAC_SHOW_TASKPANE_SCRIPT,
+      '--',
+      docPath,
+      buttonLabel,
+    ], { encoding: 'utf8', timeout: 10000 });
+    if (result.status !== 0) {
+      return {
+        shown: false,
+        method: 'ribbon-applescript',
+        error: (result.stderr || result.error?.message || `osascript a échoué (code ${result.status})`).trim(),
+      };
+    }
+    return { shown: true, method: 'ribbon-applescript' };
+  } catch (error) {
+    return { shown: false, method: 'ribbon-applescript', error: error.message };
+  }
+}
+
 module.exports = {
   ensureDevRegistration,
   removeDevRegistration,
   isDevRegistered,
   launchWord,
   activateWord,
+  showTaskpaneForDocument,
   macWefDir,
 };

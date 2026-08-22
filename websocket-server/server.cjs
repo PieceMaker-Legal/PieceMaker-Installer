@@ -19,7 +19,12 @@ const {
 } = require('./lib/stamping.cjs');
 const { isInside, resolveConfiguredLegalCaseFolder } = require('./workspace-paths.cjs');
 const { injectAutoOpen } = require('./lib/docx-autoopen.cjs');
-const { ensureDevRegistration, launchWord, activateWord } = require('./lib/word-launcher.cjs');
+const {
+  ensureDevRegistration,
+  launchWord,
+  activateWord,
+  showTaskpaneForDocument,
+} = require('./lib/word-launcher.cjs');
 const { ADDIN_ID } = require('./lib/docx-autoopen.cjs');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -133,7 +138,12 @@ function docUrlToPath(docUrl) {
 }
 
 function documentKey(docPath) {
-  const key = path.resolve(docPath).normalize('NFC');
+  let key = path.resolve(docPath);
+  // Office.context.document.url utilise `/tmp` sur macOS tandis que Node peut
+  // recevoir le même chemin sous `/private/tmp`. Résoudre les liens réels évite
+  // de créer deux clés pour un seul document.
+  try { key = fs.realpathSync.native(key); } catch { /* chemin non résolu : garder l'absolu */ }
+  key = key.normalize('NFC');
   return process.platform === 'win32' ? key.toLowerCase() : key;
 }
 
@@ -666,9 +676,20 @@ app.post('/api/word/open-doc', async (req, res) => {
     }
     activateWord();
 
-    // 4. Attente de la disponibilité d'un volet.
+    // 4. Attente de la disponibilité d'un volet. Word pour Mac peut ignorer
+    // l'auto-ouverture du deuxième document pour un même manifeste. Après un
+    // délai de grâce, déclencher le bouton ShowTaskpane du manifeste dans la
+    // bonne fenêtre permet plusieurs volets avec toujours un seul manifeste.
     const timeoutMs = Number(req.body?.timeoutMs) > 0 ? Number(req.body.timeoutMs) : 45000;
-    const paneReady = await waitForPane(timeoutMs, resolved);
+    const startedWaitingAt = Date.now();
+    const autoOpenGraceMs = Math.min(10000, Math.max(1000, Math.floor(timeoutMs / 3)));
+    let paneReady = await waitForPane(autoOpenGraceMs, resolved);
+    let paneFallback = null;
+    if (!paneReady && process.platform === 'darwin') {
+      paneFallback = showTaskpaneForDocument(resolved);
+      const remainingMs = Math.max(0, timeoutMs - (Date.now() - startedWaitingAt));
+      if (remainingMs > 0) paneReady = await waitForPane(remainingMs, resolved);
+    }
 
     return res.json({
       ok: true,
@@ -679,6 +700,8 @@ app.post('/api/word/open-doc', async (req, res) => {
       injectionReason: injection.reason,
       launchMethod: launch.method,
       paneReady,
+      paneFallbackMethod: paneFallback?.method || null,
+      paneFallbackError: paneFallback?.error || null,
       panesConnected: wordPanes.size,
       message: paneReady
         ? 'Word ouvert et volet PieceMaker prêt : vous pouvez utiliser read_doc / edit_doc.'
