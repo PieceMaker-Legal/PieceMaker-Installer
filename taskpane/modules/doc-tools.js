@@ -10,6 +10,7 @@
 
 import { FOOTNOTE_TOKEN_PATTERN, prepareMarkdownFootnotes } from './markdown-footnotes.js';
 import { footnoteOoxmlToMarkdownBlocks } from './word-footnotes.js';
+import { readRevisions, reviewRevisions } from './word-revisions.js';
 
 let deps = null;
 
@@ -153,11 +154,16 @@ function parseIndexRange(rangeStr) {
  * @returns {string} - Formatted document content (NOT JSON)
  */
 export async function readDoc(params = {}) {
+  if (params.revisions && typeof params.revisions === 'object') {
+    return readRevisions(params.revisions, params.max_chars);
+  }
+
   const {
     list_headings = false,
     heading = null,
     indexes = null,
     include_track_changes = false,
+    revision_view = null,
     from_index = 0,
     from_offset = 0,
     max_chars = 100000
@@ -168,6 +174,11 @@ export async function readDoc(params = {}) {
     fromOffset: Number.isInteger(from_offset) && from_offset >= 0 ? from_offset : 0,
     maxChars: Math.min(100000, Math.max(500, Number.isFinite(max_chars) ? Math.floor(max_chars) : 100000))
   };
+  const reviewedVersion = revision_view === 'original'
+    ? Word.ChangeTrackingVersion.original
+    : revision_view === 'current' || !include_track_changes
+      ? Word.ChangeTrackingVersion.current
+      : null;
 
   return await Word.run(async (context) => {
     try {
@@ -205,13 +216,15 @@ export async function readDoc(params = {}) {
       const paragraphFootnotesData = [];
       const paragraphFootnotePrefixes = [];
       const paragraphFootnoteOoxmlResults = [];
+      const paragraphFootnoteOriginalTextResults = [];
+      const paragraphFootnoteOriginalReferenceResults = [];
 
       for (const p of paragraphs.items) {
         p.load('text,style,font,listString,leftIndent');
         p.font.load('bold,italic,underline');
 
-        if (!include_track_changes) {
-          const reviewedText = p.getReviewedText(Word.ChangeTrackingVersion.current);
+        if (reviewedVersion) {
+          const reviewedText = p.getReviewedText(reviewedVersion);
           reviewedTextResults.push(reviewedText);
         } else {
           reviewedTextResults.push(null);
@@ -223,10 +236,14 @@ export async function readDoc(params = {}) {
           paragraphFootnotesData.push(pFootnotes);
           paragraphFootnotePrefixes.push([]);
           paragraphFootnoteOoxmlResults.push([]);
+          paragraphFootnoteOriginalTextResults.push([]);
+          paragraphFootnoteOriginalReferenceResults.push([]);
         } catch (e) {
           paragraphFootnotesData.push(null);
           paragraphFootnotePrefixes.push([]);
           paragraphFootnoteOoxmlResults.push([]);
+          paragraphFootnoteOriginalTextResults.push([]);
+          paragraphFootnoteOriginalReferenceResults.push([]);
         }
       }
 
@@ -246,11 +263,21 @@ export async function readDoc(params = {}) {
             fn.reference.load('text');
             fn.body.load('text');
             paragraphFootnoteOoxmlResults[i].push(fn.body.getOoxml());
+            paragraphFootnoteOriginalTextResults[i].push(
+              revision_view === 'original'
+                ? fn.body.getReviewedText(Word.ChangeTrackingVersion.original)
+                : null
+            );
+            paragraphFootnoteOriginalReferenceResults[i].push(
+              revision_view === 'original'
+                ? fn.reference.getReviewedText(Word.ChangeTrackingVersion.original)
+                : null
+            );
             const referenceStart = fn.reference.getRange('Start');
             const prefixRange = paragraphs.items[i].getRange('Start').expandTo(referenceStart);
             prefixRange.load('text');
-            const reviewedText = !include_track_changes
-              ? prefixRange.getReviewedText(Word.ChangeTrackingVersion.current)
+            const reviewedText = reviewedVersion
+              ? prefixRange.getReviewedText(reviewedVersion)
               : null;
             paragraphFootnotePrefixes[i].push({ range: prefixRange, reviewedText });
             if (fn.body.paragraphs && fn.body.paragraphs.items) {
@@ -283,7 +310,7 @@ export async function readDoc(params = {}) {
         const p = paragraphs.items[i];
 
         let text = '';
-        if (!include_track_changes && reviewedTextResults[i]) {
+        if (reviewedVersion && reviewedTextResults[i]) {
           text = reviewedTextResults[i].value || '';
         } else {
           text = p.text || '';
@@ -299,23 +326,28 @@ export async function readDoc(params = {}) {
           const references = [];
           for (let j = 0; j < pFootnotes.items.length; j++) {
             const fn = pFootnotes.items[j];
+            if (revision_view === 'original'
+                && !paragraphFootnoteOriginalReferenceResults[i]?.[j]?.value) {
+              continue;
+            }
             const number = nextFootnoteNumber++;
-            const blocks = footnoteOoxmlToMarkdownBlocks(
-              paragraphFootnoteOoxmlResults[i]?.[j]?.value
-            );
-            if (blocks.length === 0 && fn.body.paragraphs && fn.body.paragraphs.items) {
+            const originalFootnoteText = paragraphFootnoteOriginalTextResults[i]?.[j]?.value;
+            const blocks = revision_view === 'original'
+              ? String(originalFootnoteText || '').split(/\r\n?|\n/).map((block) => block.trim()).filter(Boolean)
+              : footnoteOoxmlToMarkdownBlocks(paragraphFootnoteOoxmlResults[i]?.[j]?.value);
+            if (revision_view !== 'original' && blocks.length === 0 && fn.body.paragraphs && fn.body.paragraphs.items) {
               for (const para of fn.body.paragraphs.items) {
                 const block = formatWordFootnoteParagraph(para);
                 if (block) blocks.push(block);
               }
             }
-            if (blocks.length === 0 && fn.body.text?.trim()) {
+            if (revision_view !== 'original' && blocks.length === 0 && fn.body.text?.trim()) {
               blocks.push(fn.body.text.trim());
             }
 
             const prefix = paragraphFootnotePrefixes[i]?.[j];
             const prefixText = (
-              (!include_track_changes && prefix?.reviewedText)
+              (reviewedVersion && prefix?.reviewedText)
                 ? prefix.reviewedText.value
                 : prefix?.range.text
             || '').replace(/^\uFEFF/, '');
@@ -790,6 +822,12 @@ function removeWordNumbering(text) {
  * @returns {Object} - Result with success/error and guideline info
  */
 export async function editDoc(params = {}) {
+  if (params.review && typeof params.review === 'object') {
+    const result = await reviewRevisions(params.review);
+    if (result?.success && ['accept', 'reject'].includes(result.action)) docReadBeforeEdit = false;
+    return result;
+  }
+
   if (!Array.isArray(params.edits)) {
     return editDocSingle(params);
   }
@@ -817,6 +855,7 @@ export async function editDoc(params = {}) {
   const changes = [];
   for (const edit of prepared.edits) {
     const { anchor, ...singleEdit } = edit;
+    singleEdit.track_changes = params.track_changes !== false;
     const result = await editDocSingle(singleEdit);
 
     if (!result?.success) {
@@ -921,7 +960,8 @@ async function editDocSingle(params = {}) {
     placeholder = null,
     text = '',
     indexes_to_delete = null,
-    skip_footnote_validation = false
+    skip_footnote_validation = false,
+    track_changes = true
   } = params;
 
   const anonymizeFn = deps?.anonymizeText;
@@ -956,13 +996,20 @@ async function editDocSingle(params = {}) {
   }
 
   return await Word.run(async (context) => {
+    let previousTrackingMode = null;
+    let trackingModeWasLoaded = false;
     try {
-      context.document.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
-
       const body = context.document.body;
       const paragraphs = body.paragraphs;
+      context.document.load('changeTrackingMode');
       paragraphs.load('items');
 
+      await context.sync();
+      previousTrackingMode = context.document.changeTrackingMode;
+      trackingModeWasLoaded = true;
+      context.document.changeTrackingMode = track_changes === false
+        ? Word.ChangeTrackingMode.off
+        : Word.ChangeTrackingMode.trackAll;
       await context.sync();
 
       if (operation === 'delete') {
@@ -1310,6 +1357,15 @@ async function editDocSingle(params = {}) {
       return {
         error: `Edit failed: ${error.message}`
       };
+    } finally {
+      if (trackingModeWasLoaded && previousTrackingMode) {
+        try {
+          context.document.changeTrackingMode = previousTrackingMode;
+          await context.sync();
+        } catch (restoreError) {
+          console.error('[edit-doc] Unable to restore change tracking mode:', restoreError);
+        }
+      }
     }
   });
 }

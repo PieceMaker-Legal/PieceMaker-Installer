@@ -70,20 +70,29 @@ test('le chat du volet limite aussi les outils locaux actifs', () => {
   assert.match(source, /ENABLED_LOCAL_TOOL_NAMES = new Set\(\['read_doc', 'edit_doc'\]\)/);
   assert.match(source, /filter\(\(tool\) => ENABLED_LOCAL_TOOL_NAMES\.has\(tool\.name\)\)/);
   assert.match(source, /Outil désactivé pour le modèle/);
+  assert.match(source, /'X-PieceMaker-Pane': paneId/);
+  assert.match(source, /message\.type === 'pane-bound'/);
+  assert.match(source, /type: 'pane-hello', docUrl, paneId/);
 });
 
 test('un seul manifeste déclare le volet auto-ouvert', () => {
   const manifest = readFileSync(manifestPath, 'utf8');
   const wordServer = readFileSync(wordServerScript, 'utf8');
+  const mcpServer = readFileSync(serverScript, 'utf8');
 
   assert.equal(existsSync(path.join(root, 'taskpane', 'manifest-B.xml')), false);
   assert.match(manifest, /<TaskpaneId>Office\.AutoShowTaskpaneWithDocument<\/TaskpaneId>/);
   assert.doesNotMatch(wordServer, /ADDIN_SLOTS|docSlotAssignments|manifest-B/);
   assert.match(wordServer, /req\.get\('X-PieceMaker-Document'\)/);
-  assert.match(wordServer, /wordPanes\.get\(documentKey\(docPath\)\)/);
+  assert.match(wordServer, /req\.get\('X-PieceMaker-Pane'\)/);
+  assert.match(wordServer, /wordPaneRegistry\.getById\(paneId\)/);
+  assert.doesNotMatch(wordServer, /activeWordDocPath/);
+  assert.match(mcpServer, /'X-PieceMaker-Pane': boundPaneId/);
 });
 
 test('deux processus MCP restent liés chacun à leur propre document', async () => {
+  const paneA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const paneB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
   const received = [];
   const proxy = createServer((req, res) => {
     let body = '';
@@ -94,12 +103,20 @@ test('deux processus MCP restent liés chacun à leur propre document', async ()
       const routed = req.headers['x-piecemaker-document']
         ? decodeURIComponent(req.headers['x-piecemaker-document'])
         : null;
-      received.push({ url: req.url, payload, routed });
+      const paneId = req.headers['x-piecemaker-pane'] || null;
+      received.push({ url: req.url, payload, routed, paneId });
       res.setHeader('Content-Type', 'application/json');
       if (req.url === '/api/word/open-doc') {
-        res.end(JSON.stringify({ ok: true, path: payload.path, paneReady: true, message: 'prêt' }));
+        const openedPaneId = payload.path.includes('Dossier A') ? paneA : paneB;
+        res.end(JSON.stringify({
+          ok: true,
+          path: payload.path,
+          paneId: openedPaneId,
+          paneReady: true,
+          message: 'prêt',
+        }));
       } else {
-        res.end(JSON.stringify({ routed }));
+        res.end(JSON.stringify({ routed, paneId }));
       }
     });
   });
@@ -123,20 +140,27 @@ test('deux processus MCP restent liés chacun à leur propre document', async ()
 
   try {
     await Promise.all([initializeMcp(sessionA), initializeMcp(sessionB)]);
-    await Promise.all([
+    const [openedA, openedB] = await Promise.all([
       callTool(sessionA, 2, 'open_doc', { path: docA }),
       callTool(sessionB, 2, 'open_doc', { path: docB }),
     ]);
+    assert.equal('paneId' in JSON.parse(openedA.result.content[0].text), false);
+    assert.equal('paneId' in JSON.parse(openedB.result.content[0].text), false);
     const [readA, readB] = await Promise.all([
       callTool(sessionA, 3, 'read_doc', { list_headings: true }),
       callTool(sessionB, 3, 'read_doc', { list_headings: true }),
     ]);
 
-    assert.equal(JSON.parse(readA.result.content[0].text).routed, docA);
-    assert.equal(JSON.parse(readB.result.content[0].text).routed, docB);
+    assert.deepEqual(JSON.parse(readA.result.content[0].text), { routed: docA, paneId: paneA });
+    assert.deepEqual(JSON.parse(readB.result.content[0].text), { routed: docB, paneId: paneB });
     assert.deepEqual(
-      received.filter(({ url }) => url === '/api/word/read-doc').map(({ routed }) => routed).sort(),
-      [docA, docB].sort(),
+      received.filter(({ url }) => url === '/api/word/read-doc')
+        .map(({ routed, paneId }) => ({ routed, paneId }))
+        .sort((a, b) => a.routed.localeCompare(b.routed)),
+      [
+        { routed: docA, paneId: paneA },
+        { routed: docB, paneId: paneB },
+      ],
     );
   } finally {
     sessionA.kill('SIGTERM');
@@ -145,6 +169,57 @@ test('deux processus MCP restent liés chacun à leur propre document', async ()
       once(sessionA, 'exit').catch(() => {}),
       once(sessionB, 'exit').catch(() => {}),
     ]);
+    proxy.close();
+    await once(proxy, 'close');
+  }
+});
+
+test('open_doc sans volet prêt ne lie pas la session et read_doc échoue localement', async () => {
+  let readRequests = 0;
+  const proxy = createServer((req, res) => {
+    let body = '';
+    req.setEncoding('utf8');
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      res.setHeader('Content-Type', 'application/json');
+      if (req.url === '/api/word/open-doc') {
+        const payload = JSON.parse(body);
+        res.end(JSON.stringify({
+          ok: true,
+          path: payload.path,
+          paneReady: false,
+          paneId: null,
+          message: 'volet absent',
+        }));
+      } else {
+        readRequests += 1;
+        res.end(JSON.stringify({ unexpected: true }));
+      }
+    });
+  });
+  proxy.listen(0, '127.0.0.1');
+  await once(proxy, 'listening');
+  const { port } = proxy.address();
+  const child = spawn(process.execPath, [serverScript], {
+    cwd: root,
+    env: {
+      ...process.env,
+      PIECEMAKER_SERVER_URL: `http://127.0.0.1:${port}`,
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  try {
+    await initializeMcp(child);
+    await callTool(child, 2, 'open_doc', { path: '/tmp/sans-volet.docx' });
+    const read = await callTool(child, 3, 'read_doc', { indexes: [0] });
+
+    assert.equal(read.result?.isError, true);
+    assert.match(read.result?.content?.[0]?.text || '', /Aucun document lié/);
+    assert.equal(readRequests, 0);
+  } finally {
+    child.kill('SIGTERM');
+    await once(child, 'exit').catch(() => {});
     proxy.close();
     await once(proxy, 'close');
   }

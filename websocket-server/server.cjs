@@ -19,6 +19,7 @@ const {
 } = require('./lib/stamping.cjs');
 const { isInside, resolveConfiguredLegalCaseFolder } = require('./workspace-paths.cjs');
 const { injectAutoOpen } = require('./lib/docx-autoopen.cjs');
+const { createWordPaneRegistry } = require('./lib/word-pane-registry.cjs');
 const {
   ensureDevRegistration,
   launchWord,
@@ -64,12 +65,6 @@ const {
   applyMapping,
   revertMapping,
 } = require('../piecemaker-plugin/scripts/lib/mapping.cjs');
-
-// Compatibilité avec les anciens clients qui n'envoient pas encore l'identité
-// du document. Les MCP récents lient le chemin dans leur propre processus et le
-// transmettent sur chaque appel : cette variable ne doit donc jamais servir à
-// router deux sessions concurrentes.
-let activeWordDocPath = null;
 
 function caseMappingForDocument(docPath) {
   if (!docPath) return null;
@@ -121,12 +116,10 @@ function getWorkspacePath() {
 // Stockage des clients WebSocket connectés
 const wordClients = new Set();
 
-// Volets PieceMaker par document : Map<normalizedPath, ws>.
-// Chaque volet s'annonce par `pane-hello` avec l'URL du document
-// (Office.context.document.url). La clé est le chemin absolu normalisé.
-const wordPanes = new Map();
-// Reverse : ws → chemin, pour le nettoyage à la déconnexion.
-const paneDocPaths = new WeakMap();
+// Chaque volet possède un identifiant opaque, propre à son WebSocket. Le chemin
+// sert à trouver le volet pendant open_doc et à choisir le mapping RGPD ; tous
+// les appels ultérieurs routent par l'identifiant, jamais par le document actif.
+const wordPaneRegistry = createWordPaneRegistry();
 
 function docUrlToPath(docUrl) {
   if (!docUrl) return null;
@@ -137,19 +130,9 @@ function docUrlToPath(docUrl) {
   } catch { return null; }
 }
 
-function documentKey(docPath) {
-  let key = path.resolve(docPath);
-  // Office.context.document.url utilise `/tmp` sur macOS tandis que Node peut
-  // recevoir le même chemin sous `/private/tmp`. Résoudre les liens réels évite
-  // de créer deux clés pour un seul document.
-  try { key = fs.realpathSync.native(key); } catch { /* chemin non résolu : garder l'absolu */ }
-  key = key.normalize('NFC');
-  return process.platform === 'win32' ? key.toLowerCase() : key;
-}
-
 function requestedDocumentPath(req) {
   const encoded = req.get('X-PieceMaker-Document');
-  if (!encoded) return activeWordDocPath;
+  if (!encoded) return null;
   try {
     return docUrlToPath(decodeURIComponent(encoded));
   } catch {
@@ -158,11 +141,17 @@ function requestedDocumentPath(req) {
 }
 
 function getRequestPane(req) {
-  const docPath = requestedDocumentPath(req);
-  const client = docPath ? wordPanes.get(documentKey(docPath)) : null;
+  const requestedDocPath = requestedDocumentPath(req);
+  const paneId = req.get('X-PieceMaker-Pane') || null;
+  const candidate = paneId ? wordPaneRegistry.getById(paneId) : null;
+  const client = candidate && candidate.readyState === 1 ? candidate : null;
   return {
-    docPath,
-    client: client && client.readyState === 1 ? client : null,
+    // Le chemin annoncé par le volet fait autorité pour le mapping. Le chemin
+    // envoyé par le MCP reste un diagnostic, jamais une clé de routage.
+    docPath: client ? wordPaneRegistry.pathFor(client) : requestedDocPath,
+    requestedDocPath,
+    paneId,
+    client,
   };
 }
 const MANIFEST_PATH = path.join(REPO_ROOT, 'taskpane', 'manifest.xml');
@@ -267,7 +256,7 @@ app.use((req, res, next) => {
     res.header('Vary', 'Origin');
   }
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization, X-Filename, X-Document-Id');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization, X-Filename, X-Document-Id, X-PieceMaker-Document, X-PieceMaker-Pane');
 
   if (req.method === 'OPTIONS') {
     return origin && !isLocalOrigin(origin) ? res.sendStatus(403) : res.sendStatus(204);
@@ -596,31 +585,56 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     port: PORT,
     wordClientsConnected: wordClients.size,
-    wordPanesConnected: wordPanes.size
+    wordPanesConnected: wordPaneRegistry.idCount
   });
 });
 
 // Attend qu'un volet PieceMaker soit connecté pour `docPath`, jusqu'à
-// `timeoutMs`. Résout true dès qu'un volet correspondant est présent.
+// `timeoutMs`. Renvoie le WebSocket exact afin que open_doc puisse remettre son
+// identifiant opaque au seul processus MCP appelant.
 function waitForPane(timeoutMs, docPath) {
-  const hasPaneForDoc = () => {
-    if (!docPath) return wordPanes.size > 0;
-    const ws = wordPanes.get(documentKey(docPath));
-    return ws && ws.readyState === 1;
+  const connectedPane = () => {
+    const client = wordPaneRegistry.getByPath(docPath);
+    return client && client.readyState === 1 ? client : null;
   };
   return new Promise((resolve) => {
-    if (hasPaneForDoc()) return resolve(true);
+    const existing = connectedPane();
+    if (existing) return resolve(existing);
     const start = Date.now();
     const timer = setInterval(() => {
-      if (hasPaneForDoc()) {
+      const client = connectedPane();
+      if (client) {
         clearInterval(timer);
-        resolve(true);
+        resolve(client);
       } else if (Date.now() - start >= timeoutMs) {
         clearInterval(timer);
-        resolve(false);
+        resolve(null);
       }
     }, 500);
   });
+}
+
+// Un volet peut survivre à « Enregistrer sous ». Avant de réutiliser une
+// association chemin → volet pendant open_doc, lui demander son URL courante.
+// Le volet répond par pane-hello ; le registre retire alors l'ancien chemin.
+async function refreshPaneIdentityForPath(docPath, timeoutMs = 750) {
+  const client = wordPaneRegistry.getByPath(docPath);
+  if (!client || client.readyState !== 1) return false;
+
+  const previousVersion = wordPaneRegistry.identityVersionFor(client);
+  try {
+    client.send(JSON.stringify({ type: 're-identify' }));
+  } catch {
+    wordPaneRegistry.remove(client);
+    return false;
+  }
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (wordPaneRegistry.identityVersionFor(client) > previousVersion) return true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return false;
 }
 
 /**
@@ -651,9 +665,6 @@ app.post('/api/word/open-doc', async (req, res) => {
       });
     }
 
-    // Document actif → read_doc / edit_doc résolvent leur mapping à partir de lui.
-    activeWordDocPath = resolved;
-
     // 1. Un seul manifeste/add-in est enregistré. Word crée une instance du
     // volet dans chaque document ; leur WebSocket et leur chemin permettent de
     // les distinguer côté serveur.
@@ -669,6 +680,10 @@ app.post('/api/word/open-doc', async (req, res) => {
       });
     }
 
+    // Un volet déjà associé à ce chemin peut avoir fait « Enregistrer sous ».
+    // Rafraîchir son identité avant de décider qu'il s'agit du bon document.
+    await refreshPaneIdentityForPath(resolved);
+
     // 3. Lancement de Word sur ce document, mise au premier plan.
     const launch = launchWord(resolved);
     if (!launch.launched) {
@@ -683,13 +698,15 @@ app.post('/api/word/open-doc', async (req, res) => {
     const timeoutMs = Number(req.body?.timeoutMs) > 0 ? Number(req.body.timeoutMs) : 45000;
     const startedWaitingAt = Date.now();
     const autoOpenGraceMs = Math.min(10000, Math.max(1000, Math.floor(timeoutMs / 3)));
-    let paneReady = await waitForPane(autoOpenGraceMs, resolved);
+    let paneClient = await waitForPane(autoOpenGraceMs, resolved);
     let paneFallback = null;
-    if (!paneReady && process.platform === 'darwin') {
+    if (!paneClient && process.platform === 'darwin') {
       paneFallback = showTaskpaneForDocument(resolved);
       const remainingMs = Math.max(0, timeoutMs - (Date.now() - startedWaitingAt));
-      if (remainingMs > 0) paneReady = await waitForPane(remainingMs, resolved);
+      if (remainingMs > 0) paneClient = await waitForPane(remainingMs, resolved);
     }
+    const paneReady = Boolean(paneClient);
+    const paneId = paneClient ? wordPaneRegistry.idFor(paneClient) : null;
 
     return res.json({
       ok: true,
@@ -700,9 +717,10 @@ app.post('/api/word/open-doc', async (req, res) => {
       injectionReason: injection.reason,
       launchMethod: launch.method,
       paneReady,
+      paneId,
       paneFallbackMethod: paneFallback?.method || null,
       paneFallbackError: paneFallback?.error || null,
-      panesConnected: wordPanes.size,
+      panesConnected: wordPaneRegistry.idCount,
       message: paneReady
         ? 'Word ouvert et volet PieceMaker prêt : vous pouvez utiliser read_doc / edit_doc.'
         : 'Word lancé mais aucun volet ne s\'est annoncé dans le délai imparti — vérifiez que l\'add-in est bien installé (étape installeur « volet Word »).',
@@ -3895,9 +3913,8 @@ wss.on('connection', (ws) => {
           const panePath = docUrlToPath(data.docUrl);
           console.log(`📋 pane-hello reçu — docUrl: ${data.docUrl || '(absent)'} → panePath: ${panePath || '(null)'}`);
           if (panePath) {
-            const paneKey = documentKey(panePath);
-            wordPanes.set(paneKey, ws);
-            paneDocPaths.set(ws, paneKey);
+            const registration = wordPaneRegistry.register(ws, panePath, data.paneId);
+            ws.send(JSON.stringify({ type: 'pane-bound', paneId: registration.paneId }));
           } else {
             console.warn('⚠️ Volet Word non routable : Office.context.document.url est absent.');
           }
@@ -4011,17 +4028,12 @@ wss.on('connection', (ws) => {
     }
   });
 
-  function removePane(ws) {
-    const dp = paneDocPaths.get(ws);
-    if (dp && wordPanes.get(dp) === ws) wordPanes.delete(dp);
-  }
-
   ws.on('close', () => {
     console.log('❌ Client Word déconnecté');
     closePtyTerminal(ws);
     cleanupPythonProcesses(ws);
     wordClients.delete(ws);
-    removePane(ws);
+    wordPaneRegistry.remove(ws);
   });
 
   ws.on('error', (error) => {
@@ -4029,7 +4041,7 @@ wss.on('connection', (ws) => {
     closePtyTerminal(ws);
     cleanupPythonProcesses(ws);
     wordClients.delete(ws);
-    removePane(ws);
+    wordPaneRegistry.remove(ws);
   });
 
   // Envoyer un message de bienvenue

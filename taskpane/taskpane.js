@@ -22,10 +22,43 @@ console.log('[DEBUG] doc-tools imports:', {
 // volet ne reçoit que cette surface minimale. Les schémas compacts évitent de
 // renvoyer plusieurs milliers de tokens d'instructions à chaque tour.
 const ENABLED_LOCAL_TOOL_NAMES = new Set(['read_doc', 'edit_doc']);
+const REVISION_FILTER_SCHEMA = {
+    type: 'object',
+    properties: {
+        authors: { type: 'array', items: { type: 'string' } },
+        types: { type: 'array', items: { type: 'string' } }
+    }
+};
+const READ_REVISIONS_SCHEMA = {
+    type: 'object',
+    description: 'List/filter revisions; use the returned snapshot before show/accept/reject.',
+    properties: {
+        indexes: { type: 'array', items: { type: 'number', minimum: 1 } },
+        authors: { type: 'array', items: { type: 'string' } },
+        types: { type: 'array', items: { type: 'string' } },
+        from_revision: { type: 'number', minimum: 1 },
+        from_offset: { type: 'number', minimum: 0 }
+    }
+};
+const REVIEW_SCHEMA = {
+    type: 'object',
+    properties: {
+        action: { type: 'string', enum: ['show', 'display', 'accept', 'reject', 'accept_all', 'reject_all'] },
+        snapshot: { type: 'string', description: 'Required for every action except display.' },
+        index: { type: 'number', minimum: 1, description: 'Revision to show.' },
+        indexes: { type: 'array', items: { type: 'number', minimum: 1 }, description: 'Exact revisions to accept/reject.' },
+        filter: { ...REVISION_FILTER_SCHEMA, description: 'Author/type selection; requires confirm=true.' },
+        confirm: { type: 'boolean', description: 'Required for filtered and global accept/reject.' },
+        markup: { type: 'string', enum: ['none', 'simple', 'all'] },
+        view: { type: 'string', enum: ['original', 'final'] },
+        reviewers: { type: 'string', enum: ['all', 'none'] }
+    },
+    required: ['action']
+};
 const ACTIVE_LOCAL_TOOL_SCHEMAS = new Map([
     ['read_doc', {
         name: 'read_doc',
-        description: 'Read the Word document bound to this pane as indexed Markdown. Footnote definitions follow their indexed paragraph and have no Word index. Prefer headings, an index range, or paginated reads. Read once before editing.',
+        description: 'Read indexed Markdown or tracked revisions. Use revision_view for current/original text; revisions returns a separate snapshot for review actions. Footnote definitions follow their paragraph.',
         input_schema: {
             type: 'object',
             properties: {
@@ -38,7 +71,8 @@ const ACTIVE_LOCAL_TOOL_SCHEMAS = new Map([
                     ],
                     description: 'Indexes, or range such as "5-20"'
                 },
-                include_track_changes: { type: 'boolean', description: 'Include deleted tracked text' },
+                revision_view: { type: 'string', enum: ['current', 'original'], description: 'Current/final or original text.' },
+                revisions: READ_REVISIONS_SCHEMA,
                 from_index: { type: 'number', minimum: 0, description: 'Resume at this paragraph index' },
                 from_offset: { type: 'number', minimum: 0, description: 'Resume inside from_index (paragraphs without footnotes only)' },
                 max_chars: { type: 'number', minimum: 500, maximum: 100000, description: 'Response cap; default/max 100000 chars (~25000 tokens)' }
@@ -47,7 +81,7 @@ const ACTIVE_LOCAL_TOOL_SCHEMAS = new Map([
     }],
     ['edit_doc', {
         name: 'edit_doc',
-        description: 'Edit indexed Word paragraphs with tracked changes. Use Markdown; footnotes require [^id] plus a separate [^id]: text definition in the same text payload. For several edits from one read_doc snapshot, send edits[].',
+        description: 'Edit indexed paragraphs or review tracked changes. Text uses CommonMark footnotes: [^id] plus a separate [^id]: definition. track_changes defaults to true and Word\'s prior mode is restored. Review actions use the read_doc revision snapshot.',
         input_schema: {
             type: 'object',
             properties: {
@@ -55,6 +89,8 @@ const ACTIVE_LOCAL_TOOL_SCHEMAS = new Map([
                 target_index: { type: 'number', minimum: 0 },
                 text: { type: 'string' },
                 indexes_to_delete: { type: 'array', items: { type: 'number' } },
+                track_changes: { type: 'boolean', description: 'Default true; false writes without tracked changes.' },
+                review: REVIEW_SCHEMA,
                 edits: {
                     type: 'array',
                     minItems: 1,
@@ -72,19 +108,39 @@ const ACTIVE_LOCAL_TOOL_SCHEMAS = new Map([
                     }
                 }
             },
-            anyOf: [{ required: ['operation'] }, { required: ['edits'] }]
+            anyOf: [{ required: ['operation'] }, { required: ['edits'] }, { required: ['review'] }]
         }
     }]
 ]);
 
 // WebSocket pour communication avec le serveur
 let ws = null;
+let paneId = createPaneId();
+
+function createPaneId() {
+    const cryptoApi = window.crypto;
+    if (cryptoApi && typeof cryptoApi.randomUUID === 'function') {
+        return cryptoApi.randomUUID();
+    }
+
+    const bytes = new Uint8Array(16);
+    if (cryptoApi && typeof cryptoApi.getRandomValues === 'function') {
+        cryptoApi.getRandomValues(bytes);
+    } else {
+        for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+    }
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 function documentRoutingHeaders() {
     const docUrl = Office.context.document.url || '';
-    return docUrl
-        ? { 'X-PieceMaker-Document': encodeURIComponent(docUrl) }
-        : {};
+    return {
+        ...(docUrl ? { 'X-PieceMaker-Document': encodeURIComponent(docUrl) } : {}),
+        'X-PieceMaker-Pane': paneId
+    };
 }
 
 // Variable pour contrôler l'arrêt du LLM
@@ -181,7 +237,7 @@ function connectWebSocket() {
             console.log('✅ WebSocket connecté au serveur');
             try {
                 const docUrl = Office.context.document.url || null;
-                ws.send(JSON.stringify({ type: 'pane-hello', docUrl }));
+                ws.send(JSON.stringify({ type: 'pane-hello', docUrl, paneId }));
             } catch (e) {
                 console.warn('pane-hello non envoyé:', e);
             }
@@ -192,10 +248,15 @@ function connectWebSocket() {
                 const message = JSON.parse(event.data);
                 console.log('📥 Message WebSocket reçu:', message);
 
+                if (message.type === 'pane-bound' && message.paneId) {
+                    paneId = message.paneId;
+                    return;
+                }
+
                 if (message.type === 're-identify') {
                     try {
                         const docUrl = Office.context.document.url || null;
-                        ws.send(JSON.stringify({ type: 'pane-hello', docUrl }));
+                        ws.send(JSON.stringify({ type: 'pane-hello', docUrl, paneId, reidentify: true }));
                     } catch (e) {
                         console.warn('re-identify échoué:', e);
                     }
@@ -604,7 +665,6 @@ Office.onReady(async (info) => {
             renderChatTabs,
             getDocumentId: () => anonymization.documentId || null
         });
-
         initializeSettingsListeners();
         // Dans votre taskpane script
 
@@ -932,6 +992,8 @@ const localTools = {
       heading,
       indexes,
       include_track_changes,
+      revision_view,
+      revisions,
       from_index,
       from_offset,
       max_chars
@@ -947,7 +1009,10 @@ const localTools = {
     let approvalMessage = '';
     let approvalDetails = '';
 
-    if (list_headings) {
+    if (revisions) {
+      approvalMessage = 'Le modèle souhaite lire les révisions du document';
+      approvalDetails = 'Lecture des auteurs, dates, types et textes des modifications suivies';
+    } else if (list_headings) {
       approvalMessage = 'Le modèle souhaite lire la structure du document (titres)';
       approvalDetails = 'Lecture de la liste des titres avec leurs index';
     } else if (heading) {
@@ -980,6 +1045,8 @@ const localTools = {
           heading: heading || undefined,
           indexes: indexes || undefined,
           include_track_changes: include_track_changes || false,
+          revision_view,
+          revisions,
           from_index,
           from_offset,
           max_chars
@@ -1007,7 +1074,7 @@ const localTools = {
   },
   // OUTIL : Édition du document Word
   edit_doc: async (params) => {
-    const { operation, target_index, text, indexes_to_delete, edits } = params;
+    const { operation, target_index, text, indexes_to_delete, edits, track_changes, review } = params;
 
     console.log('[edit_doc] ✏️ Édition du document Word');
 
@@ -1019,7 +1086,12 @@ const localTools = {
     let approvalMessage = '';
     let approvalDetails = '';
 
-    if (Array.isArray(edits)) {
+    if (review) {
+      approvalMessage = `Le modèle souhaite gérer les révisions : ${review.action}`;
+      approvalDetails = review.indexes?.length
+        ? `Révisions : ${review.indexes.join(', ')}`
+        : 'Action sur le suivi ou l’affichage des modifications';
+    } else if (Array.isArray(edits)) {
       approvalMessage = `Le modèle souhaite appliquer ${edits.length} modification(s) groupée(s)`;
       approvalDetails = 'Tous les index proviennent de la même lecture du document';
     } else if (operation === 'insert_before') {
@@ -1069,7 +1141,9 @@ const localTools = {
           target_index,
           text: processedText,
           indexes_to_delete,
-          edits: processedEdits
+          edits: processedEdits,
+          track_changes,
+          review
         })
       });
 

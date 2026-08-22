@@ -33,6 +33,31 @@ function readPackageJson(dir) {
   }
 }
 
+// Certaines distributions npm conservent spawn-helper de node-pty en 0644.
+// Le module se charge alors normalement mais tout pty.spawn échoue avec
+// « posix_spawnp failed ». Réparer le bit exécutable est idempotent.
+export function repairNodePtySpawnHelpers(repoRoot = REPO_ROOT, { repair = true } = {}) {
+  if (process.platform === 'win32') return { found: 0, repaired: 0, ready: true };
+  const prebuilds = path.join(repoRoot, 'node_modules', 'node-pty', 'prebuilds');
+  if (!fs.existsSync(prebuilds)) return { found: 0, repaired: 0, ready: false };
+
+  let found = 0;
+  let repaired = 0;
+  for (const platformArch of fs.readdirSync(prebuilds)) {
+    const helper = path.join(prebuilds, platformArch, 'spawn-helper');
+    if (!fs.existsSync(helper)) continue;
+    found += 1;
+    const mode = fs.statSync(helper).mode;
+    if (repair && (mode & 0o111) === 0) {
+      fs.chmodSync(helper, mode | 0o111);
+      repaired += 1;
+    }
+  }
+  const currentArchHelper = path.join(prebuilds, `${process.platform}-${process.arch}`, 'spawn-helper');
+  const ready = fs.existsSync(currentArchHelper) && (fs.statSync(currentArchHelper).mode & 0o111) !== 0;
+  return { found, repaired, ready };
+}
+
 async function npmInstall(dir, label, ctx) {
   const pkg = readPackageJson(dir);
   if (!pkg) {
@@ -79,6 +104,15 @@ export async function install(ctx) {
     };
   }
 
+  const ptyHelpers = repairNodePtySpawnHelpers();
+  if (!ptyHelpers.ready) {
+    return {
+      status: 'failed',
+      note: 'node-pty est absent ou incomplet : le terminal intégré du volet Word ne peut pas démarrer.',
+    };
+  }
+  if (ptyHelpers.repaired) log.ok(`node-pty : ${ptyHelpers.repaired} lanceur(s) PTY rendu(s) exécutable(s)`);
+
   return { status: 'done', note: '' };
 }
 
@@ -88,10 +122,11 @@ export async function check(ctx) {
   // never creates node_modules — package-lock.json is the only reliable trace.
   const mcpInstalled = fs.existsSync(path.join(REPO_ROOT, 'mcp-server', 'node_modules'))
     || fs.existsSync(path.join(REPO_ROOT, 'mcp-server', 'package-lock.json'));
+  const ptyReady = repairNodePtySpawnHelpers(REPO_ROOT, { repair: false }).ready;
 
-  if (rootInstalled && mcpInstalled) return { status: 'done', note: '' };
+  if (rootInstalled && mcpInstalled && ptyReady) return { status: 'done', note: '' };
   if (rootInstalled || mcpInstalled) {
-    return { status: 'partial', note: 'Dépendances installées pour un seul des deux projets.' };
+    return { status: 'partial', note: ptyReady ? 'Dépendances installées pour un seul des deux projets.' : 'node-pty absent ou incomplet.' };
   }
   return { status: 'failed', note: 'node_modules absent — exécutez cette étape.' };
 }

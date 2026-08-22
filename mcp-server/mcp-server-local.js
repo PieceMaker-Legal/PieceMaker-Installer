@@ -20,24 +20,64 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 const PIECEMAKER_SERVER_URL = (process.env.PIECEMAKER_SERVER_URL || 'https://localhost:43098').replace(/\/+$/, '');
 
 // Chaque processus MCP correspond à une session Codex/Claude distincte. Le
-// document choisi par open_doc reste donc local à cette session et accompagne
-// ensuite chaque requête Word. Sans cette liaison, le serveur central ne peut
-// pas distinguer deux sessions qui travaillent en parallèle sur deux .docx.
+// document choisi par open_doc reste donc local à cette session. Son paneId
+// opaque accompagne ensuite chaque requête Word ; le chemin n'est plus utilisé
+// pour choisir le volet.
 let boundDocumentPath = null;
+let boundPaneId = null;
 
 function endpointUrl(pathname) {
   return `${PIECEMAKER_SERVER_URL}${pathname}`;
 }
 
 function documentRoutingHeaders() {
-  if (!boundDocumentPath) return {};
+  if (!boundDocumentPath || !boundPaneId) return {};
   return {
     // encodeURIComponent garde l'en-tête ASCII, y compris pour les chemins
     // contenant des accents. Le serveur accepte aussi une URL file:// envoyée
     // directement par le volet Word.
     'X-PieceMaker-Document': encodeURIComponent(boundDocumentPath),
+    // Identifiant local opaque : il ne passe jamais dans la réponse MCP et ne
+    // consomme donc aucun token du modèle.
+    'X-PieceMaker-Pane': boundPaneId,
   };
 }
+
+const REVISION_FILTER_SCHEMA = {
+  type: 'object',
+  properties: {
+    authors: { type: 'array', items: { type: 'string' } },
+    types: { type: 'array', items: { type: 'string' } }
+  }
+};
+
+const READ_REVISIONS_SCHEMA = {
+  type: 'object',
+  description: 'List/filter revisions; use the returned snapshot before show/accept/reject.',
+  properties: {
+    indexes: { type: 'array', items: { type: 'number', minimum: 1 } },
+    authors: { type: 'array', items: { type: 'string' } },
+    types: { type: 'array', items: { type: 'string' } },
+    from_revision: { type: 'number', minimum: 1 },
+    from_offset: { type: 'number', minimum: 0 }
+  }
+};
+
+const REVIEW_SCHEMA = {
+  type: 'object',
+  properties: {
+    action: { type: 'string', enum: ['show', 'display', 'accept', 'reject', 'accept_all', 'reject_all'] },
+    snapshot: { type: 'string', description: 'Required for every action except display.' },
+    index: { type: 'number', minimum: 1, description: 'Revision to show.' },
+    indexes: { type: 'array', items: { type: 'number', minimum: 1 }, description: 'Exact revisions to accept/reject.' },
+    filter: { ...REVISION_FILTER_SCHEMA, description: 'Author/type selection; requires confirm=true.' },
+    confirm: { type: 'boolean', description: 'Required for filtered and global accept/reject.' },
+    markup: { type: 'string', enum: ['none', 'simple', 'all'] },
+    view: { type: 'string', enum: ['original', 'final'] },
+    reviewers: { type: 'string', enum: ['all', 'none'] }
+  },
+  required: ['action']
+};
 
 // Outils proxy Word disponibles
 const LOCAL_TOOLS = [
@@ -61,7 +101,7 @@ const LOCAL_TOOLS = [
         },
         {
         name: 'read_doc',
-        description: 'Read the Word document bound by open_doc as indexed Markdown. Footnote definitions follow their indexed paragraph and have no Word index. Prefer headings, an index range, or paginated reads. Read once before editing.',
+        description: 'Read indexed Markdown or tracked revisions. Use revision_view for current/original text; revisions returns a separate snapshot for review actions. Footnote definitions follow their paragraph.',
             inputSchema: {
             type: 'object',
             properties: {
@@ -80,10 +120,8 @@ const LOCAL_TOOLS = [
                 ],
                 description: 'Indexes, or range such as "5-20"'
                 },
-                include_track_changes: {
-                type: 'boolean',
-                description: 'Include deleted tracked text'
-                },
+                revision_view: { type: 'string', enum: ['current', 'original'], description: 'Current/final or original text.' },
+                revisions: READ_REVISIONS_SCHEMA,
                 from_index: {
                 type: 'number',
                 minimum: 0,
@@ -105,7 +143,7 @@ const LOCAL_TOOLS = [
         },
         {
         name: 'edit_doc',
-        description: 'Edit indexed Word paragraphs with tracked changes. Use Markdown; footnotes require [^id] plus a separate [^id]: text definition in the same text payload. For several edits from one read_doc snapshot, send edits[].',
+        description: 'Edit indexed paragraphs or review tracked changes. Text uses CommonMark footnotes: [^id] plus a separate [^id]: definition. track_changes defaults to true and Word\'s prior mode is restored. Review actions use the read_doc revision snapshot.',
             inputSchema: {
             type: 'object',
             properties: {
@@ -124,6 +162,8 @@ const LOCAL_TOOLS = [
                 type: 'array',
                 items: { type: 'number' }
                 },
+                track_changes: { type: 'boolean', description: 'Default true; false writes without tracked changes.' },
+                review: REVIEW_SCHEMA,
                 edits: {
                 type: 'array',
                 minItems: 1,
@@ -141,7 +181,7 @@ const LOCAL_TOOLS = [
                 }
                 }
             },
-            anyOf: [{ required: ['operation'] }, { required: ['edits'] }]
+            anyOf: [{ required: ['operation'] }, { required: ['edits'] }, { required: ['review'] }]
             }
         },
         {
@@ -415,6 +455,14 @@ const ReadDocSchema = z.object({
     z.string().regex(/^\d+(?:-\d+)?$/)
   ]).optional(),
   include_track_changes: z.boolean().optional().default(false),
+  revision_view: z.enum(['current', 'original']).optional(),
+  revisions: z.object({
+    indexes: z.array(z.number().int().positive()).optional(),
+    authors: z.array(z.string().min(1)).optional(),
+    types: z.array(z.string().min(1)).optional(),
+    from_revision: z.number().int().positive().optional(),
+    from_offset: z.number().int().nonnegative().optional()
+  }).optional(),
   from_index: z.number().int().nonnegative().optional(),
   from_offset: z.number().int().nonnegative().optional(),
   max_chars: z.number().int().min(500).max(100000).optional()
@@ -436,9 +484,31 @@ const SingleEditSchema = z.discriminatedUnion('operation', [
   DeleteEditSchema
 ]);
 
+const RevisionFilterInputSchema = z.object({
+  authors: z.array(z.string().min(1)).optional(),
+  types: z.array(z.string().min(1)).optional()
+});
+
+const ReviewInputSchema = z.object({
+  action: z.enum(['show', 'display', 'accept', 'reject', 'accept_all', 'reject_all']),
+  snapshot: z.string().min(1).optional(),
+  index: z.number().int().positive().optional(),
+  indexes: z.array(z.number().int().positive()).min(1).optional(),
+  filter: RevisionFilterInputSchema.optional(),
+  confirm: z.boolean().optional(),
+  markup: z.enum(['none', 'simple', 'all']).optional(),
+  view: z.enum(['original', 'final']).optional(),
+  reviewers: z.enum(['all', 'none']).optional()
+});
+
 const EditDocSchema = z.union([
-  SingleEditSchema,
-  z.object({ edits: z.array(SingleEditSchema).min(1).max(50) })
+  InsertEditSchema.extend({ track_changes: z.boolean().optional().default(true) }),
+  DeleteEditSchema.extend({ track_changes: z.boolean().optional().default(true) }),
+  z.object({
+    edits: z.array(SingleEditSchema).min(1).max(50),
+    track_changes: z.boolean().optional().default(true)
+  }),
+  z.object({ review: ReviewInputSchema })
 ]);
 
 const ReadCaseSchema = z.object({
@@ -521,7 +591,7 @@ async function callLocalTool(toolName, toolArgs) {
     }
   }
 
-  if (toolName !== 'open_doc' && !boundDocumentPath) {
+  if (toolName !== 'open_doc' && (!boundDocumentPath || !boundPaneId)) {
     throw new Error('Aucun document lié à cette session. Appelez open_doc avant read_doc/edit_doc.');
   }
 
@@ -585,8 +655,10 @@ async function callLocalTool(toolName, toolArgs) {
   if (typeof data === 'string') return data;
 
   if (toolName === 'open_doc') {
-    if (data.ok === true && typeof data.path === 'string') {
+    if (data.ok === true && data.paneReady === true
+        && typeof data.path === 'string' && typeof data.paneId === 'string') {
       boundDocumentPath = data.path;
+      boundPaneId = data.paneId;
     }
     return JSON.stringify({
       ok: data.ok === true,

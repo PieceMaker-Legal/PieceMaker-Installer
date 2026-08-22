@@ -865,7 +865,7 @@ async function configurationOverview({ repoRoot, homeDir, userHome, getRuntimeSt
         name: 'Terminal intégré',
         installed: runtime.terminalReady ?? nodePtyReady,
         summary: runtime.terminalReady ?? nodePtyReady
-          ? 'PTY local · second client GNU Screen'
+          ? `PTY local · ${os.userInfo().shell || process.env.COMSPEC || 'shell système'}`
           : 'Le pont PTY optionnel est absent',
         shell: os.userInfo().shell || process.env.COMSPEC || '',
       },
