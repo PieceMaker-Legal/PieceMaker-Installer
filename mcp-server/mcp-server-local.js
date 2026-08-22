@@ -61,7 +61,7 @@ const LOCAL_TOOLS = [
         },
         {
         name: 'read_doc',
-        description: 'Read the active Word document as indexed Markdown. Prefer headings, an index range, or paginated reads over a full read. Read once before an edit call.',
+        description: 'Read the Word document bound by open_doc as indexed Markdown. Footnote definitions follow their indexed paragraph and have no Word index. Prefer headings, an index range, or paginated reads. Read once before editing.',
             inputSchema: {
             type: 'object',
             properties: {
@@ -92,7 +92,7 @@ const LOCAL_TOOLS = [
                 from_offset: {
                 type: 'number',
                 minimum: 0,
-                description: 'Resume inside from_index'
+                description: 'Resume inside from_index (paragraphs without footnotes only)'
                 },
                 max_chars: {
                 type: 'number',
@@ -105,7 +105,7 @@ const LOCAL_TOOLS = [
         },
         {
         name: 'edit_doc',
-        description: 'Edit indexed Word paragraphs with tracked changes. Use Markdown text. For several edits from one read_doc snapshot, send edits[]; they are safely applied from high to low indexes.',
+        description: 'Edit indexed Word paragraphs with tracked changes. Use Markdown; footnotes require [^id] plus a separate [^id]: text definition in the same text payload. For several edits from one read_doc snapshot, send edits[].',
             inputSchema: {
             type: 'object',
             properties: {
@@ -337,11 +337,11 @@ PLACEHOLDER MANAGEMENT (for the currently active template):
             },
             validation: {
                 type: "object",
-                description: "Validation rules for this placeholder (for action='create'). Format: { enabled: true/false, rules: [{ type: 'contains', patterns: ['[^footnote:', '[^1'], operator: 'OR', message: 'Error message' }] }"
+                description: "Validation rules for this placeholder (for action='create'). Footnote example: { enabled: true, rules: [{ type: 'footnote', message: 'Error message' }] }"
             },
             new_validation: {
                 type: "object",
-                description: "New validation rules (for action='edit'). Format: { enabled: true/false, rules: [{ type: 'contains', patterns: ['[^footnote:'], operator: 'OR'/'AND', message: 'Error message' }] }"
+                description: "New validation rules (for action='edit'). Footnote example: { enabled: true, rules: [{ type: 'footnote', message: 'Error message' }] }"
             },
             step: {
                 type: "number",

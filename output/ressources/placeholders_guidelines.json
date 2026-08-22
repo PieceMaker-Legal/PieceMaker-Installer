@@ -187,13 +187,8 @@
         "enabled": true,
         "rules": [
           {
-            "type": "contains",
-            "patterns": [
-              "[^footnote:",
-              "[^1"
-            ],
-            "operator": "OR",
-            "message": "La discussion juridique doit contenir au moins une note de bas de page citant les sources juridiques. Formats acceptés : [^footnote: source] ou [^1"
+            "type": "footnote",
+            "message": "La discussion juridique doit contenir au moins une note valide : appel [^id] et définition séparée [^id]: source."
           }
         ]
       }

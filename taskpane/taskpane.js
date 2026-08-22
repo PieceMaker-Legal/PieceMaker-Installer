@@ -25,7 +25,7 @@ const ENABLED_LOCAL_TOOL_NAMES = new Set(['read_doc', 'edit_doc']);
 const ACTIVE_LOCAL_TOOL_SCHEMAS = new Map([
     ['read_doc', {
         name: 'read_doc',
-        description: 'Read the active Word document as indexed Markdown. Prefer headings, an index range, or paginated reads. Read once before an edit call.',
+        description: 'Read the Word document bound to this pane as indexed Markdown. Footnote definitions follow their indexed paragraph and have no Word index. Prefer headings, an index range, or paginated reads. Read once before editing.',
         input_schema: {
             type: 'object',
             properties: {
@@ -40,14 +40,14 @@ const ACTIVE_LOCAL_TOOL_SCHEMAS = new Map([
                 },
                 include_track_changes: { type: 'boolean', description: 'Include deleted tracked text' },
                 from_index: { type: 'number', minimum: 0, description: 'Resume at this paragraph index' },
-                from_offset: { type: 'number', minimum: 0, description: 'Resume inside from_index' },
+                from_offset: { type: 'number', minimum: 0, description: 'Resume inside from_index (paragraphs without footnotes only)' },
                 max_chars: { type: 'number', minimum: 500, maximum: 100000, description: 'Response cap; default/max 100000 chars (~25000 tokens)' }
             }
         }
     }],
     ['edit_doc', {
         name: 'edit_doc',
-        description: 'Edit indexed Word paragraphs with tracked changes. Use Markdown. For several edits from one read_doc snapshot, send edits[]; they are applied from high to low indexes.',
+        description: 'Edit indexed Word paragraphs with tracked changes. Use Markdown; footnotes require [^id] plus a separate [^id]: text definition in the same text payload. For several edits from one read_doc snapshot, send edits[].',
         input_schema: {
             type: 'object',
             properties: {
@@ -1376,13 +1376,13 @@ get_resource: async (params) => {
 },
 
 // Fonction helper pour normaliser un placeholder (retirer accolades, footnotes ET métadonnées)
-// Ex: "{{PRETENTION[^footnote: info]}}" => "PRETENTION"
+// Ex: "{{PRETENTION[^1]}}" => "PRETENTION"
 // Ex: "{{PRETENTION[Prétention 1 PRINCIPALE - texte]}}" => "PRETENTION"
 normalizePlaceholderName: (placeholder) => {
     // Retirer les accolades
     let normalized = placeholder.replace(/[{}]/g, '');
     // Retirer TOUS les crochets avec leur contenu (footnotes ET métadonnées)
-    // Cela inclut [^footnote: ...], [^1: ...], [Prétention 1 ...], etc.
+    // Cela inclut les appels de notes [^1] et les métadonnées historiques.
     normalized = normalized.replace(/\[[^\]]*\]/g, '').trim();
     return normalized;
 },
@@ -2497,7 +2497,7 @@ template_library: async (params) => {
                 examples: {
                     guideline: '{ action: "edit", placeholder: "{{FAITS}}", new_guideline: ["Instruction modifiée"] }',
                     step: '{ action: "edit", placeholder: "{{FAITS}}", step: 5 }',
-                    validation: '{ action: "edit", placeholder: "{{ANALYSE}}", new_validation: { enabled: true, rules: [{ type: "contains", patterns: ["[^footnote:"], operator: "OR", message: "Message d\'erreur" }] } }'
+                    validation: '{ action: "edit", placeholder: "{{ANALYSE}}", new_validation: { enabled: true, rules: [{ type: "footnote", message: "Message d\'erreur" }] } }'
                 }
             };
         }
@@ -3255,7 +3255,7 @@ Features:
 - Headings: # Title, ## Heading1, ### Heading2, etc.
 - Lists with indentation
 - Bold, italic, underline
-- Footnotes: [^footnote: text] (Word auto-numbers)
+- Footnotes: [^id] in text plus a separate [^id]: source definition (Word auto-numbers)
 - Page breaks: [^page_break]
 - Track changes: excluded by default (use include_track_changes: true)
 - Word numbering automatically removed from headings
@@ -3314,7 +3314,7 @@ IMPORTANT:
 - Must call read_doc first to verify indexes (enforced by tool)
 - Only successful edits reset the read_doc requirement
 - NO numbering for headings (automatically carried)
-- Footnotes can be added using [^footnote: text] syntax for proper citations
+- Footnotes use [^id] in text plus a separate [^id]: source definition in the same edit payload
 
 Returns: success status + next_placeholder & next_placeholder_guideline if placeholder was used`,
             input_schema: {

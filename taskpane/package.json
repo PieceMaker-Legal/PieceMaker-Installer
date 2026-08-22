@@ -13,6 +13,7 @@
     "start": "office-addin-debugging start manifest.xml --dev-server \"node ../websocket-server/server.cjs\" --dev-server-port 43098",
     "stop": "office-addin-debugging stop manifest.xml",
     "validate": "office-addin-manifest validate manifest.xml",
-    "build": "node scripts/build-manifest.js"
+    "build:footnotes": "node scripts/build-footnotes.mjs",
+    "build": "npm run build:footnotes && node scripts/build-manifest.js"
   }
 }

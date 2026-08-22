@@ -42,7 +42,10 @@ edit_doc { "operation": "insert_after", "target_index": 12, "text": "## Titre\nT
 
 - `.docx` uniquement, chemin absolu.
 - `read_doc` **obligatoire avant** `edit_doc`.
-- Texte = Markdown → mise en forme Word (titres, gras, listes, `[^footnote: …]`).
+- Texte = Markdown → mise en forme Word (titres, gras, listes). Une note exige
+  un appel `[^id]` et une définition séparée `[^id]: source` dans le même
+  champ `text`. `read_doc` place la définition juste après le paragraphe indexé ;
+  elle n'a pas d'index Word propre.
 - Modifs en **suivi des modifications** ; anonymisation appliquée.
 - Si le document est déjà ouvert sans son volet, le fermer avant `open_doc` :
   l'injection d'auto-ouverture réécrit le paquet `.docx`.

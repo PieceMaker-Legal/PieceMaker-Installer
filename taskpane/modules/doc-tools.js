@@ -8,6 +8,9 @@
  * - Track changes support
  */
 
+import { FOOTNOTE_TOKEN_PATTERN, prepareMarkdownFootnotes } from './markdown-footnotes.js';
+import { footnoteOoxmlToMarkdownBlocks } from './word-footnotes.js';
+
 let deps = null;
 
 export function initDocToolsDependencies(dependencies) {
@@ -54,6 +57,24 @@ export async function validatePlaceholderContent(placeholderName, content) {
     const rules = placeholder.validation.rules || [];
 
     for (const rule of rules) {
+      if (rule.type === 'footnote') {
+        try {
+          const parsed = prepareMarkdownFootnotes(content, { acceptLegacy: false });
+          if (parsed.footnotes.length === 0) {
+            return {
+              valid: false,
+              message: rule.message || 'Le contenu doit comporter une référence [^id] et sa définition [^id]: source.'
+            };
+          }
+        } catch (error) {
+          return {
+            valid: false,
+            message: rule.message || `Note de bas de page invalide : ${error.message}`
+          };
+        }
+        continue;
+      }
+
       if (rule.type === 'contains') {
         const patterns = rule.patterns || [];
         const operator = rule.operator || 'OR';
@@ -170,14 +191,6 @@ export async function readDoc(params = {}) {
 
       paragraphs.load('items');
 
-      let footnotes = null;
-      try {
-        footnotes = body.footnotes;
-        footnotes.load('items/body/paragraphs,items/reference');
-      } catch (e) {
-        console.warn('Footnotes not supported on this platform');
-      }
-
       let comments = null;
       try {
         comments = body.getComments();
@@ -190,6 +203,8 @@ export async function readDoc(params = {}) {
 
       const reviewedTextResults = [];
       const paragraphFootnotesData = [];
+      const paragraphFootnotePrefixes = [];
+      const paragraphFootnoteOoxmlResults = [];
 
       for (const p of paragraphs.items) {
         p.load('text,style,font,listString,leftIndent');
@@ -206,8 +221,12 @@ export async function readDoc(params = {}) {
           const pFootnotes = p.footnotes;
           pFootnotes.load('items/reference,items/body/paragraphs');
           paragraphFootnotesData.push(pFootnotes);
+          paragraphFootnotePrefixes.push([]);
+          paragraphFootnoteOoxmlResults.push([]);
         } catch (e) {
           paragraphFootnotesData.push(null);
+          paragraphFootnotePrefixes.push([]);
+          paragraphFootnoteOoxmlResults.push([]);
         }
       }
 
@@ -226,23 +245,20 @@ export async function readDoc(params = {}) {
             const fn = pFootnotes.items[j];
             fn.reference.load('text');
             fn.body.load('text');
+            paragraphFootnoteOoxmlResults[i].push(fn.body.getOoxml());
+            const referenceStart = fn.reference.getRange('Start');
+            const prefixRange = paragraphs.items[i].getRange('Start').expandTo(referenceStart);
+            prefixRange.load('text');
+            const reviewedText = !include_track_changes
+              ? prefixRange.getReviewedText(Word.ChangeTrackingVersion.current)
+              : null;
+            paragraphFootnotePrefixes[i].push({ range: prefixRange, reviewedText });
             if (fn.body.paragraphs && fn.body.paragraphs.items) {
               for (let k = 0; k < fn.body.paragraphs.items.length; k++) {
-                fn.body.paragraphs.items[k].load('text');
+                const footnoteParagraph = fn.body.paragraphs.items[k];
+                footnoteParagraph.load('text,font');
+                footnoteParagraph.font.load('bold,italic,underline');
               }
-            }
-          }
-        }
-      }
-
-      if (footnotes && footnotes.items.length > 0) {
-        for (let i = 0; i < footnotes.items.length; i++) {
-          const fn = footnotes.items[i];
-          fn.reference.load('text');
-          fn.body.load('text');
-          if (fn.body.paragraphs && fn.body.paragraphs.items) {
-            for (let j = 0; j < fn.body.paragraphs.items.length; j++) {
-              fn.body.paragraphs.items[j].load('text');
             }
           }
         }
@@ -261,6 +277,7 @@ export async function readDoc(params = {}) {
       }
 
       const paragraphsData = [];
+      let nextFootnoteNumber = 1;
 
       for (let i = 0; i < paragraphs.items.length; i++) {
         const p = paragraphs.items[i];
@@ -277,28 +294,35 @@ export async function readDoc(params = {}) {
         }
 
         const pFootnotes = paragraphFootnotesData[i];
+        const paragraphFootnotes = [];
         if (pFootnotes && pFootnotes.items && pFootnotes.items.length > 0) {
+          const references = [];
           for (let j = 0; j < pFootnotes.items.length; j++) {
             const fn = pFootnotes.items[j];
-            const refText = fn.reference.text || '';
-
-            let fnText = '';
-            if (fn.body.paragraphs && fn.body.paragraphs.items) {
+            const number = nextFootnoteNumber++;
+            const blocks = footnoteOoxmlToMarkdownBlocks(
+              paragraphFootnoteOoxmlResults[i]?.[j]?.value
+            );
+            if (blocks.length === 0 && fn.body.paragraphs && fn.body.paragraphs.items) {
               for (const para of fn.body.paragraphs.items) {
-                const paraText = (para.text || '').trim();
-                if (paraText) {
-                  fnText += paraText + ' ';
-                }
+                const block = formatWordFootnoteParagraph(para);
+                if (block) blocks.push(block);
               }
-              fnText = fnText.trim();
-            } else {
-              fnText = fn.body.text.trim();
+            }
+            if (blocks.length === 0 && fn.body.text?.trim()) {
+              blocks.push(fn.body.text.trim());
             }
 
-            if (fnText) {
-              text += `[^footnote: ${fnText}]`;
-            }
+            const prefix = paragraphFootnotePrefixes[i]?.[j];
+            const prefixText = (
+              (!include_track_changes && prefix?.reviewedText)
+                ? prefix.reviewedText.value
+                : prefix?.range.text
+            || '').replace(/^\uFEFF/, '');
+            references.push({ offset: prefixText.length, number });
+            paragraphFootnotes.push({ number, blocks });
           }
+          text = insertFootnoteReferences(text, references);
         }
 
         const style = p.style || 'Normal';
@@ -324,7 +348,7 @@ export async function readDoc(params = {}) {
           listLevel: listLevel,
           listString: p.listString || '',
           runs: runs,
-          footnotes: []
+          footnotes: paragraphFootnotes
         });
       }
 
@@ -375,6 +399,48 @@ async function anonymizeResultIfNeeded(text) {
   return text;
 }
 
+function insertFootnoteReferences(text, references) {
+  let output = text;
+  const ordered = [...references].sort((left, right) => right.offset - left.offset);
+  for (const reference of ordered) {
+    const offset = Math.max(0, Math.min(output.length, reference.offset));
+    output = `${output.slice(0, offset)}[^${reference.number}]${output.slice(offset)}`;
+  }
+  return output;
+}
+
+function formatWordFootnoteParagraph(paragraph) {
+  const text = (paragraph.text || '').trim();
+  if (!text) return '';
+  return applyRunFormatting([{
+    text,
+    font: {
+      bold: paragraph.font?.bold,
+      italic: paragraph.font?.italic,
+      underline: paragraph.font?.underline
+    }
+  }]);
+}
+
+function formatFootnoteDefinition(footnote) {
+  const blocks = Array.isArray(footnote.blocks) ? footnote.blocks.filter(Boolean) : [];
+  if (blocks.length === 0) return `[^${footnote.number}]:`;
+
+  const firstLines = blocks[0].split('\n');
+  const lines = [`[^${footnote.number}]: ${firstLines[0]}`];
+  for (const line of firstLines.slice(1)) lines.push(`    ${line}`);
+
+  for (const block of blocks.slice(1)) {
+    lines.push('');
+    for (const line of block.split('\n')) lines.push(`    ${line}`);
+  }
+  return lines.join('\n');
+}
+
+function removeFootnoteReferences(text) {
+  return text.replace(/\[\^\d+\]/g, '');
+}
+
 function formatHeadingsList(paragraphsData, options = {}) {
   const headings = paragraphsData.filter(p => {
     const style = p.style || '';
@@ -398,7 +464,7 @@ function formatHeadingsList(paragraphsData, options = {}) {
     }
 
     const indent = '  '.repeat(level);
-    const cleanText = removeWordNumbering(h.text);
+    const cleanText = removeFootnoteReferences(removeWordNumbering(h.text));
 
     const hashes = '#'.repeat(level + 1);
     const formattedHeading = `${hashes} ${cleanText}`;
@@ -558,7 +624,14 @@ function formatParagraphRange(paragraphsData, options = {}) {
     }
 
     const mdText = convertParagraphToMarkdown(para);
-    entries.push({ index: para.index, content: mdText });
+    const footnoteDefinitions = (para.footnotes || []).map(formatFootnoteDefinition);
+    entries.push({
+      index: para.index,
+      content: footnoteDefinitions.length > 0
+        ? `${mdText}\n\n${footnoteDefinitions.join('\n\n')}`
+        : mdText,
+      atomic: footnoteDefinitions.length > 0
+    });
   }
 
   return formatIndexedEntries(entries, options);
@@ -584,12 +657,20 @@ function formatIndexedEntries(entries, options = {}) {
     if (offset > content.length) continue;
 
     const prefix = entry.prefix || `${entry.index} -> `;
+    if (entry.atomic && offset > 0) {
+      return `❌ from_offset cannot resume inside paragraph ${entry.index}, because it contains footnotes. Resume with read_doc({"from_index":${entry.index}}).`;
+    }
+
     const remaining = content.slice(offset);
     const line = `${prefix}${remaining}\n`;
 
     if (output.length + line.length <= contentBudget) {
       output += line;
       continue;
+    }
+
+    if (output.length === 0 && entry.atomic) {
+      return `❌ Paragraph ${entry.index} and its footnotes exceed max_chars (${maxChars}). Read a smaller indexed selection or shorten the footnote.`;
     }
 
     if (output.length === 0) {
@@ -862,6 +943,18 @@ async function editDocSingle(params = {}) {
     }
   }
 
+  let preparedMarkdown = null;
+  if (operation !== 'delete') {
+    try {
+      preparedMarkdown = prepareMarkdownFootnotes(deanonymizedText.replace(/\\n/g, '\n'));
+      if (preparedMarkdown.legacySyntaxUsed) {
+        console.warn('[edit_doc] Syntaxe de note PieceMaker historique acceptée puis normalisée.');
+      }
+    } catch (error) {
+      return { error: `Invalid Markdown footnotes: ${error.message}` };
+    }
+  }
+
   return await Word.run(async (context) => {
     try {
       context.document.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
@@ -930,7 +1023,7 @@ async function editDocSingle(params = {}) {
           };
         }
 
-        const normalizedText = deanonymizedText.replace(/\\n/g, '\n');
+        const normalizedText = preparedMarkdown.markdown;
         console.log('[REPLACE] 📝 Texte normalisé (longueur:', normalizedText.length, '):', JSON.stringify(normalizedText.substring(0, 200)));
 
         const trimmedText = normalizedText.replace(/\n+$/, '');
@@ -946,7 +1039,7 @@ async function editDocSingle(params = {}) {
         const processedParagraphs = [];
 
         for (const line of nonEmptyLines) {
-          const formatted = markdownLineToWordFormat(line);
+          const formatted = markdownLineToWordFormat(line, preparedMarkdown.footnotes);
           processedParagraphs.push(formatted);
         }
 
@@ -999,26 +1092,7 @@ async function editDocSingle(params = {}) {
 
             if (segment.isFootnote && wpara.footnotes && wpara.footnotes[segment.footnoteIndex]) {
               const footnoteData = wpara.footnotes[segment.footnoteIndex];
-              const footnoteRange = insertionPoint.insertText('', 'End');
-              try {
-                const footnote = footnoteRange.insertFootnote('');
-                const footnoteBody = footnote.body;
-
-                let fnInsertPoint = footnoteBody.getRange('Start');
-                for (const fnSegment of footnoteData.segments) {
-                  if (!fnSegment.text) continue;
-
-                  const fnSegmentRange = fnInsertPoint.insertText(fnSegment.text, 'End');
-                  fnSegmentRange.font.bold = fnSegment.bold === true;
-                  fnSegmentRange.font.italic = fnSegment.italic === true;
-                  fnSegmentRange.font.underline = fnSegment.underline === true ? Word.UnderlineType.single : Word.UnderlineType.none;
-
-                  fnInsertPoint = footnoteBody.getRange('End');
-                }
-              } catch (e) {
-                const footnoteText = footnoteData.segments.map(s => s.text).join('');
-                insertionPoint.insertText(` [${footnoteText}]`, 'End');
-              }
+              insertWordFootnote(insertionPoint, footnoteData);
               insertionPoint = newPara.getRange('End');
               continue;
             }
@@ -1050,6 +1124,7 @@ async function editDocSingle(params = {}) {
             segmentRange.font.bold = segment.bold === true;
             segmentRange.font.italic = segment.italic === true;
             segmentRange.font.underline = segment.underline === true ? Word.UnderlineType.single : Word.UnderlineType.none;
+            if (segment.hyperlink) segmentRange.hyperlink = segment.hyperlink;
 
             console.log('[insertText] Applied formatting:', {
               text: segment.text,
@@ -1083,7 +1158,7 @@ async function editDocSingle(params = {}) {
 
       const targetPara = paragraphs.items[target_index];
 
-      const normalizedText = deanonymizedText.replace(/\\n/g, '\n');
+      const normalizedText = preparedMarkdown.markdown;
       console.log('[INSERT] 📝 Texte normalisé (longueur:', normalizedText.length, '):', JSON.stringify(normalizedText.substring(0, 200)));
 
       const trimmedText = normalizedText.replace(/\n+$/, '');
@@ -1099,7 +1174,7 @@ async function editDocSingle(params = {}) {
       const processedParagraphs = [];
 
       for (const line of nonEmptyLines) {
-        const formatted = markdownLineToWordFormat(line);
+        const formatted = markdownLineToWordFormat(line, preparedMarkdown.footnotes);
         processedParagraphs.push(formatted);
       }
 
@@ -1153,26 +1228,7 @@ async function editDocSingle(params = {}) {
 
           if (segment.isFootnote && wpara.footnotes && wpara.footnotes[segment.footnoteIndex]) {
             const footnoteData = wpara.footnotes[segment.footnoteIndex];
-            const footnoteRange = insertionPoint.insertText('', 'End');
-            try {
-              const footnote = footnoteRange.insertFootnote('');
-              const footnoteBody = footnote.body;
-
-              let fnInsertPoint = footnoteBody.getRange('Start');
-              for (const fnSegment of footnoteData.segments) {
-                if (!fnSegment.text) continue;
-
-                const fnSegmentRange = fnInsertPoint.insertText(fnSegment.text, 'End');
-                fnSegmentRange.font.bold = fnSegment.bold === true;
-                fnSegmentRange.font.italic = fnSegment.italic === true;
-                fnSegmentRange.font.underline = fnSegment.underline === true ? Word.UnderlineType.single : Word.UnderlineType.none;
-
-                fnInsertPoint = footnoteBody.getRange('End');
-              }
-            } catch (e) {
-              const footnoteText = footnoteData.segments.map(s => s.text).join('');
-              insertionPoint.insertText(` [${footnoteText}]`, 'End');
-            }
+            insertWordFootnote(insertionPoint, footnoteData);
             insertionPoint = newPara.getRange('End');
             continue;
           }
@@ -1204,6 +1260,7 @@ async function editDocSingle(params = {}) {
           segmentRange.font.bold = segment.bold === true;
           segmentRange.font.italic = segment.italic === true;
           segmentRange.font.underline = segment.underline === true ? Word.UnderlineType.single : Word.UnderlineType.none;
+          if (segment.hyperlink) segmentRange.hyperlink = segment.hyperlink;
 
           console.log('[insertText] Applied formatting:', {
             text: segment.text,
@@ -1257,7 +1314,7 @@ async function editDocSingle(params = {}) {
   });
 }
 
-function markdownLineToWordFormat(mdLine) {
+function markdownLineToWordFormat(mdLine, footnoteDefinitions = []) {
   if (mdLine.trim() === '[^page_break]') {
     return {
       style: 'Normal',
@@ -1276,7 +1333,7 @@ function markdownLineToWordFormat(mdLine) {
     if (level === 1) style = 'Title';
     else if (level >= 2 && level <= 11) style = `Heading ${level - 1}`;
 
-    const parsed = parseMarkdownToSegments(rawText);
+    const parsed = parseMarkdownToSegments(rawText, footnoteDefinitions);
 
     return {
       style,
@@ -1295,7 +1352,7 @@ function markdownLineToWordFormat(mdLine) {
 
     const listLevel = Math.floor(indentStr.replace(/\t/g, '  ').length / 2);
 
-    const parsed = parseMarkdownToSegments(rawText);
+    const parsed = parseMarkdownToSegments(rawText, footnoteDefinitions);
 
     return {
       style: 'Normal',
@@ -1308,7 +1365,7 @@ function markdownLineToWordFormat(mdLine) {
     };
   }
 
-  const parsed = parseMarkdownToSegments(mdLine);
+  const parsed = parseMarkdownToSegments(mdLine, footnoteDefinitions);
 
   return {
     style: 'Normal',
@@ -1320,30 +1377,95 @@ function markdownLineToWordFormat(mdLine) {
   };
 }
 
-function parseMarkdownToSegments(markdown) {
+function prepareFootnoteForWord(footnote) {
+  const paragraphs = [];
+  for (const block of footnote.blocks || []) {
+    const blockLines = block.split('\n').filter((line) => line.trim() !== '');
+    for (const line of blockLines) {
+      const formatted = markdownLineToWordFormat(line, []);
+      paragraphs.push({ segments: formatted.segments || [] });
+    }
+  }
+  return {
+    identifier: footnote.identifier,
+    label: footnote.label,
+    paragraphs,
+    // Compatibilité avec l'ancien chemin d'insertion et son texte de repli.
+    segments: paragraphs[0]?.segments || []
+  };
+}
+
+function insertWordFootnote(insertionPoint, footnoteData) {
+  const footnoteRange = insertionPoint.insertText('', 'End');
+  const plainText = (footnoteData.paragraphs || [])
+    .map((paragraph) => (paragraph.segments || []).map((segment) => segment.text || '').join(''))
+    .join('\n\n');
+
+  try {
+    const footnote = footnoteRange.insertFootnote('');
+    const footnoteBody = footnote.body;
+    const paragraphs = footnoteData.paragraphs?.length > 0
+      ? footnoteData.paragraphs
+      : [{ segments: footnoteData.segments || [] }];
+
+    for (let paragraphIndex = 0; paragraphIndex < paragraphs.length; paragraphIndex++) {
+      const paragraphData = paragraphs[paragraphIndex];
+      const targetParagraph = paragraphIndex === 0
+        ? null
+        : footnoteBody.insertParagraph('', 'End');
+      let insertPoint = targetParagraph
+        ? targetParagraph.getRange('Start')
+        : footnoteBody.getRange('Start');
+
+      for (const segment of paragraphData.segments || []) {
+        if (!segment.text) continue;
+        const segmentRange = insertPoint.insertText(segment.text, 'End');
+        segmentRange.font.bold = segment.bold === true;
+        segmentRange.font.italic = segment.italic === true;
+        segmentRange.font.underline = segment.underline === true
+          ? Word.UnderlineType.single
+          : Word.UnderlineType.none;
+        if (segment.hyperlink) segmentRange.hyperlink = segment.hyperlink;
+        insertPoint = targetParagraph
+          ? targetParagraph.getRange('End')
+          : footnoteBody.getRange('End');
+      }
+    }
+  } catch (error) {
+    console.warn('Footnotes not supported, inserting readable fallback:', error.message);
+    insertionPoint.insertText(` [${plainText}]`, 'End');
+  }
+}
+
+function parseMarkdownToSegments(markdown, footnoteDefinitions = []) {
   const segments = [];
   const footnotes = [];
   const comments = [];
   const crossRefs = [];
+  const links = [];
 
   let processedText = markdown;
   let footnoteIndex = 0;
   let commentIndex = 0;
   let crossRefIndex = 0;
+  let linkIndex = 0;
 
-  processedText = processedText.replace(/\[\^(?:footnote:\s*([^\]]+)|(\d+):\s*([^\]]+)|\d+)\]/g, (match, footnoteText, digitGroup, digitText, offset) => {
-    const text = footnoteText || digitText;
-    if (text) {
-      const parsed = parseMarkdownToSegments(text.trim());
-      footnotes.push({ segments: parsed.segments, position: offset });
-      return `__FOOTNOTE_${footnoteIndex++}__`;
-    }
-    return match;
+  FOOTNOTE_TOKEN_PATTERN.lastIndex = 0;
+  processedText = processedText.replace(FOOTNOTE_TOKEN_PATTERN, (_match, occurrence, offset) => {
+    const definition = footnoteDefinitions[Number(occurrence)];
+    if (!definition) return _match;
+    footnotes.push({ ...prepareFootnoteForWord(definition), position: offset });
+    return `__FOOTNOTE_${footnoteIndex++}__`;
   });
 
   processedText = processedText.replace(/<!--\s*([^-]+?)\s*-->/g, (match, text, offset) => {
     comments.push({ text: text.trim(), position: offset });
     return `__COMMENT_${commentIndex++}__`;
+  });
+
+  processedText = processedText.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, text, url) => {
+    links.push({ text, url });
+    return `__LINK_${linkIndex++}__`;
   });
 
   processedText = processedText.replace(/\[([^\]]+?)\s*\+\s*(\d+)\]/g, (match, title, index, offset) => {
@@ -1372,7 +1494,93 @@ function parseMarkdownToSegments(markdown) {
     return `__USITALIC_${underscoreIndex++}__`;
   });
 
-  const pattern = /(\*\*\*([^\*]+)\*\*\*|\*\*([^\*]+)\*\*|\*([^\*]+)\*|__USITALIC_\d+__|__UNDERLINE_\d+__|__PAGEBREAK_\d+__|__FOOTNOTE_\d+__|__COMMENT_\d+__|__CROSSREF_\d+__)/g;
+  // Les marqueurs techniques peuvent se trouver à l'intérieur d'un segment
+  // Markdown formaté (par exemple **texte[^n]**). Déplier récursivement ces
+  // marqueurs évite de les insérer comme texte littéral dans Word.
+  function appendDecoratedSegments(value, inherited = {}) {
+    const markerPattern = /__(FOOTNOTE|COMMENT|CROSSREF|LINK|PAGEBREAK|USITALIC|UNDERLINE)_(\d+)__/g;
+    let lastMarkerEnd = 0;
+    let markerMatch;
+
+    const appendText = (text, formatting = inherited) => {
+      if (!text) return;
+      const segment = {
+        text,
+        bold: formatting.bold === true,
+        italic: formatting.italic === true,
+        underline: formatting.underline === true
+      };
+      if (formatting.hyperlink) segment.hyperlink = formatting.hyperlink;
+      segments.push(segment);
+    };
+
+    while ((markerMatch = markerPattern.exec(value)) !== null) {
+      appendText(value.substring(lastMarkerEnd, markerMatch.index));
+
+      const kind = markerMatch[1];
+      const markerIndex = Number(markerMatch[2]);
+      if (kind === 'FOOTNOTE') {
+        segments.push({
+          text: '',
+          bold: false,
+          italic: false,
+          underline: false,
+          isFootnote: true,
+          footnoteIndex: markerIndex
+        });
+      } else if (kind === 'COMMENT') {
+        segments.push({
+          text: '',
+          bold: false,
+          italic: false,
+          underline: false,
+          isComment: true,
+          commentIndex: markerIndex
+        });
+      } else if (kind === 'CROSSREF') {
+        const crossRef = crossRefs[markerIndex];
+        if (crossRef) {
+          segments.push({
+            text: `${crossRef.title} ${crossRef.index}`,
+            bold: inherited.bold === true,
+            italic: inherited.italic === true,
+            underline: true,
+            isCrossRef: true,
+            crossRefIndex: markerIndex
+          });
+        }
+      } else if (kind === 'LINK') {
+        const link = links[markerIndex];
+        if (link) {
+          appendDecoratedSegments(link.text, { ...inherited, hyperlink: link.url });
+        }
+      } else if (kind === 'PAGEBREAK') {
+        segments.push({
+          text: '',
+          bold: false,
+          italic: false,
+          underline: false,
+          isPageBreak: true
+        });
+      } else if (kind === 'USITALIC') {
+        appendDecoratedSegments(
+          underscoreItalics[markerIndex] || '',
+          { ...inherited, italic: true }
+        );
+      } else if (kind === 'UNDERLINE') {
+        appendDecoratedSegments(
+          underlines[markerIndex] || '',
+          { ...inherited, underline: true }
+        );
+      }
+
+      lastMarkerEnd = markerPattern.lastIndex;
+    }
+
+    appendText(value.substring(lastMarkerEnd));
+  }
+
+  const pattern = /(\*\*\*([^\*]+)\*\*\*|\*\*([^\*]+)\*\*|\*([^\*]+)\*|__USITALIC_\d+__|__UNDERLINE_\d+__|__PAGEBREAK_\d+__|__FOOTNOTE_\d+__|__COMMENT_\d+__|__CROSSREF_\d+__|__LINK_\d+__)/g;
 
   console.log('[parseMarkdownToSegments] Input:', markdown);
   console.log('[parseMarkdownToSegments] After preprocessing:', processedText);
@@ -1392,72 +1600,11 @@ function parseMarkdownToSegments(markdown) {
     });
     if (match.index > lastIndex) {
       const plainText = processedText.substring(lastIndex, match.index);
-      if (plainText) {
-        segments.push({
-          text: plainText,
-          bold: false,
-          italic: false,
-          underline: false
-        });
-      }
+      appendDecoratedSegments(plainText);
     }
 
-    if (match[0].startsWith('__FOOTNOTE_')) {
-      const fnIndex = parseInt(match[0].match(/\d+/)[0]);
-      segments.push({
-        text: '',
-        bold: false,
-        italic: false,
-        underline: false,
-        isFootnote: true,
-        footnoteIndex: fnIndex
-      });
-    } else if (match[0].startsWith('__COMMENT_')) {
-      const cmIndex = parseInt(match[0].match(/\d+/)[0]);
-      segments.push({
-        text: '',
-        bold: false,
-        italic: false,
-        underline: false,
-        isComment: true,
-        commentIndex: cmIndex
-      });
-    } else if (match[0].startsWith('__CROSSREF_')) {
-      const crIndex = parseInt(match[0].match(/\d+/)[0]);
-      segments.push({
-        text: crossRefs[crIndex].title + ' ' + crossRefs[crIndex].index,
-        bold: false,
-        italic: false,
-        underline: true,
-        isCrossRef: true,
-        crossRefIndex: crIndex
-      });
-    } else if (match[0].startsWith('__PAGEBREAK_')) {
-      segments.push({
-        text: '',
-        bold: false,
-        italic: false,
-        underline: false,
-        isPageBreak: true
-      });
-    } else if (match[0].startsWith('__USITALIC_')) {
-      const usIndex = parseInt(match[0].match(/\d+/)[0]);
-      const italicText = underscoreItalics[usIndex];
-      segments.push({
-        text: italicText,
-        bold: false,
-        italic: true,
-        underline: false
-      });
-    } else if (match[0].startsWith('__UNDERLINE_')) {
-      const ulIndex = parseInt(match[0].match(/\d+/)[0]);
-      const underlineText = underlines[ulIndex];
-      segments.push({
-        text: underlineText,
-        bold: false,
-        italic: false,
-        underline: true
-      });
+    if (match[0].startsWith('__')) {
+      appendDecoratedSegments(match[0]);
     } else {
       let text = '';
       let bold = false;
@@ -1476,21 +1623,7 @@ function parseMarkdownToSegments(markdown) {
         italic = true;
       }
 
-      const usItalicMarkerMatch = text.match(/^__USITALIC_(\d+)__$/);
-      if (usItalicMarkerMatch) {
-        const usIndex = parseInt(usItalicMarkerMatch[1]);
-        text = underscoreItalics[usIndex];
-        italic = true;
-      }
-
-      const underlineMarkerMatch = text.match(/^__UNDERLINE_(\d+)__$/);
-      if (underlineMarkerMatch) {
-        const ulIndex = parseInt(underlineMarkerMatch[1]);
-        text = underlines[ulIndex];
-        underline = true;
-      }
-
-      segments.push({ text, bold, italic, underline });
+      appendDecoratedSegments(text, { bold, italic, underline });
     }
 
     lastIndex = pattern.lastIndex;
@@ -1498,14 +1631,7 @@ function parseMarkdownToSegments(markdown) {
 
   if (lastIndex < processedText.length) {
     const remaining = processedText.substring(lastIndex);
-    if (remaining) {
-      segments.push({
-        text: remaining,
-        bold: false,
-        italic: false,
-        underline: false
-      });
-    }
+    appendDecoratedSegments(remaining);
   }
 
   if (segments.length === 0) {
@@ -1544,6 +1670,17 @@ function getWordStyle(styleName) {
 
   return styleMap[styleName] || Word.BuiltInStyleName.normal;
 }
+
+// Fonctions pures exposées uniquement pour les tests de conversion. Elles ne
+// font pas partie du schéma des outils MCP et ne sont jamais envoyées au modèle.
+export const __footnoteTestUtils = {
+  formatFootnoteDefinition,
+  formatIndexedEntries,
+  formatParagraphRange,
+  insertFootnoteReferences,
+  markdownLineToWordFormat,
+  parseMarkdownToSegments
+};
 
 function extractPlaceholders(text) {
   const regex = /\{\{([A-Z_0-9]+)\}\}/g;

@@ -9,6 +9,7 @@ const docToolsPath = path.join(root, 'taskpane', 'modules', 'doc-tools.js');
 
 async function loadPureHelpers() {
   const source = readFileSync(docToolsPath, 'utf8')
+    .replace(/^import .*;$/gm, '')
     .replace('function formatIndexedEntries(', 'export function formatIndexedEntries(')
     .replace('function prepareBatchEdits(', 'export function prepareBatchEdits(');
   const moduleUrl = `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;

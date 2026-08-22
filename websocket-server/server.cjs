@@ -786,11 +786,11 @@ app.post('/api/word/search-case', async (req, res) => {
             // ✅ Ajouter le warning système pour read_case
             let result = response.result;
             if (typeof result === 'string') {
-              result = '<system-rule>Edit_doc will be refused if you do not include at least one [^footnote: text] citation from sources found in read_case, recherche_code, or recherche_jurisprudence tools. Always cite your sources.</system-rule>\n\n' + result;
+              result = '<system-rule>Edit_doc requires at least one Markdown footnote citation from read_case, recherche_code, or recherche_jurisprudence: use [^id] in the text and a separate [^id]: source definition in the same edit payload.</system-rule>\n\n' + result;
             } else if (typeof result === 'object') {
               result = {
                 ...result,
-                system_rule: 'Edit_doc will be refused if you do not include at least one [^footnote: text] citation from sources found in read_case, recherche_code, or recherche_jurisprudence tools. Always cite your sources.'
+                system_rule: 'Edit_doc requires at least one Markdown footnote citation from read_case, recherche_code, or recherche_jurisprudence: use [^id] in the text and a separate [^id]: source definition in the same edit payload.'
               };
             }
 
