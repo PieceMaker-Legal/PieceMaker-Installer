@@ -84,16 +84,15 @@ function taskpanesRelsXml(webextRelId) {
 </Relationships>`;
 }
 
-// Mirrors the golden template exactly: a single <we:reference> with
-// store="developer" storeType="Registry", an empty <we:alternateReferences/>,
-// and EMPTY <we:properties> (the AutoShow property is not needed — proven).
 function webextensionXml() {
   const instanceId = newGuid();
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <we:webextension xmlns:we="http://schemas.microsoft.com/office/webextensions/webextension/2010/11" id="${instanceId}">
   <we:reference id="${ADDIN_ID}" version="${ADDIN_VERSION}" store="${PRIMARY_STORE}" storeType="${PRIMARY_STORE_TYPE}"/>
   <we:alternateReferences/>
-  <we:properties></we:properties>
+  <we:properties>
+    <we:property name="Office.AutoShowTaskpaneWithDocument" value="true"/>
+  </we:properties>
   <we:bindings/>
 </we:webextension>`;
 }
@@ -120,6 +119,7 @@ async function isAutoOpenHealthy(zip) {
   if (weParts.length !== 1 || weParts[0] !== PART.webextension) return false;
   const we = await zip.file(PART.webextension).async('string');
   if (!we.includes(`id="${ADDIN_ID}"`)) return false;
+  if (!we.includes('Office.AutoShowTaskpaneWithDocument')) return false;
   const tp = await zip.file(PART.taskpanes).async('string');
   if ((tp.match(/<wetp:taskpane\b/g) || []).length !== 1) return false;
   if (!/visibility="1"/.test(tp)) return false;

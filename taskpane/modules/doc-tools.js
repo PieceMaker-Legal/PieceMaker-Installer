@@ -136,8 +136,17 @@ export async function readDoc(params = {}) {
     list_headings = false,
     heading = null,
     indexes = null,
-    include_track_changes = false
+    include_track_changes = false,
+    from_index = 0,
+    from_offset = 0,
+    max_chars = 100000
   } = params;
+
+  const readOptions = {
+    fromIndex: Number.isInteger(from_index) && from_index >= 0 ? from_index : 0,
+    fromOffset: Number.isInteger(from_offset) && from_offset >= 0 ? from_offset : 0,
+    maxChars: Math.min(100000, Math.max(500, Number.isFinite(max_chars) ? Math.floor(max_chars) : 100000))
+  };
 
   return await Word.run(async (context) => {
     try {
@@ -320,21 +329,21 @@ export async function readDoc(params = {}) {
       }
 
       if (list_headings) {
-        const result = formatHeadingsList(paragraphsData);
+        const result = formatHeadingsList(paragraphsData, readOptions);
         return await anonymizeResultIfNeeded(result);
       }
 
       if (heading) {
-        const result = formatHeadingContent(paragraphsData, heading);
+        const result = formatHeadingContent(paragraphsData, heading, readOptions);
         return await anonymizeResultIfNeeded(result);
       }
 
       if (parsedIndexes && parsedIndexes.length > 0) {
-        const result = formatSpecificIndexes(paragraphsData, parsedIndexes);
+        const result = formatSpecificIndexes(paragraphsData, parsedIndexes, readOptions);
         return await anonymizeResultIfNeeded(result);
       }
 
-      const result = formatFullDocument(paragraphsData);
+      const result = formatFullDocument(paragraphsData, readOptions);
       return await anonymizeResultIfNeeded(result);
 
     } catch (error) {
@@ -366,7 +375,7 @@ async function anonymizeResultIfNeeded(text) {
   return text;
 }
 
-function formatHeadingsList(paragraphsData) {
+function formatHeadingsList(paragraphsData, options = {}) {
   const headings = paragraphsData.filter(p => {
     const style = p.style || '';
     return style === 'Title' || style.startsWith('Title,') ||
@@ -377,7 +386,7 @@ function formatHeadingsList(paragraphsData) {
     return '📋 Document Structure:\n\n(No headings found)';
   }
 
-  let output = '📋 Document Structure:\n\n';
+  const entries = [];
 
   for (const h of headings) {
     let level = 0;
@@ -394,13 +403,22 @@ function formatHeadingsList(paragraphsData) {
     const hashes = '#'.repeat(level + 1);
     const formattedHeading = `${hashes} ${cleanText}`;
 
-    output += `${indent}${h.index} -> ${formattedHeading}\n`;
+    entries.push({
+      index: h.index,
+      prefix: `${indent}${h.index} -> `,
+      content: formattedHeading
+    });
   }
 
-  return output;
+  const preface = '📋 Document Structure:\n\n';
+  const maxChars = Number.isInteger(options.maxChars) ? options.maxChars : 100000;
+  return `${preface}${formatIndexedEntries(entries, {
+    ...options,
+    maxChars: Math.max(1, maxChars - preface.length)
+  })}`;
 }
 
-function formatHeadingContent(paragraphsData, headingQuery) {
+function formatHeadingContent(paragraphsData, headingQuery, options = {}) {
   let targetIndex = -1;
   let targetLevel = -1;
 
@@ -502,51 +520,97 @@ function formatHeadingContent(paragraphsData, headingQuery) {
 
   const contentRange = paragraphsData.slice(targetIndex, endIndex);
 
-  return formatParagraphRange(contentRange);
+  return formatParagraphRange(contentRange, options);
 }
 
-function formatSpecificIndexes(paragraphsData, indexes) {
+function formatSpecificIndexes(paragraphsData, indexes, options = {}) {
   const selected = paragraphsData.filter(p => indexes.includes(p.index));
 
   if (selected.length === 0) {
     return `❌ No paragraphs found at indexes: ${indexes.join(', ')}`;
   }
 
-  return formatParagraphRange(selected);
+  return formatParagraphRange(selected, { ...options, includeEmpty: true });
 }
 
-function formatFullDocument(paragraphsData) {
-  return formatParagraphRange(paragraphsData);
+function formatFullDocument(paragraphsData, options = {}) {
+  return formatParagraphRange(paragraphsData, options);
 }
 
-function formatParagraphRange(paragraphsData) {
-  let output = '';
-  let lastWasPageBreak = false;
+function formatParagraphRange(paragraphsData, options = {}) {
+  const entries = [];
 
   for (const para of paragraphsData) {
     const text = para.text.trim();
 
     if (!text) {
-      output += `${para.index} -> \n`;
+      if (options.includeEmpty) {
+        entries.push({ index: para.index, content: '' });
+      }
       continue;
     }
 
     const isPageBreak = text === '\f' || text === '\x0C';
 
     if (isPageBreak) {
-      output += `${para.index} -> [^page_break]\n`;
-      lastWasPageBreak = true;
+      entries.push({ index: para.index, content: '[^page_break]' });
       continue;
     }
 
     const mdText = convertParagraphToMarkdown(para);
-
-    output += `${para.index} -> ${mdText}\n`;
-
-    lastWasPageBreak = false;
+    entries.push({ index: para.index, content: mdText });
   }
 
-  return output;
+  return formatIndexedEntries(entries, options);
+}
+
+/**
+ * Cap every read response while keeping paragraph indexes stable. If a single
+ * paragraph is longer than the cap, from_offset resumes inside that paragraph.
+ */
+function formatIndexedEntries(entries, options = {}) {
+  const fromIndex = Number.isInteger(options.fromIndex) ? options.fromIndex : 0;
+  const fromOffset = Number.isInteger(options.fromOffset) ? options.fromOffset : 0;
+  const maxChars = Number.isInteger(options.maxChars) ? options.maxChars : 100000;
+  const contentBudget = Math.max(1, maxChars - 100);
+  let output = '';
+  let cursor = null;
+
+  for (const entry of entries) {
+    if (entry.index < fromIndex) continue;
+
+    const offset = entry.index === fromIndex ? fromOffset : 0;
+    const content = entry.content || '';
+    if (offset > content.length) continue;
+
+    const prefix = entry.prefix || `${entry.index} -> `;
+    const remaining = content.slice(offset);
+    const line = `${prefix}${remaining}\n`;
+
+    if (output.length + line.length <= contentBudget) {
+      output += line;
+      continue;
+    }
+
+    if (output.length === 0) {
+      const available = Math.max(1, contentBudget - prefix.length - 1);
+      output = `${prefix}${remaining.slice(0, available)}`;
+      cursor = {
+        from_index: entry.index,
+        from_offset: offset + Math.min(available, remaining.length)
+      };
+    } else {
+      cursor = { from_index: entry.index };
+      if (offset > 0) cursor.from_offset = offset;
+    }
+    break;
+  }
+
+  if (cursor) {
+    output += `\n[TRUNCATED] Continue with read_doc(${JSON.stringify(cursor)})`;
+  }
+
+  return output || '(No matching paragraphs)';
 }
 
 function convertParagraphToMarkdown(para) {
@@ -645,6 +709,131 @@ function removeWordNumbering(text) {
  * @returns {Object} - Result with success/error and guideline info
  */
 export async function editDoc(params = {}) {
+  if (!Array.isArray(params.edits)) {
+    return editDocSingle(params);
+  }
+
+  const prepared = prepareBatchEdits(params.edits);
+  if (prepared.error) return { error: prepared.error };
+
+  let paragraphCount;
+  try {
+    paragraphCount = await Word.run(async (context) => {
+      const paragraphs = context.document.body.paragraphs;
+      paragraphs.load('items');
+      await context.sync();
+      return paragraphs.items.length;
+    });
+  } catch (error) {
+    return { error: `Unable to validate batch indexes: ${error.message}` };
+  }
+
+  const invalid = prepared.edits.find((edit) => edit.anchor >= paragraphCount);
+  if (invalid) {
+    return { error: `Invalid index: ${invalid.anchor} (document has ${paragraphCount} paragraphs)` };
+  }
+
+  const changes = [];
+  for (const edit of prepared.edits) {
+    const { anchor, ...singleEdit } = edit;
+    const result = await editDocSingle(singleEdit);
+
+    if (!result?.success) {
+      return {
+        error: result?.error || 'Batch edit failed',
+        edits_applied: changes.length,
+        partial: changes.length > 0,
+        changes
+      };
+    }
+
+    const receipt = { operation: singleEdit.operation };
+    if (singleEdit.target_index !== undefined) receipt.target_index = singleEdit.target_index;
+    if (result.inserted_indexes) receipt.inserted_indexes = result.inserted_indexes;
+    if (result.deleted_indexes) receipt.deleted_indexes = result.deleted_indexes;
+    if (result.placeholders?.length) receipt.placeholders = result.placeholders;
+    changes.push(receipt);
+  }
+
+  return {
+    success: true,
+    edits_applied: changes.length,
+    changes
+  };
+}
+
+function prepareBatchEdits(edits) {
+  if (edits.length === 0 || edits.length > 50) {
+    return { error: 'edits must contain between 1 and 50 operations' };
+  }
+
+  const prepared = [];
+  const insertedAt = new Set();
+  const deletedAt = new Set();
+
+  for (let position = 0; position < edits.length; position++) {
+    const edit = edits[position];
+    if (!edit || typeof edit !== 'object') {
+      return { error: `edits[${position}] must be an object` };
+    }
+
+    if (edit.operation === 'insert_before' || edit.operation === 'insert_after') {
+      if (!Number.isInteger(edit.target_index) || edit.target_index < 0) {
+        return { error: `edits[${position}].target_index must be a non-negative integer` };
+      }
+      if (typeof edit.text !== 'string' || edit.text.length === 0) {
+        return { error: `edits[${position}].text must be a non-empty string` };
+      }
+      if (insertedAt.has(edit.target_index)) {
+        return { error: `Only one insertion is allowed at index ${edit.target_index}; combine its text with \\n` };
+      }
+
+      insertedAt.add(edit.target_index);
+      prepared.push({
+        operation: edit.operation,
+        target_index: edit.target_index,
+        text: edit.text,
+        anchor: edit.target_index
+      });
+      continue;
+    }
+
+    if (edit.operation === 'delete') {
+      if (!Array.isArray(edit.indexes_to_delete) || edit.indexes_to_delete.length === 0) {
+        return { error: `edits[${position}].indexes_to_delete must be a non-empty array` };
+      }
+
+      for (const index of edit.indexes_to_delete) {
+        if (!Number.isInteger(index) || index < 0) {
+          return { error: `edits[${position}] contains an invalid delete index` };
+        }
+        if (deletedAt.has(index)) {
+          return { error: `Duplicate delete index: ${index}` };
+        }
+        deletedAt.add(index);
+        prepared.push({ operation: 'delete', indexes_to_delete: [index], anchor: index });
+      }
+      continue;
+    }
+
+    return { error: `edits[${position}].operation is invalid` };
+  }
+
+  for (const index of insertedAt) {
+    if (deletedAt.has(index)) {
+      return { error: `Index ${index} cannot be both an insertion target and deleted in the same batch` };
+    }
+  }
+
+  if (prepared.length > 50) {
+    return { error: 'A batch cannot modify more than 50 paragraph indexes' };
+  }
+
+  prepared.sort((left, right) => right.anchor - left.anchor);
+  return { edits: prepared };
+}
+
+async function editDocSingle(params = {}) {
   const {
     operation = null,
     target_index = null,
@@ -1431,7 +1620,8 @@ async function savePlaceholdersToLibrary(placeholders) {
 }
 
 /**
- * Mark that read-doc was called (required before edit)
+ * Record a recent read for backward compatibility. One read may safely feed a
+ * whole edit_doc batch; no re-read is required between operations in the batch.
  */
 export function markDocRead() {
   docReadBeforeEdit = true;

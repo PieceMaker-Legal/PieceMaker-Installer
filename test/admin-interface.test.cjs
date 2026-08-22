@@ -319,7 +319,7 @@ test('le MCP local ne charge ni ne relaie aucun MCP distant', () => {
     'piecemaker-plugin/mcp/legifrance/tools/handlers.py',
   ].map(read).join('\n');
 
-  assert.match(sources, /tools: LOCAL_TOOLS/);
+  assert.match(sources, /tools: ENABLED_TOOLS/);
   assert.doesNotMatch(sources, /MCP_REMOTE|MCP_URL|mcpRemote|api\/mcp-config|MCP SERVEUR REMOTE|serveur distant/i);
   assert.doesNotMatch(read('admin/index.html'), /MCP distante|MCP_REMOTE_URL|MCP_API_KEY/i);
   assert.doesNotMatch(read('admin/app.js'), /mcpRemoteUrl|MCP_REMOTE_URL|MCP_API_KEY/);

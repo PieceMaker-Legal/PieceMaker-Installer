@@ -18,8 +18,74 @@ console.log('[DEBUG] doc-tools imports:', {
     markDocRead: typeof markDocRead
 });
 
+// Les implémentations des autres outils restent en place, mais le modèle du
+// volet ne reçoit que cette surface minimale. Les schémas compacts évitent de
+// renvoyer plusieurs milliers de tokens d'instructions à chaque tour.
+const ENABLED_LOCAL_TOOL_NAMES = new Set(['read_doc', 'edit_doc']);
+const ACTIVE_LOCAL_TOOL_SCHEMAS = new Map([
+    ['read_doc', {
+        name: 'read_doc',
+        description: 'Read the active Word document as indexed Markdown. Prefer headings, an index range, or paginated reads. Read once before an edit call.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                list_headings: { type: 'boolean', description: 'Only heading indexes' },
+                heading: { type: 'string', description: 'Heading title or index' },
+                indexes: {
+                    oneOf: [
+                        { type: 'array', items: { type: 'number' } },
+                        { type: 'string', pattern: '^\\d+(?:-\\d+)?$' }
+                    ],
+                    description: 'Indexes, or range such as "5-20"'
+                },
+                include_track_changes: { type: 'boolean', description: 'Include deleted tracked text' },
+                from_index: { type: 'number', minimum: 0, description: 'Resume at this paragraph index' },
+                from_offset: { type: 'number', minimum: 0, description: 'Resume inside from_index' },
+                max_chars: { type: 'number', minimum: 500, maximum: 100000, description: 'Response cap; default/max 100000 chars (~25000 tokens)' }
+            }
+        }
+    }],
+    ['edit_doc', {
+        name: 'edit_doc',
+        description: 'Edit indexed Word paragraphs with tracked changes. Use Markdown. For several edits from one read_doc snapshot, send edits[]; they are applied from high to low indexes.',
+        input_schema: {
+            type: 'object',
+            properties: {
+                operation: { type: 'string', enum: ['insert_before', 'insert_after', 'delete'] },
+                target_index: { type: 'number', minimum: 0 },
+                text: { type: 'string' },
+                indexes_to_delete: { type: 'array', items: { type: 'number' } },
+                edits: {
+                    type: 'array',
+                    minItems: 1,
+                    maxItems: 50,
+                    description: 'Batch using indexes from the same read_doc result',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            operation: { type: 'string', enum: ['insert_before', 'insert_after', 'delete'] },
+                            target_index: { type: 'number', minimum: 0 },
+                            text: { type: 'string' },
+                            indexes_to_delete: { type: 'array', items: { type: 'number' } }
+                        },
+                        required: ['operation']
+                    }
+                }
+            },
+            anyOf: [{ required: ['operation'] }, { required: ['edits'] }]
+        }
+    }]
+]);
+
 // WebSocket pour communication avec le serveur
 let ws = null;
+
+function documentRoutingHeaders() {
+    const docUrl = Office.context.document.url || '';
+    return docUrl
+        ? { 'X-PieceMaker-Document': encodeURIComponent(docUrl) }
+        : {};
+}
 
 // Variable pour contrôler l'arrêt du LLM
 let isProcessing = false;
@@ -113,11 +179,9 @@ function connectWebSocket() {
 
         ws.onopen = () => {
             console.log('✅ WebSocket connecté au serveur');
-            // S'annoncer comme volet PieceMaker : permet au serveur de savoir
-            // qu'un volet est réellement prêt (voir /api/word/open-doc, qui
-            // ouvre Word et attend cette annonce avant de rendre la main).
             try {
-                ws.send(JSON.stringify({ type: 'pane-hello' }));
+                const docUrl = Office.context.document.url || null;
+                ws.send(JSON.stringify({ type: 'pane-hello', docUrl }));
             } catch (e) {
                 console.warn('pane-hello non envoyé:', e);
             }
@@ -127,6 +191,16 @@ function connectWebSocket() {
             try {
                 const message = JSON.parse(event.data);
                 console.log('📥 Message WebSocket reçu:', message);
+
+                if (message.type === 're-identify') {
+                    try {
+                        const docUrl = Office.context.document.url || null;
+                        ws.send(JSON.stringify({ type: 'pane-hello', docUrl }));
+                    } catch (e) {
+                        console.warn('re-identify échoué:', e);
+                    }
+                    return;
+                }
 
                 // Gérer la progression d'anonymisation
                 if (message.type === 'anonymization-progress') {
@@ -184,7 +258,7 @@ async function handleToolRequest(action, params) {
     try {
         switch (action) {
             case 'read_doc':
-                // Mark that doc was read (required before edit)
+                // A single snapshot can feed one edit_doc call, including edits[].
                 markDocRead();
                 return await readDoc(params);
             case 'edit_doc':
@@ -853,7 +927,15 @@ let currentSelection = {
 const localTools = {
   // OUTIL : Lecture du document Word
   read_doc: async (params) => {
-    const { list_headings, heading, indexes, include_track_changes } = params;
+    const {
+      list_headings,
+      heading,
+      indexes,
+      include_track_changes,
+      from_index,
+      from_offset,
+      max_chars
+    } = params;
 
     console.log('[read_doc] 📖 Lecture du document Word');
 
@@ -890,13 +972,17 @@ const localTools = {
       const response = await fetch('https://localhost:43098/api/word/read-doc', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          ...documentRoutingHeaders()
         },
         body: JSON.stringify({
           list_headings: list_headings || false,
           heading: heading || undefined,
           indexes: indexes || undefined,
-          include_track_changes: include_track_changes || false
+          include_track_changes: include_track_changes || false,
+          from_index,
+          from_offset,
+          max_chars
         })
       });
 
@@ -921,7 +1007,7 @@ const localTools = {
   },
   // OUTIL : Édition du document Word
   edit_doc: async (params) => {
-    const { operation, target_index, text, indexes_to_delete } = params;
+    const { operation, target_index, text, indexes_to_delete, edits } = params;
 
     console.log('[edit_doc] ✏️ Édition du document Word');
 
@@ -933,7 +1019,10 @@ const localTools = {
     let approvalMessage = '';
     let approvalDetails = '';
 
-    if (operation === 'insert_before') {
+    if (Array.isArray(edits)) {
+      approvalMessage = `Le modèle souhaite appliquer ${edits.length} modification(s) groupée(s)`;
+      approvalDetails = 'Tous les index proviennent de la même lecture du document';
+    } else if (operation === 'insert_before') {
       approvalMessage = `Le modèle souhaite insérer du contenu avant l'index ${target_index}`;
       approvalDetails = text ? text.substring(0, 100) + (text.length > 100 ? '...' : '') : '';
     } else if (operation === 'insert_after') {
@@ -961,17 +1050,26 @@ const localTools = {
         console.log('[edit_doc] 🔓 Désanonymisation du contenu...');
         processedText = await anonymizeText(text, 'deanonymize');
       }
+      let processedEdits = edits;
+      if (Array.isArray(edits)) {
+        processedEdits = await Promise.all(edits.map(async (edit) => ({
+          ...edit,
+          text: edit.text ? await anonymizeText(edit.text, 'deanonymize') : edit.text
+        })));
+      }
 
       const response = await fetch('https://localhost:43098/api/word/edit-doc', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          ...documentRoutingHeaders()
         },
         body: JSON.stringify({
           operation,
           target_index,
           text: processedText,
-          indexes_to_delete
+          indexes_to_delete,
+          edits: processedEdits
         })
       });
 
@@ -1018,11 +1116,11 @@ const localTools = {
         } catch (error) {
           console.error('[edit_doc] ⚠️ Erreur lors de la récupération du next_placeholder:', error);
           // Retourner quand même le résultat de l'édition
-          return typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+          return typeof data === 'string' ? data : JSON.stringify(data);
         }
       }
 
-      return typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+      return typeof data === 'string' ? data : JSON.stringify(data);
 
     } catch (error) {
       console.error('[edit_doc] Erreur:', error);
@@ -3089,6 +3187,9 @@ async function executeTool(toolName, params) {
 
     // Outils locaux
     if (localTools[toolName]) {
+        if (!ENABLED_LOCAL_TOOL_NAMES.has(toolName)) {
+            return { error: `Outil désactivé pour le modèle : ${toolName}` };
+        }
         console.log(`Outil local trouvé: ${toolName}`);
         return await localTools[toolName](params);
     }
@@ -3497,7 +3598,9 @@ Aucun paramètre requis, l'outil analyse tous les documents chargés.`,
 
     ];
 
-    const tools = [...localToolSchemas];
+    const tools = localToolSchemas
+        .filter((tool) => ENABLED_LOCAL_TOOL_NAMES.has(tool.name))
+        .map((tool) => ACTIVE_LOCAL_TOOL_SCHEMAS.get(tool.name) || tool);
 
     // 📊 Debug: afficher les outils disponibles
     console.log(`📊 Outils disponibles pour ${provider}:`);
@@ -6422,4 +6525,3 @@ async function addFilesFromModal() {
     closeFilesModal();
     updateFilesListDisplay();
 }
-

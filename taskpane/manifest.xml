@@ -35,9 +35,6 @@
     <Host Name="Document" />
   </Hosts>
 
-  <!-- SharedRuntime 1.1 : le volet PieceMaker maintient une connexion
-       WebSocket de longue durée avec le serveur (voir <Runtimes> plus bas).
-       Exigence propre à PieceMaker, sans équivalent amont — conservée. -->
   <Requirements>
     <Sets DefaultMinVersion="1.1">
       <Set Name="SharedRuntime" MinVersion="1.1" />
@@ -54,8 +51,6 @@
     <Hosts>
       <Host xsi:type="Document">
 
-        <!-- Runtime partagé de longue durée : le volet reste vivant et garde sa
-             WebSocket ouverte même quand l'utilisateur le referme. -->
         <Runtimes>
           <Runtime resid="Taskpane.Url" lifetime="long" />
         </Runtimes>
@@ -91,7 +86,7 @@
                     <bt:Image size="80" resid="Icon.80x80" />
                   </Icon>
                   <Action xsi:type="ShowTaskpane">
-                    <TaskpaneId>ButtonId1</TaskpaneId>
+                    <TaskpaneId>Office.AutoShowTaskpaneWithDocument</TaskpaneId>
                     <SourceLocation resid="Taskpane.Url" />
                   </Action>
                 </Control>

@@ -1,5 +1,6 @@
 const express = require('express');
 const https = require('https');
+const { fileURLToPath } = require('url');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -59,16 +60,16 @@ const {
   revertMapping,
 } = require('../piecemaker-plugin/scripts/lib/mapping.cjs');
 
-// Chemin du document Word actuellement ouvert par open-doc — sert à retrouver le
-// dossier juridique (donc le mapping) auquel read_doc / edit_doc s'appliquent.
-// read_doc/edit_doc n'embarquent pas le chemin ; open-doc est le seul point où
-// on le connaît, on le mémorise donc ici.
+// Compatibilité avec les anciens clients qui n'envoient pas encore l'identité
+// du document. Les MCP récents lient le chemin dans leur propre processus et le
+// transmettent sur chaque appel : cette variable ne doit donc jamais servir à
+// router deux sessions concurrentes.
 let activeWordDocPath = null;
 
-function activeCaseMapping() {
-  if (!activeWordDocPath) return null;
+function caseMappingForDocument(docPath) {
+  if (!docPath) return null;
   try {
-    const located = resolveConfiguredCaseMapping(userConfig, activeWordDocPath);
+    const located = resolveConfiguredCaseMapping(userConfig, docPath);
     return located && located.exists ? located : null;
   } catch {
     return null;
@@ -115,11 +116,45 @@ function getWorkspacePath() {
 // Stockage des clients WebSocket connectés
 const wordClients = new Set();
 
-// Sous-ensemble : les clients qui se sont annoncés comme volet PieceMaker
-// (message `pane-hello`), par opposition aux WebSocket de l'administration
-// (terminal, python…). Sert à /api/word/open-doc pour savoir qu'un volet est
-// réellement prêt à recevoir des ordres Office.js après l'ouverture de Word.
-const wordPanes = new Set();
+// Volets PieceMaker par document : Map<normalizedPath, ws>.
+// Chaque volet s'annonce par `pane-hello` avec l'URL du document
+// (Office.context.document.url). La clé est le chemin absolu normalisé.
+const wordPanes = new Map();
+// Reverse : ws → chemin, pour le nettoyage à la déconnexion.
+const paneDocPaths = new WeakMap();
+
+function docUrlToPath(docUrl) {
+  if (!docUrl) return null;
+  try {
+    if (docUrl.startsWith('file:')) return path.resolve(fileURLToPath(docUrl));
+    if (/^[a-z][a-z0-9+.-]*:/i.test(docUrl) && !/^[a-z]:[\\/]/i.test(docUrl)) return null;
+    return path.resolve(docUrl);
+  } catch { return null; }
+}
+
+function documentKey(docPath) {
+  const key = path.resolve(docPath).normalize('NFC');
+  return process.platform === 'win32' ? key.toLowerCase() : key;
+}
+
+function requestedDocumentPath(req) {
+  const encoded = req.get('X-PieceMaker-Document');
+  if (!encoded) return activeWordDocPath;
+  try {
+    return docUrlToPath(decodeURIComponent(encoded));
+  } catch {
+    return null;
+  }
+}
+
+function getRequestPane(req) {
+  const docPath = requestedDocumentPath(req);
+  const client = docPath ? wordPanes.get(documentKey(docPath)) : null;
+  return {
+    docPath,
+    client: client && client.readyState === 1 ? client : null,
+  };
+}
 const MANIFEST_PATH = path.join(REPO_ROOT, 'taskpane', 'manifest.xml');
 
 // Stockage des mappings d'anonymisation par document
@@ -555,14 +590,19 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Attend qu'un volet PieceMaker soit connecté (message `pane-hello`), jusqu'à
-// `timeoutMs`. Résout true dès qu'un volet est présent.
-function waitForPane(timeoutMs) {
+// Attend qu'un volet PieceMaker soit connecté pour `docPath`, jusqu'à
+// `timeoutMs`. Résout true dès qu'un volet correspondant est présent.
+function waitForPane(timeoutMs, docPath) {
+  const hasPaneForDoc = () => {
+    if (!docPath) return wordPanes.size > 0;
+    const ws = wordPanes.get(documentKey(docPath));
+    return ws && ws.readyState === 1;
+  };
   return new Promise((resolve) => {
-    if (wordPanes.size > 0) return resolve(true);
+    if (hasPaneForDoc()) return resolve(true);
     const start = Date.now();
     const timer = setInterval(() => {
-      if (wordPanes.size > 0) {
+      if (hasPaneForDoc()) {
         clearInterval(timer);
         resolve(true);
       } else if (Date.now() - start >= timeoutMs) {
@@ -604,12 +644,12 @@ app.post('/api/word/open-doc', async (req, res) => {
     // Document actif → read_doc / edit_doc résolvent leur mapping à partir de lui.
     activeWordDocPath = resolved;
 
-    // 1. Enregistrement développeur (idempotent) — sans lui la référence
-    //    webextension (storeType="Registry") ne se résout pas. Délégué à
-    //    office-addin-dev-settings, donc asynchrone (voir lib/word-launcher.cjs).
+    // 1. Un seul manifeste/add-in est enregistré. Word crée une instance du
+    // volet dans chaque document ; leur WebSocket et leur chemin permettent de
+    // les distinguer côté serveur.
     const registration = await ensureDevRegistration(MANIFEST_PATH, ADDIN_ID);
 
-    // 2. Injection des parties d'auto-ouverture dans le document (idempotent).
+    // 2. Injection des parties d'auto-ouverture avec l'unique GUID PieceMaker.
     let injection;
     try {
       injection = await injectAutoOpen(resolved);
@@ -628,7 +668,7 @@ app.post('/api/word/open-doc', async (req, res) => {
 
     // 4. Attente de la disponibilité d'un volet.
     const timeoutMs = Number(req.body?.timeoutMs) > 0 ? Number(req.body.timeoutMs) : 45000;
-    const paneReady = await waitForPane(timeoutMs);
+    const paneReady = await waitForPane(timeoutMs, resolved);
 
     return res.json({
       ok: true,
@@ -654,17 +694,15 @@ app.post('/api/word/open-doc', async (req, res) => {
 
 app.post('/api/word/edit', async (req, res) => {
   try {
-    if (wordClients.size === 0) {
+    const { client } = getRequestPane(req);
+    if (!client) {
       return res.status(503).json({
-        error: 'Aucun client Word connecté. Ouvrez le complément Word.'
+        error: 'Aucun volet Word connecté pour le document actif. Appelez open_doc d’abord.'
       });
     }
 
     const requestId = Date.now().toString();
-    // Passer tous les paramÃ¨tres du body (content_control_id, new_text, operation, type)
     const params = req.body;
-
-    const client = Array.from(wordClients)[0];
 
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
@@ -700,16 +738,15 @@ app.post('/api/word/edit', async (req, res) => {
 
 app.post('/api/word/search-case', async (req, res) => {
   try {
-    if (wordClients.size === 0) {
+    const { client } = getRequestPane(req);
+    if (!client) {
       return res.status(503).json({
-        error: 'Aucun client Word connect. Ouvrez le complément Word.'
+        error: 'Aucun volet Word connecté pour le document actif. Appelez open_doc d’abord.'
       });
     }
 
     const requestId = Date.now().toString();
     const params = req.body;
-
-    const client = Array.from(wordClients)[0];
 
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
@@ -808,16 +845,15 @@ app.post('/api/extract/write-md', (req, res) => {
 // ✨ NEW: Read-doc endpoint
 app.post('/api/word/read-doc', async (req, res) => {
   try {
-    if (wordClients.size === 0) {
+    const { client, docPath } = getRequestPane(req);
+    if (!client) {
       return res.status(503).json({
-        error: 'Aucun client Word connecté. Ouvrez le complément Word.'
+        error: 'Aucun volet Word connecté pour le document actif. Appelez open_doc d’abord.'
       });
     }
 
     const requestId = Date.now().toString();
     const params = req.body;
-
-    const client = Array.from(wordClients)[0];
 
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
@@ -833,7 +869,7 @@ app.post('/api/word/read-doc', async (req, res) => {
             // Anonymisation à la lecture : le modèle ne doit jamais voir de nom
             // réel. On code le résultat via le mapping du dossier du document
             // actif — équivalent MCP du hook anonymize-read.mjs (Read/Bash).
-            const legalCase = activeCaseMapping();
+            const legalCase = caseMappingForDocument(docPath);
             const result = legalCase
               ? anonymizeShape(response.result, legalCase.mapping)
               : response.result;
@@ -861,16 +897,15 @@ app.post('/api/word/read-doc', async (req, res) => {
 // ✨ NEW: Edit-doc endpoint
 app.post('/api/word/edit-doc', async (req, res) => {
   try {
-    if (wordClients.size === 0) {
+    const { client, docPath } = getRequestPane(req);
+    if (!client) {
       return res.status(503).json({
-        error: 'Aucun client Word connecté. Ouvrez le complément Word.'
+        error: 'Aucun volet Word connecté pour le document actif. Appelez open_doc d’abord.'
       });
     }
 
     const requestId = Date.now().toString();
     const params = req.body;
-
-    const client = Array.from(wordClients)[0];
 
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
@@ -884,7 +919,7 @@ app.post('/api/word/edit-doc', async (req, res) => {
             clearTimeout(timeout);
             client.off('message', messageHandler);
             // L'écho de confirmation reste codé pour le modèle.
-            const legalCase = activeCaseMapping();
+            const legalCase = caseMappingForDocument(docPath);
             const result = legalCase
               ? anonymizeShape(response.result, legalCase.mapping)
               : response.result;
@@ -901,7 +936,7 @@ app.post('/api/word/edit-doc', async (req, res) => {
       // vrais noms AVANT d'écrire dans Word — équivalent MCP de
       // deanonymize-write.mjs. Sans cela, un code serait écrit tel quel dans le
       // document.
-      const legalCaseOut = activeCaseMapping();
+      const legalCaseOut = caseMappingForDocument(docPath);
       const outboundParams = legalCaseOut
         ? deanonymizeShape(params, legalCaseOut.reverse_mapping)
         : params;
@@ -2656,16 +2691,15 @@ app.post('/api/stamping', async (req, res) => {
 // Route proxy pour get_resource
 app.post('/api/word/get-resource', async (req, res) => {
   try {
-    if (wordClients.size === 0) {
+    const { client } = getRequestPane(req);
+    if (!client) {
       return res.status(503).json({
-        error: 'Aucun client Word connecté. Ouvrez le complément Word.'
+        error: 'Aucun volet Word connecté pour le document actif. Appelez open_doc d’abord.'
       });
     }
 
     const requestId = Date.now().toString();
     const params = req.body;
-
-    const client = Array.from(wordClients)[0];
 
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
@@ -2702,16 +2736,15 @@ app.post('/api/word/get-resource', async (req, res) => {
 // Outil Draft Conclusions - Rédaction de conclusions juridiques par étapes
 app.post('/api/word/draft-conclusions', async (req, res) => {
   try {
-    if (wordClients.size === 0) {
+    const { client } = getRequestPane(req);
+    if (!client) {
       return res.status(503).json({
-        error: 'Aucun client Word connecté. Ouvrez le complément Word.'
+        error: 'Aucun volet Word connecté pour le document actif. Appelez open_doc d’abord.'
       });
     }
 
     const requestId = Date.now().toString();
     const params = req.body;
-
-    const client = Array.from(wordClients)[0];
 
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
@@ -2748,16 +2781,15 @@ app.post('/api/word/draft-conclusions', async (req, res) => {
 // Outil Template Library - Gestion de la bibliothèque de placeholders
 app.post('/api/word/template-library', async (req, res) => {
   try {
-    if (wordClients.size === 0) {
+    const { client } = getRequestPane(req);
+    if (!client) {
       return res.status(503).json({
-        error: 'Aucun client Word connecté. Ouvrez le complément Word.'
+        error: 'Aucun volet Word connecté pour le document actif. Appelez open_doc d’abord.'
       });
     }
 
     const requestId = Date.now().toString();
     const params = req.body;
-
-    const client = Array.from(wordClients)[0];
 
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
@@ -2794,16 +2826,15 @@ app.post('/api/word/template-library', async (req, res) => {
 // Outil stamping - Créer un bordereau de pièces tamponnées
 app.post('/api/word/stamping', async (req, res) => {
   try {
-    if (wordClients.size === 0) {
+    const { client } = getRequestPane(req);
+    if (!client) {
       return res.status(503).json({
-        error: 'Aucun client Word connecté. Ouvrez le complément Word.'
+        error: 'Aucun volet Word connecté pour le document actif. Appelez open_doc d’abord.'
       });
     }
 
     const requestId = Date.now().toString();
     const params = req.body;
-
-    const client = Array.from(wordClients)[0];
 
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
@@ -2842,16 +2873,15 @@ app.post('/api/word/stamping', async (req, res) => {
 // ========================================
 app.post('/api/word/call-ollama', async (req, res) => {
   try {
-    if (wordClients.size === 0) {
+    const { client } = getRequestPane(req);
+    if (!client) {
       return res.status(503).json({
-        error: 'Aucun client Word connecté. Ouvrez le complément Word.'
+        error: 'Aucun volet Word connecté pour le document actif. Appelez open_doc d’abord.'
       });
     }
 
     const requestId = Date.now().toString();
     const params = req.body;
-
-    const client = Array.from(wordClients)[0];
 
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
@@ -3838,12 +3868,18 @@ wss.on('connection', (ws) => {
           closePtyTerminal(ws);
           break;
 
-        case 'pane-hello':
-          // Le volet PieceMaker (taskpane.js) s'annonce à l'ouverture de sa
-          // WebSocket : on le distingue des autres clients pour la détection de
-          // disponibilité dans /api/word/open-doc.
-          wordPanes.add(ws);
+        case 'pane-hello': {
+          const panePath = docUrlToPath(data.docUrl);
+          console.log(`📋 pane-hello reçu — docUrl: ${data.docUrl || '(absent)'} → panePath: ${panePath || '(null)'}`);
+          if (panePath) {
+            const paneKey = documentKey(panePath);
+            wordPanes.set(paneKey, ws);
+            paneDocPaths.set(ws, paneKey);
+          } else {
+            console.warn('⚠️ Volet Word non routable : Office.context.document.url est absent.');
+          }
           break;
+        }
 
         case 'python-exec':
           executePythonScript(ws, data.jobId, data.scriptId, data.filePath, data.options || {}, sanitizeDocumentId(data.documentId));
@@ -3952,12 +3988,17 @@ wss.on('connection', (ws) => {
     }
   });
 
+  function removePane(ws) {
+    const dp = paneDocPaths.get(ws);
+    if (dp && wordPanes.get(dp) === ws) wordPanes.delete(dp);
+  }
+
   ws.on('close', () => {
     console.log('❌ Client Word déconnecté');
     closePtyTerminal(ws);
     cleanupPythonProcesses(ws);
     wordClients.delete(ws);
-    wordPanes.delete(ws);
+    removePane(ws);
   });
 
   ws.on('error', (error) => {
@@ -3965,7 +4006,7 @@ wss.on('connection', (ws) => {
     closePtyTerminal(ws);
     cleanupPythonProcesses(ws);
     wordClients.delete(ws);
-    wordPanes.delete(ws);
+    removePane(ws);
   });
 
   // Envoyer un message de bienvenue

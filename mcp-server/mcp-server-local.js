@@ -17,33 +17,43 @@ import fetch from 'node-fetch';
 // Désactiver la vérification SSL pour localhost
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
+const PIECEMAKER_SERVER_URL = (process.env.PIECEMAKER_SERVER_URL || 'https://localhost:43098').replace(/\/+$/, '');
+
+// Chaque processus MCP correspond à une session Codex/Claude distincte. Le
+// document choisi par open_doc reste donc local à cette session et accompagne
+// ensuite chaque requête Word. Sans cette liaison, le serveur central ne peut
+// pas distinguer deux sessions qui travaillent en parallèle sur deux .docx.
+let boundDocumentPath = null;
+
+function endpointUrl(pathname) {
+  return `${PIECEMAKER_SERVER_URL}${pathname}`;
+}
+
+function documentRoutingHeaders() {
+  if (!boundDocumentPath) return {};
+  return {
+    // encodeURIComponent garde l'en-tête ASCII, y compris pour les chemins
+    // contenant des accents. Le serveur accepte aussi une URL file:// envoyée
+    // directement par le volet Word.
+    'X-PieceMaker-Document': encodeURIComponent(boundDocumentPath),
+  };
+}
+
 // Outils proxy Word disponibles
 const LOCAL_TOOLS = [
         {
         name: 'open_doc',
-        description: `Open a Word document and auto-show the PieceMaker task pane — no manual click.
-
-Use this FIRST, from an outside session, to start working on a specific .docx:
-it registers the add-in (once), embeds the auto-open task-pane reference into
-the document, launches Microsoft Word on it (macOS and Windows), and waits for
-the pane to connect. After it returns paneReady:true you can call read_doc /
-edit_doc, which operate on that now-active document.
-
-Notes:
-- Only .docx is supported (convert .doc/.pdf first).
-- The document's visible content is NOT changed — only an internal task-pane
-  reference is added.
-- If the document is already open in Word, close it first so it can be prepared.`,
+        description: 'Open a .docx in Word with the PieceMaker pane, then make it active for read_doc/edit_doc.',
             inputSchema: {
             type: 'object',
             properties: {
                 path: {
                 type: 'string',
-                description: 'Absolute path to the .docx to open.'
+                description: 'Absolute .docx path'
                 },
                 timeoutMs: {
                 type: 'number',
-                description: 'How long to wait for the pane to connect (default 45000).'
+                description: 'Optional pane timeout in ms'
                 }
             },
             required: ['path']
@@ -51,104 +61,87 @@ Notes:
         },
         {
         name: 'read_doc',
-        description: `Read Word document with Markdown formatting and index-based navigation.
-Modes:
-1. Full doc: {} - Returns all paragraphs with index numbers
-2. Structure: { list_headings: true } - Returns heading hierarchy
-3. Section: { heading: "#Title#" } - Returns heading + its content
-4. Specific: { indexes: [5, 10, 15] } - Returns selected indexes only
-
-Output format (NOT JSON):
-INDEX -> [Markdown content]
-
-Features:
-- Headings: # Title, ## Heading1, ### Heading2, etc.
-- Lists with indentation
-- Bold, italic, underline
-- Footnotes: [^footnote: text]
-- Page breaks: [^page_break]
-- Track changes: excluded by default (use include_track_changes: true)
-- Word numbering automatically removed from headings
-
-IMPORTANT: Always use this tool before edit_doc to verify current indexes.`,
+        description: 'Read the active Word document as indexed Markdown. Prefer headings, an index range, or paginated reads over a full read. Read once before an edit call.',
             inputSchema: {
             type: 'object',
             properties: {
                 list_headings: {
                 type: 'boolean',
-                description: 'Return only document structure (headings list with indexes)',
-                default: false
+                description: 'Only heading indexes'
                 },
                 heading: {
                 type: 'string',
-                description: 'Fetch specific heading and all its content. Format: "Heading 1: Title" or just index number'
+                description: 'Heading title or index'
                 },
                 indexes: {
-                type: 'array',
-                items: { type: 'number' },
-                description: 'Fetch specific paragraph indexes only. Returns selected paragraphs with their content'
+                oneOf: [
+                    { type: 'array', items: { type: 'number' } },
+                    { type: 'string', pattern: '^\\d+(?:-\\d+)?$' }
+                ],
+                description: 'Indexes, or range such as "5-20"'
                 },
                 include_track_changes: {
                 type: 'boolean',
-                description: 'Include deleted track changes (default: false, deleted content is hidden)',
-                default: false
+                description: 'Include deleted tracked text'
+                },
+                from_index: {
+                type: 'number',
+                minimum: 0,
+                description: 'Resume at this paragraph index'
+                },
+                from_offset: {
+                type: 'number',
+                minimum: 0,
+                description: 'Resume inside from_index'
+                },
+                max_chars: {
+                type: 'number',
+                minimum: 500,
+                maximum: 100000,
+                description: 'Response cap; default/max 100000 chars (~25000 tokens)'
                 }
             }
             }
         },
         {
         name: 'edit_doc',
-        description: `Edit Word document using index-based targeting. All edits applied with track changes.
-
-Operations:
-1. insert_before: { operation: "insert_before", target_index: 5, text: "## New heading\\nParagraph text" }
-2. insert_after: { operation: "insert_after", target_index: 5, text: "Content here" }
-3. delete: { operation: "delete", indexes_to_delete: [5, 7, 9] }
-
-Text format:
-- Use Markdown (## heading, **bold**, *italic*, <u>underline</u>, - lists)
-- Markdown is CONVERTED to Word formatting (not displayed as-is)
-- Multi-line: separate with \\n (each line = new paragraph)
-- Placeholders: {{NAME}} can be used in any operation
-- Comments: <!-- your comment --> - converted to Word comments (inserted at position)
-
-Placeholder handling:
-- CAN be used to replace/fill placeholders (alternative to draft tool's fill_placeholder)
-- If a placeholder {{NAME}} is detected in the operation, tool automatically:
-  * Marks the placeholder as filled
-  * Returns next_placeholder and next_placeholder_guideline (like draft tool)
-- Use this when you need more control than fill_placeholder (e.g., delete + insert, complex edits)
-
-IMPORTANT:
-- Must call read_doc first to verify indexes (enforced by tool)
-- Only successful edits reset the read_doc requirement
-- NO numbering for headings (automatically carried)
-- Footnotes can be added using [^footnote: text] syntax for proper citations
-
-Returns: success status + next_placeholder & next_placeholder_guideline if placeholder was used`,
+        description: 'Edit indexed Word paragraphs with tracked changes. Use Markdown text. For several edits from one read_doc snapshot, send edits[]; they are safely applied from high to low indexes.',
             inputSchema: {
             type: 'object',
             properties: {
                 operation: {
                 type: 'string',
-                enum: ['insert_before', 'insert_after', 'delete'],
-                description: 'Edit operation type'
+                enum: ['insert_before', 'insert_after', 'delete']
                 },
                 target_index: {
                 type: 'number',
-                description: 'Target paragraph index (required for insert_before/insert_after operations)'
+                minimum: 0
                 },
                 text: {
-                type: 'string',
-                description: 'Content to insert (Markdown format). Use \\n for multi-line.'
+                type: 'string'
                 },
                 indexes_to_delete: {
                 type: 'array',
-                items: { type: 'number' },
-                description: 'Array of paragraph indexes to delete (required for delete operation)'
+                items: { type: 'number' }
+                },
+                edits: {
+                type: 'array',
+                minItems: 1,
+                maxItems: 50,
+                description: 'Batch using indexes from the same read_doc result',
+                items: {
+                    type: 'object',
+                    properties: {
+                        operation: { type: 'string', enum: ['insert_before', 'insert_after', 'delete'] },
+                        target_index: { type: 'number', minimum: 0 },
+                        text: { type: 'string' },
+                        indexes_to_delete: { type: 'array', items: { type: 'number' } }
+                    },
+                    required: ['operation']
+                }
                 }
             },
-            required: ['operation']
+            anyOf: [{ required: ['operation'] }, { required: ['edits'] }]
             }
         },
         {
@@ -402,6 +395,12 @@ Use it if analysis is empty`,
 }
 ];
 
+// Les autres outils restent implémentés et validés ci-dessous, mais ne sont
+// plus annoncés ni exécutables par le modèle. Réactivation volontaire = ajouter
+// leur nom ici, sans restaurer de code supprimé.
+const ENABLED_TOOL_NAMES = new Set(['open_doc', 'read_doc', 'edit_doc']);
+const ENABLED_TOOLS = LOCAL_TOOLS.filter((tool) => ENABLED_TOOL_NAMES.has(tool.name));
+
 // Schémas Zod pour validation des arguments
 const OpenDocSchema = z.object({
   path: z.string().min(1),
@@ -411,17 +410,36 @@ const OpenDocSchema = z.object({
 const ReadDocSchema = z.object({
   list_headings: z.boolean().optional().default(false),
   heading: z.string().optional(),
-  indexes: z.array(z.number()).optional(),
-  include_track_changes: z.boolean().optional().default(false)
+  indexes: z.union([
+    z.array(z.number().int().nonnegative()),
+    z.string().regex(/^\d+(?:-\d+)?$/)
+  ]).optional(),
+  include_track_changes: z.boolean().optional().default(false),
+  from_index: z.number().int().nonnegative().optional(),
+  from_offset: z.number().int().nonnegative().optional(),
+  max_chars: z.number().int().min(500).max(100000).optional()
 });
 
-const EditDocSchema = z.object({
-  operation: z.enum(['insert_before', 'insert_after', 'replace', 'delete']),
-  target_index: z.number().optional(),
-  placeholder: z.string().optional(),
-  text: z.string().optional(),
-  indexes_to_delete: z.array(z.number()).optional()
+const InsertEditSchema = z.object({
+  operation: z.enum(['insert_before', 'insert_after']),
+  target_index: z.number().int().nonnegative(),
+  text: z.string().min(1)
 });
+
+const DeleteEditSchema = z.object({
+  operation: z.literal('delete'),
+  indexes_to_delete: z.array(z.number().int().nonnegative()).min(1)
+});
+
+const SingleEditSchema = z.discriminatedUnion('operation', [
+  InsertEditSchema,
+  DeleteEditSchema
+]);
+
+const EditDocSchema = z.union([
+  SingleEditSchema,
+  z.object({ edits: z.array(SingleEditSchema).min(1).max(50) })
+]);
 
 const ReadCaseSchema = z.object({
   query: z.string().optional(),
@@ -503,34 +521,38 @@ async function callLocalTool(toolName, toolArgs) {
     }
   }
 
+  if (toolName !== 'open_doc' && !boundDocumentPath) {
+    throw new Error('Aucun document lié à cette session. Appelez open_doc avant read_doc/edit_doc.');
+  }
+
   let endpoint;
   switch (toolName) {
     case 'open_doc':
-      endpoint = 'https://localhost:43098/api/word/open-doc';
+      endpoint = endpointUrl('/api/word/open-doc');
       break;
     case 'read_doc':
-      endpoint = 'https://localhost:43098/api/word/read-doc';
+      endpoint = endpointUrl('/api/word/read-doc');
       break;
     case 'edit_doc':
-      endpoint = 'https://localhost:43098/api/word/edit-doc';
+      endpoint = endpointUrl('/api/word/edit-doc');
       break;
     case 'read_case':
-      endpoint = 'https://localhost:43098/api/word/search-case';
+      endpoint = endpointUrl('/api/word/search-case');
       break;
     case 'get_resource':
-      endpoint = 'https://localhost:43098/api/word/get-resource';
+      endpoint = endpointUrl('/api/word/get-resource');
       break;
     case 'draft':
-      endpoint = 'https://localhost:43098/api/word/draft-conclusions';
+      endpoint = endpointUrl('/api/word/draft-conclusions');
       break;
     case 'template_library':
-      endpoint = 'https://localhost:43098/api/word/template-library';
+      endpoint = endpointUrl('/api/word/template-library');
       break;
     case 'Stamping':
-      endpoint = 'https://localhost:43098/api/word/Stamping';
+      endpoint = endpointUrl('/api/word/Stamping');
       break;
     case 'Call_Ollama':
-      endpoint = 'https://localhost:43098/api/word/call-ollama';
+      endpoint = endpointUrl('/api/word/call-ollama');
       break;
     default:
       throw new Error(`Outil inconnu: ${toolName}`);
@@ -539,7 +561,8 @@ async function callLocalTool(toolName, toolArgs) {
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      ...documentRoutingHeaders(),
     },
     body: JSON.stringify(toolArgs)
   });
@@ -559,10 +582,24 @@ async function callLocalTool(toolName, toolArgs) {
     throw new Error(`${errorMessage}\n\nAssurez-vous que:\n1. Le serveur est démarré (node server.js)\n2. Le complément Word est ouvert\n3. Le complément est bien connecté au serveur`);
   }
 
-  return typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+  if (typeof data === 'string') return data;
+
+  if (toolName === 'open_doc') {
+    if (data.ok === true && typeof data.path === 'string') {
+      boundDocumentPath = data.path;
+    }
+    return JSON.stringify({
+      ok: data.ok === true,
+      paneReady: data.paneReady === true,
+      path: data.path,
+      message: data.message
+    });
+  }
+
+  return JSON.stringify(data);
 }
 
-// Système anti-doublons pour edit_doc et draft uniquement
+// Système anti-doublons pour les éditions exposées
 // Pour éviter les insertions en double dues aux retries réseau
 const editRequestCache = new Map();
 const EDIT_CACHE_TTL = 5000; // 5 secondes
@@ -593,7 +630,7 @@ const server = new Server(
 // Handler pour tools/list
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
-    tools: LOCAL_TOOLS
+    tools: ENABLED_TOOLS
   };
 });
 
@@ -603,8 +640,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   console.error(`[MCP] 📥 Requête reçue - Tool: ${toolName}`);
 
-  // Anti-doublons UNIQUEMENT pour edit_doc et draft (éviter les insertions en double)
-  if (toolName === 'edit_doc' || toolName === 'draft') {
+  if (!ENABLED_TOOL_NAMES.has(toolName)) {
+    return {
+      content: [{ type: 'text', text: `❌ Outil désactivé : ${toolName}` }],
+      isError: true
+    };
+  }
+
+  // Anti-doublons pour les écritures exposées (éviter les insertions en double)
+  if (toolName === 'edit_doc') {
     const requestString = `${toolName}-${JSON.stringify(toolArgs)}`;
     const requestKey = requestString.length; // Utiliser la longueur comme clé simple
     const now = Date.now();
@@ -628,7 +672,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     editRequestCache.set(requestKey, now);
   }
 
-  const isLocalTool = LOCAL_TOOLS.some(t => t.name === toolName);
+  const isLocalTool = ENABLED_TOOLS.some(t => t.name === toolName);
   if (!isLocalTool) {
     return {
       content: [{ type: 'text', text: `❌ Outil MCP local inconnu : ${toolName}` }],
