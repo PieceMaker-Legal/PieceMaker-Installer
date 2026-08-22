@@ -10,6 +10,7 @@ import {
 } from './modules/doc-tools.js';
 import * as AnonymizationModule from './modules/anonymization.js';
 import { initOllamaAnalyzer, analyzeWithOllama, ollamaAnalyzeDocuments } from './modules/ollama-analyzer.js';
+import { EDIT_DOC_TOOL, READ_DOC_TOOL, toEmbeddedTool } from './modules/word-tool-schemas.js';
 
 // Debug: verify imports loaded
 console.log('[DEBUG] doc-tools imports:', {
@@ -22,95 +23,9 @@ console.log('[DEBUG] doc-tools imports:', {
 // volet ne reçoit que cette surface minimale. Les schémas compacts évitent de
 // renvoyer plusieurs milliers de tokens d'instructions à chaque tour.
 const ENABLED_LOCAL_TOOL_NAMES = new Set(['read_doc', 'edit_doc']);
-const REVISION_FILTER_SCHEMA = {
-    type: 'object',
-    properties: {
-        authors: { type: 'array', items: { type: 'string' } },
-        types: { type: 'array', items: { type: 'string' } }
-    }
-};
-const READ_REVISIONS_SCHEMA = {
-    type: 'object',
-    description: 'List/filter revisions; use the returned snapshot before show/accept/reject.',
-    properties: {
-        indexes: { type: 'array', items: { type: 'number', minimum: 1 } },
-        authors: { type: 'array', items: { type: 'string' } },
-        types: { type: 'array', items: { type: 'string' } },
-        from_revision: { type: 'number', minimum: 1 },
-        from_offset: { type: 'number', minimum: 0 }
-    }
-};
-const REVIEW_SCHEMA = {
-    type: 'object',
-    properties: {
-        action: { type: 'string', enum: ['show', 'display', 'accept', 'reject', 'accept_all', 'reject_all'] },
-        snapshot: { type: 'string', description: 'Required for every action except display.' },
-        index: { type: 'number', minimum: 1, description: 'Revision to show.' },
-        indexes: { type: 'array', items: { type: 'number', minimum: 1 }, description: 'Exact revisions to accept/reject.' },
-        filter: { ...REVISION_FILTER_SCHEMA, description: 'Author/type selection; requires confirm=true.' },
-        confirm: { type: 'boolean', description: 'Required for filtered and global accept/reject.' },
-        markup: { type: 'string', enum: ['none', 'simple', 'all'] },
-        view: { type: 'string', enum: ['original', 'final'] },
-        reviewers: { type: 'string', enum: ['all', 'none'] }
-    },
-    required: ['action']
-};
 const ACTIVE_LOCAL_TOOL_SCHEMAS = new Map([
-    ['read_doc', {
-        name: 'read_doc',
-        description: 'Read indexed Markdown or tracked revisions. Use revision_view for current/original text; revisions returns a separate snapshot for review actions. Footnote definitions follow their paragraph.',
-        input_schema: {
-            type: 'object',
-            properties: {
-                list_headings: { type: 'boolean', description: 'Only heading indexes' },
-                heading: { type: 'string', description: 'Heading title or index' },
-                indexes: {
-                    oneOf: [
-                        { type: 'array', items: { type: 'number' } },
-                        { type: 'string', pattern: '^\\d+(?:-\\d+)?$' }
-                    ],
-                    description: 'Indexes, or range such as "5-20"'
-                },
-                revision_view: { type: 'string', enum: ['current', 'original'], description: 'Current/final or original text.' },
-                revisions: READ_REVISIONS_SCHEMA,
-                from_index: { type: 'number', minimum: 0, description: 'Resume at this paragraph index' },
-                from_offset: { type: 'number', minimum: 0, description: 'Resume inside from_index (paragraphs without footnotes only)' },
-                max_chars: { type: 'number', minimum: 500, maximum: 100000, description: 'Response cap; default/max 100000 chars (~25000 tokens)' }
-            }
-        }
-    }],
-    ['edit_doc', {
-        name: 'edit_doc',
-        description: 'Edit indexed paragraphs or review tracked changes. Text uses CommonMark footnotes: [^id] plus a separate [^id]: definition. track_changes defaults to true and Word\'s prior mode is restored. Review actions use the read_doc revision snapshot.',
-        input_schema: {
-            type: 'object',
-            properties: {
-                operation: { type: 'string', enum: ['insert_before', 'insert_after', 'delete'] },
-                target_index: { type: 'number', minimum: 0 },
-                text: { type: 'string' },
-                indexes_to_delete: { type: 'array', items: { type: 'number' } },
-                track_changes: { type: 'boolean', description: 'Default true; false writes without tracked changes.' },
-                review: REVIEW_SCHEMA,
-                edits: {
-                    type: 'array',
-                    minItems: 1,
-                    maxItems: 50,
-                    description: 'Batch using indexes from the same read_doc result',
-                    items: {
-                        type: 'object',
-                        properties: {
-                            operation: { type: 'string', enum: ['insert_before', 'insert_after', 'delete'] },
-                            target_index: { type: 'number', minimum: 0 },
-                            text: { type: 'string' },
-                            indexes_to_delete: { type: 'array', items: { type: 'number' } }
-                        },
-                        required: ['operation']
-                    }
-                }
-            },
-            anyOf: [{ required: ['operation'] }, { required: ['edits'] }, { required: ['review'] }]
-        }
-    }]
+    [READ_DOC_TOOL.name, toEmbeddedTool(READ_DOC_TOOL)],
+    [EDIT_DOC_TOOL.name, toEmbeddedTool(EDIT_DOC_TOOL)]
 ]);
 
 // WebSocket pour communication avec le serveur
@@ -3311,111 +3226,9 @@ async function executeTool(toolName, params) {
 async function callLLM(messages) {
     const provider = config.llmProvider;
 
-    // Filtrer les outils selon le workflow
-    const localToolSchemas = [
-        {
-        name: 'read_doc',
-        description: `Read Word document with Markdown formatting and index-based navigation.
-Modes:
-1. Full doc: {} - Returns all paragraphs with index numbers
-2. Structure: { list_headings: true } - Returns heading hierarchy
-3. Section: { heading: "Heading 1: Title" } - Returns heading + its content
-4. Specific: { indexes: [5, 10, 15] } - Returns selected indexes only
-
-Output format (NOT JSON):
-INDEX -> [Markdown content]
-
-Features:
-- Headings: # Title, ## Heading1, ### Heading2, etc.
-- Lists with indentation
-- Bold, italic, underline
-- Footnotes: [^id] in text plus a separate [^id]: source definition (Word auto-numbers)
-- Page breaks: [^page_break]
-- Track changes: excluded by default (use include_track_changes: true)
-- Word numbering automatically removed from headings
-
-IMPORTANT: Always use this tool before edit_doc to verify current indexes.`,
-            input_schema: {
-            type: 'object',
-            properties: {
-                list_headings: {
-                type: 'boolean',
-                description: 'Return only document structure (headings list with indexes)',
-                default: false
-                },
-                heading: {
-                type: 'string',
-                description: 'Fetch specific heading and all its content. Format: "Heading 1: Title" or just index number'
-                },
-                indexes: {
-                type: 'array',
-                items: { type: 'number' },
-                description: 'Fetch specific paragraph indexes only. Returns selected paragraphs with their content'
-                },
-                include_track_changes: {
-                type: 'boolean',
-                description: 'Include deleted track changes (default: false, deleted content is hidden)',
-                default: false
-                }
-            }
-            }
-        },
-        {
-        name: 'edit_doc',
-        description: `Edit Word document using index-based targeting. All edits applied with track changes.
-
-Operations:
-1. insert_before: { operation: "insert_before", target_index: 5, text: "## New heading\\nParagraph text" }
-2. insert_after: { operation: "insert_after", target_index: 5, text: "Content here" }
-3. delete: { operation: "delete", indexes_to_delete: [5, 7, 9] }
-
-Text format:
-- Use Markdown (## heading, **bold**, *italic*, <u>underline</u>, - lists)
-- Markdown is CONVERTED to Word formatting (not displayed as-is)
-- Multi-line: separate with \\n (each line = new paragraph)
-- Placeholders: {{NAME}} can be used in any operation
-- Comments: <!-- your comment --> - converted to Word comments (inserted at position)
-
-Placeholder handling:
-- CAN be used to replace/fill placeholders (alternative to draft tool's fill_placeholder)
-- If a placeholder {{NAME}} is detected in the operation, tool automatically:
-  * Marks the placeholder as filled
-  * Returns next_placeholder and next_placeholder_guideline (like draft tool)
-- Use this when you need more control than fill_placeholder (e.g., delete + insert, complex edits)
-
-IMPORTANT:
-- Markdown formatting (**bold**, *italic*, etc.) is converted to Word formatting
-- Must call read_doc first to verify indexes (enforced by tool)
-- Only successful edits reset the read_doc requirement
-- NO numbering for headings (automatically carried)
-- Footnotes use [^id] in text plus a separate [^id]: source definition in the same edit payload
-
-Returns: success status + next_placeholder & next_placeholder_guideline if placeholder was used`,
-            input_schema: {
-            type: 'object',
-            properties: {
-                operation: {
-                type: 'string',
-                enum: ['insert_before', 'insert_after', 'delete'],
-                description: 'Edit operation type'
-                },
-                target_index: {
-                type: 'number',
-                description: 'Target paragraph index (required for insert_before/insert_after operations)'
-                },
-                text: {
-                type: 'string',
-                description: 'Content to insert (Markdown format). Use \\n for multi-line. Markdown will be converted to Word formatting.'
-                },
-                indexes_to_delete: {
-                type: 'array',
-                items: { type: 'number' },
-                description: 'Array of paragraph indexes to delete (required for delete operation)'
-                }
-            },
-            required: ['operation']
-            }
-        },
+    // Les anciens outils restent documentés dans le code pour pouvoir être
+    // réactivés, mais seuls les schémas canoniques Word sont envoyés au modèle.
+    const disabledLocalToolSchemas = [
         {
             name: 'read_case',
             description: `Recherche et gestion des pièces du dossier juridique.
@@ -3672,13 +3485,12 @@ Aucun paramètre requis, l'outil analyse tous les documents chargés.`,
 
     ];
 
-    const tools = localToolSchemas
-        .filter((tool) => ENABLED_LOCAL_TOOL_NAMES.has(tool.name))
-        .map((tool) => ACTIVE_LOCAL_TOOL_SCHEMAS.get(tool.name) || tool);
+    const tools = [...ACTIVE_LOCAL_TOOL_SCHEMAS.values()];
 
     // 📊 Debug: afficher les outils disponibles
     console.log(`📊 Outils disponibles pour ${provider}:`);
-    console.log(`   - Outils locaux: ${localToolSchemas.length} (${localToolSchemas.map(t => t.name).join(', ')})`);
+    console.log(`   - Outils actifs: ${tools.length} (${tools.map(t => t.name).join(', ')})`);
+    console.log(`   - Schémas désactivés conservés: ${disabledLocalToolSchemas.length}`);
     console.log(`   - Total outils envoyés: ${tools.length}`);
 
         if (provider === 'claude') {

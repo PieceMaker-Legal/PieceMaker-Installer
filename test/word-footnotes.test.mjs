@@ -18,9 +18,12 @@ globalThis.document = {
 const { __footnoteTestUtils } = await import('../taskpane/modules/doc-tools.js');
 
 const {
+  decodeMarkdownComment,
+  encodeMarkdownComment,
   formatIndexedEntries,
   formatParagraphRange,
   insertFootnoteReferences,
+  insertInlineAnnotations,
   markdownLineToWordFormat
 } = __footnoteTestUtils;
 
@@ -174,6 +177,46 @@ test('place les appels à leur offset exact sans modifier les index', () => {
   assert.match(output, /^\[\^1\]: Source\.$/m);
   assert.match(output, /^2 -> Après$/m);
   assert.doesNotMatch(output, /^\d+ -> \[\^1\]:/m);
+});
+
+test('convertit les commentaires Word sans perdre tirets, balises ou retours de ligne', () => {
+  const comment = 'Avis - A --> B\n<à revoir> & suite';
+  const encoded = encodeMarkdownComment(comment);
+
+  assert.equal(decodeMarkdownComment(encoded), comment);
+  assert.doesNotMatch(encoded, /-->/);
+
+  const markdown = insertInlineAnnotations('Alpha\u200BBêta', [], [{
+    offset: 5,
+    text: comment,
+    removeLength: 1
+  }]);
+  const wordParagraph = markdownLineToWordFormat(markdown);
+
+  assert.equal(markdown.includes('\u200B'), false);
+  assert.equal(wordParagraph.comments[0].text, comment);
+  assert.equal(
+    wordParagraph.segments.filter((segment) => segment.text).map((segment) => segment.text).join(''),
+    'AlphaBêta'
+  );
+});
+
+test('accepte aussi les commentaires Markdown ordinaires contenant des tirets', () => {
+  const wordParagraph = markdownLineToWordFormat('Texte<!-- commentaire - avec tiret --> suite');
+
+  assert.equal(wordParagraph.comments[0].text, 'commentaire - avec tiret');
+  assert.equal(wordParagraph.segments.some((segment) => segment.isComment), true);
+});
+
+test('préserve une note et un commentaire placés au même offset', () => {
+  assert.equal(
+    insertInlineAnnotations('A\u200BB', [{ offset: 1, number: 1 }], [{
+      offset: 1,
+      text: 'Commentaire',
+      removeLength: 1
+    }]),
+    'A[^1]<!-- Commentaire -->B'
+  );
 });
 
 test('la pagination ne sépare jamais un appel de sa définition', () => {

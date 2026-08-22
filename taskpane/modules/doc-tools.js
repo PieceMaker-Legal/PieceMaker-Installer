@@ -218,9 +218,20 @@ export async function readDoc(params = {}) {
       const paragraphFootnoteOoxmlResults = [];
       const paragraphFootnoteOriginalTextResults = [];
       const paragraphFootnoteOriginalReferenceResults = [];
+      const canMapComments = Boolean(
+        comments
+        && globalThis.Office?.context?.requirements?.isSetSupported?.('WordApi', '1.6')
+      );
+      const commentRangeData = [];
+      const paragraphCommentPrefixes = Array.from(
+        { length: paragraphs.items.length },
+        () => []
+      );
 
       for (const p of paragraphs.items) {
-        p.load('text,style,font,listString,leftIndent');
+        p.load(canMapComments
+          ? 'text,style,font,listString,leftIndent,uniqueLocalId'
+          : 'text,style,font,listString,leftIndent');
         p.font.load('bold,italic,underline');
 
         if (reviewedVersion) {
@@ -247,13 +258,45 @@ export async function readDoc(params = {}) {
         }
       }
 
-      if (comments && comments.items.length > 0) {
+      if (canMapComments && comments.items.length > 0) {
         for (const comment of comments.items) {
-          comment.load('content,authorName,replies');
+          comment.load('content');
+          const range = comment.getRange();
+          range.load('text');
+          const paragraph = range.paragraphs.getFirst();
+          paragraph.load('uniqueLocalId');
+          const reviewedRangeText = reviewedVersion
+            ? range.getReviewedText(reviewedVersion)
+            : null;
+          commentRangeData.push({ comment, range, paragraph, reviewedRangeText });
         }
       }
 
       await context.sync();
+
+      if (commentRangeData.length > 0) {
+        const paragraphIndexes = new Map(
+          paragraphs.items.map((paragraph, index) => [paragraph.uniqueLocalId, index])
+        );
+        for (const data of commentRangeData) {
+          const paragraphIndex = paragraphIndexes.get(data.paragraph.uniqueLocalId);
+          if (paragraphIndex === undefined) continue;
+
+          const commentStart = data.range.getRange('Start');
+          const prefixRange = paragraphs.items[paragraphIndex].getRange('Start').expandTo(commentStart);
+          prefixRange.load('text');
+          const reviewedText = reviewedVersion
+            ? prefixRange.getReviewedText(reviewedVersion)
+            : null;
+          paragraphCommentPrefixes[paragraphIndex].push({
+            comment: data.comment,
+            range: data.range,
+            reviewedRangeText: data.reviewedRangeText,
+            prefixRange,
+            reviewedText
+          });
+        }
+      }
 
       for (let i = 0; i < paragraphFootnotesData.length; i++) {
         const pFootnotes = paragraphFootnotesData[i];
@@ -293,16 +336,6 @@ export async function readDoc(params = {}) {
 
       await context.sync();
 
-      const commentsMap = {};
-      if (comments && comments.items.length > 0) {
-        for (const comment of comments.items) {
-          commentsMap[comment.id] = {
-            author: comment.authorName,
-            text: comment.content
-          };
-        }
-      }
-
       const paragraphsData = [];
       let nextFootnoteNumber = 1;
 
@@ -320,10 +353,10 @@ export async function readDoc(params = {}) {
           text = text.slice(1);
         }
 
+        const references = [];
         const pFootnotes = paragraphFootnotesData[i];
         const paragraphFootnotes = [];
         if (pFootnotes && pFootnotes.items && pFootnotes.items.length > 0) {
-          const references = [];
           for (let j = 0; j < pFootnotes.items.length; j++) {
             const fn = pFootnotes.items[j];
             if (revision_view === 'original'
@@ -354,8 +387,26 @@ export async function readDoc(params = {}) {
             references.push({ offset: prefixText.length, number });
             paragraphFootnotes.push({ number, blocks });
           }
-          text = insertFootnoteReferences(text, references);
         }
+
+        const inlineComments = paragraphCommentPrefixes[i].map((entry) => {
+          const prefixText = (
+            (reviewedVersion && entry.reviewedText)
+              ? entry.reviewedText.value
+              : entry.prefixRange.text
+          || '').replace(/^\uFEFF/, '');
+          const anchorText = (
+            (reviewedVersion && entry.reviewedRangeText)
+              ? entry.reviewedRangeText.value
+              : entry.range.text
+          ) || '';
+          return {
+            offset: prefixText.length,
+            text: entry.comment.content || '',
+            removeLength: anchorText === '\u200B' ? 1 : 0
+          };
+        });
+        text = insertInlineAnnotations(text, references, inlineComments);
 
         const style = p.style || 'Normal';
 
@@ -431,14 +482,57 @@ async function anonymizeResultIfNeeded(text) {
   return text;
 }
 
-function insertFootnoteReferences(text, references) {
+function encodeMarkdownComment(text) {
+  return String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/\r/g, '&#13;')
+    .replace(/\n/g, '&#10;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/-/g, '&#45;');
+}
+
+function decodeMarkdownComment(text) {
+  return String(text || '')
+    .replace(/&#45;/g, '-')
+    .replace(/&#13;/g, '\r')
+    .replace(/&#10;/g, '\n')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+function insertInlineAnnotations(text, references = [], comments = []) {
   let output = text;
-  const ordered = [...references].sort((left, right) => right.offset - left.offset);
-  for (const reference of ordered) {
-    const offset = Math.max(0, Math.min(output.length, reference.offset));
-    output = `${output.slice(0, offset)}[^${reference.number}]${output.slice(offset)}`;
+  const markers = [
+    ...references.map((reference) => ({
+      offset: reference.offset,
+      marker: `[^${reference.number}]`,
+      removeLength: 0
+    })),
+    ...comments.map((comment) => ({
+      offset: comment.offset,
+      marker: `<!-- ${encodeMarkdownComment(comment.text)} -->`,
+      removeLength: comment.removeLength || 0
+    }))
+  ].sort((left, right) => (
+    right.offset - left.offset
+    || right.removeLength - left.removeLength
+  ));
+
+  for (const item of markers) {
+    const offset = Math.max(0, Math.min(output.length, item.offset));
+    const removeLength = Math.max(
+      0,
+      Math.min(output.length - offset, item.removeLength)
+    );
+    output = `${output.slice(0, offset)}${item.marker}${output.slice(offset + removeLength)}`;
   }
   return output;
+}
+
+function insertFootnoteReferences(text, references) {
+  return insertInlineAnnotations(text, references, []);
 }
 
 function formatWordFootnoteParagraph(paragraph) {
@@ -1514,8 +1608,8 @@ function parseMarkdownToSegments(markdown, footnoteDefinitions = []) {
     return `__FOOTNOTE_${footnoteIndex++}__`;
   });
 
-  processedText = processedText.replace(/<!--\s*([^-]+?)\s*-->/g, (match, text, offset) => {
-    comments.push({ text: text.trim(), position: offset });
+  processedText = processedText.replace(/<!--\s*((?:(?!-->)[\s\S])*?)\s*-->/g, (match, text, offset) => {
+    comments.push({ text: decodeMarkdownComment(text.trim()), position: offset });
     return `__COMMENT_${commentIndex++}__`;
   });
 
@@ -1730,10 +1824,13 @@ function getWordStyle(styleName) {
 // Fonctions pures exposées uniquement pour les tests de conversion. Elles ne
 // font pas partie du schéma des outils MCP et ne sont jamais envoyées au modèle.
 export const __footnoteTestUtils = {
+  decodeMarkdownComment,
+  encodeMarkdownComment,
   formatFootnoteDefinition,
   formatIndexedEntries,
   formatParagraphRange,
   insertFootnoteReferences,
+  insertInlineAnnotations,
   markdownLineToWordFormat,
   parseMarkdownToSegments
 };

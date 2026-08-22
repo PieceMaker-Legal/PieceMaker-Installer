@@ -33,9 +33,6 @@ Pour un gros document, commencer par `list_headings`, `heading` ou une plage
 `indexes` plutôt que lire tout le document. Suivre ensuite le curseur fourni par
 `[TRUNCATED]` jusqu'à couvrir la zone utile.
 
-Dans le Markdown envoyé à Word, écrire un commentaire sous la forme
-`<!-- commentaire -->`.
-
 ## Dépannage
 
 - Si `open_doc` réclame un terminal partagé, relancer le client avec

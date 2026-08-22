@@ -68,7 +68,8 @@ test('le chat du volet limite aussi les outils locaux actifs', () => {
   const source = readFileSync(taskpaneScript, 'utf8');
 
   assert.match(source, /ENABLED_LOCAL_TOOL_NAMES = new Set\(\['read_doc', 'edit_doc'\]\)/);
-  assert.match(source, /filter\(\(tool\) => ENABLED_LOCAL_TOOL_NAMES\.has\(tool\.name\)\)/);
+  assert.match(source, /const tools = \[\.\.\.ACTIVE_LOCAL_TOOL_SCHEMAS\.values\(\)\]/);
+  assert.match(source, /const disabledLocalToolSchemas = \[/);
   assert.match(source, /Outil désactivé pour le modèle/);
   assert.match(source, /'X-PieceMaker-Pane': paneId/);
   assert.match(source, /message\.type === 'pane-bound'/);

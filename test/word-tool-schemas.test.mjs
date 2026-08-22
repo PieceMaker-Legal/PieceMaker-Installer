@@ -5,8 +5,49 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import Ajv from 'ajv';
+
+import {
+  EDIT_DOC_TOOL,
+  READ_DOC_TOOL,
+  toEmbeddedTool
+} from '../taskpane/modules/word-tool-schemas.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+test('les variantes JSON excluent les combinaisons ambiguës', () => {
+  const ajv = new Ajv({ strict: false });
+  const validateRead = ajv.compile(READ_DOC_TOOL.inputSchema);
+  const validateEdit = ajv.compile(EDIT_DOC_TOOL.inputSchema);
+
+  assert.equal(validateRead({ list_headings: false, indexes: [0] }), true);
+  assert.equal(validateRead({ list_headings: true, indexes: [0] }), false);
+  assert.equal(validateRead({ revisions: {}, revision_view: 'current' }), false);
+
+  assert.equal(validateEdit({ operation: 'delete', indexes_to_delete: [0] }), true);
+  assert.equal(validateEdit({
+    operation: 'delete',
+    indexes_to_delete: [0],
+    review: { action: 'display', markup: 'all' }
+  }), false);
+  assert.equal(validateEdit({
+    review: {
+      action: 'accept',
+      snapshot: 'snapshot',
+      filter: {},
+      confirm: true
+    }
+  }), false);
+  assert.equal(validateEdit({
+    review: {
+      action: 'accept',
+      snapshot: 'snapshot',
+      filter: { authors: ['Auteur'] },
+      confirm: true
+    }
+  }), true);
+  assert.match(EDIT_DOC_TOOL.inputSchema.properties.review.description, /display: markup\/view\/reviewers/);
+});
 
 function readMessage(stdout) {
   return new Promise((resolve, reject) => {
@@ -51,18 +92,123 @@ test('les outils actifs documentent les vues, révisions et écritures suivies',
     assert.deepEqual(tools.map((tool) => tool.name), ['open_doc', 'read_doc', 'edit_doc']);
 
     const read = tools.find((tool) => tool.name === 'read_doc').inputSchema;
+    assert.deepEqual(read, READ_DOC_TOOL.inputSchema);
     assert.deepEqual(read.properties.revision_view.enum, ['current', 'original']);
     assert.equal(read.properties.max_chars.maximum, 100000);
+    assert.equal(read.properties.indexes.oneOf[0].items.type, 'integer');
     assert.ok(read.properties.revisions.properties.from_revision);
     assert.equal('include_track_changes' in read.properties, false);
 
     const edit = tools.find((tool) => tool.name === 'edit_doc').inputSchema;
+    assert.deepEqual(edit, EDIT_DOC_TOOL.inputSchema);
     assert.equal(edit.properties.track_changes.type, 'boolean');
     assert.deepEqual(
       edit.properties.review.properties.action.enum,
       ['show', 'display', 'accept', 'reject', 'accept_all', 'reject_all']
     );
-    assert.ok(edit.anyOf.some((branch) => branch.required?.includes('review')));
+    assert.ok(edit.oneOf.some((branch) => branch.required?.includes('review')));
+
+    child.stdin.write(`${JSON.stringify({
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: {
+        name: 'edit_doc',
+        arguments: {
+          operation: 'delete',
+          indexes_to_delete: [0],
+          review: { action: 'display', markup: 'all' }
+        }
+      }
+    })}\n`);
+    const ambiguousEdit = await readMessage(child.stdout);
+    assert.equal(ambiguousEdit.result?.isError, true);
+    assert.match(ambiguousEdit.result?.content?.[0]?.text || '', /Arguments invalides/);
+
+    child.stdin.write(`${JSON.stringify({
+      jsonrpc: '2.0',
+      id: 4,
+      method: 'tools/call',
+      params: {
+        name: 'read_doc',
+        arguments: { revisions: {}, indexes: [0] }
+      }
+    })}\n`);
+    const ambiguousRead = await readMessage(child.stdout);
+    assert.equal(ambiguousRead.result?.isError, true);
+    assert.match(ambiguousRead.result?.content?.[0]?.text || '', /Arguments invalides/);
+
+    child.stdin.write(`${JSON.stringify({
+      jsonrpc: '2.0',
+      id: 5,
+      method: 'tools/call',
+      params: {
+        name: 'read_doc',
+        arguments: { list_headings: false, indexes: [0] }
+      }
+    })}\n`);
+    const explicitFalse = await readMessage(child.stdout);
+    assert.equal(explicitFalse.result?.isError, true);
+    assert.match(explicitFalse.result?.content?.[0]?.text || '', /Aucun document lié/);
+
+    child.stdin.write(`${JSON.stringify({
+      jsonrpc: '2.0',
+      id: 6,
+      method: 'tools/call',
+      params: {
+        name: 'edit_doc',
+        arguments: {
+          review: {
+            action: 'accept',
+            snapshot: 'snapshot',
+            filter: {},
+            confirm: true
+          }
+        }
+      }
+    })}\n`);
+    const emptyFilter = await readMessage(child.stdout);
+    assert.equal(emptyFilter.result?.isError, true);
+    assert.match(emptyFilter.result?.content?.[0]?.text || '', /Arguments invalides/);
+
+    child.stdin.write(`${JSON.stringify({
+      jsonrpc: '2.0',
+      id: 7,
+      method: 'tools/call',
+      params: {
+        name: 'edit_doc',
+        arguments: { review: { action: 'display' } }
+      }
+    })}\n`);
+    const incompleteDisplay = await readMessage(child.stdout);
+    assert.equal(incompleteDisplay.result?.isError, true);
+    assert.match(incompleteDisplay.result?.content?.[0]?.text || '', /Arguments invalides/);
+
+    child.stdin.write(`${JSON.stringify({
+      jsonrpc: '2.0',
+      id: 8,
+      method: 'tools/call',
+      params: {
+        name: 'edit_doc',
+        arguments: { edits: [{ operation: 'insert_after' }] }
+      }
+    })}\n`);
+    const incompleteBatch = await readMessage(child.stdout);
+    assert.equal(incompleteBatch.result?.isError, true);
+    assert.match(incompleteBatch.result?.content?.[0]?.text || '', /Arguments invalides/);
+
+    child.stdin.write(`${JSON.stringify({
+      jsonrpc: '2.0',
+      id: 9,
+      method: 'tools/call',
+      params: {
+        name: 'edit_doc',
+        arguments: { review: { action: 'show', index: 1 } }
+      }
+    })}\n`);
+    const incompleteShow = await readMessage(child.stdout);
+    assert.equal(incompleteShow.result?.isError, true);
+    assert.match(incompleteShow.result?.content?.[0]?.text || '', /Arguments invalides/);
   } finally {
     if (child.exitCode === null) {
       child.kill('SIGTERM');
@@ -73,14 +219,20 @@ test('les outils actifs documentent les vues, révisions et écritures suivies',
 
 test('le schéma du modèle intégré reste aligné sans réannoncer le paramètre historique', async () => {
   const source = await readFile(path.join(root, 'taskpane/taskpane.js'), 'utf8');
-  const schemaBlock = source.slice(
-    source.indexOf('const ENABLED_LOCAL_TOOL_NAMES'),
-    source.indexOf('// WebSocket pour communication')
+  const callLlmBlock = source.slice(
+    source.indexOf('async function callLLM(messages)'),
+    source.indexOf('async function callLLMWithFallback')
   );
 
-  assert.match(schemaBlock, /revision_view/);
-  assert.match(schemaBlock, /READ_REVISIONS_SCHEMA/);
-  assert.match(schemaBlock, /track_changes/);
-  assert.match(schemaBlock, /REVIEW_SCHEMA/);
-  assert.doesNotMatch(schemaBlock, /include_track_changes/);
+  assert.match(source, /from '\.\/modules\/word-tool-schemas\.js'/);
+  assert.match(source, /\[READ_DOC_TOOL\.name, toEmbeddedTool\(READ_DOC_TOOL\)\]/);
+  assert.match(source, /\[EDIT_DOC_TOOL\.name, toEmbeddedTool\(EDIT_DOC_TOOL\)\]/);
+  assert.match(callLlmBlock, /const tools = \[\.\.\.ACTIVE_LOCAL_TOOL_SCHEMAS\.values\(\)\]/);
+  assert.doesNotMatch(callLlmBlock, /name: ['"]read_doc['"]/);
+  assert.doesNotMatch(callLlmBlock, /name: ['"]edit_doc['"]/);
+  assert.deepEqual(toEmbeddedTool(READ_DOC_TOOL), {
+    name: 'read_doc',
+    description: READ_DOC_TOOL.description,
+    input_schema: READ_DOC_TOOL.inputSchema
+  });
 });

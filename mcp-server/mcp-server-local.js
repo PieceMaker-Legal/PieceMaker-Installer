@@ -13,6 +13,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import fetch from 'node-fetch';
+import { EDIT_DOC_TOOL, READ_DOC_TOOL } from '../taskpane/modules/word-tool-schemas.js';
 
 // Désactiver la vérification SSL pour localhost
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
@@ -43,147 +44,30 @@ function documentRoutingHeaders() {
   };
 }
 
-const REVISION_FILTER_SCHEMA = {
-  type: 'object',
-  properties: {
-    authors: { type: 'array', items: { type: 'string' } },
-    types: { type: 'array', items: { type: 'string' } }
-  }
-};
-
-const READ_REVISIONS_SCHEMA = {
-  type: 'object',
-  description: 'List/filter revisions; use the returned snapshot before show/accept/reject.',
-  properties: {
-    indexes: { type: 'array', items: { type: 'number', minimum: 1 } },
-    authors: { type: 'array', items: { type: 'string' } },
-    types: { type: 'array', items: { type: 'string' } },
-    from_revision: { type: 'number', minimum: 1 },
-    from_offset: { type: 'number', minimum: 0 }
-  }
-};
-
-const REVIEW_SCHEMA = {
-  type: 'object',
-  properties: {
-    action: { type: 'string', enum: ['show', 'display', 'accept', 'reject', 'accept_all', 'reject_all'] },
-    snapshot: { type: 'string', description: 'Required for every action except display.' },
-    index: { type: 'number', minimum: 1, description: 'Revision to show.' },
-    indexes: { type: 'array', items: { type: 'number', minimum: 1 }, description: 'Exact revisions to accept/reject.' },
-    filter: { ...REVISION_FILTER_SCHEMA, description: 'Author/type selection; requires confirm=true.' },
-    confirm: { type: 'boolean', description: 'Required for filtered and global accept/reject.' },
-    markup: { type: 'string', enum: ['none', 'simple', 'all'] },
-    view: { type: 'string', enum: ['original', 'final'] },
-    reviewers: { type: 'string', enum: ['all', 'none'] }
-  },
-  required: ['action']
-};
-
 // Outils proxy Word disponibles
 const LOCAL_TOOLS = [
         {
         name: 'open_doc',
-        description: 'Open a .docx in Word with the PieceMaker pane, then make it active for read_doc/edit_doc.',
+        description: 'Ouvre un .docx dans Word avec son volet PieceMaker et lie cette session à ce document pour read_doc/edit_doc.',
             inputSchema: {
             type: 'object',
             properties: {
                 path: {
                 type: 'string',
-                description: 'Absolute .docx path'
+                minLength: 1,
+                description: 'Chemin absolu du fichier .docx'
                 },
                 timeoutMs: {
-                type: 'number',
-                description: 'Optional pane timeout in ms'
+                type: 'integer',
+                minimum: 1,
+                description: 'Délai facultatif d’attente du volet, en millisecondes'
                 }
             },
             required: ['path']
             }
         },
-        {
-        name: 'read_doc',
-        description: 'Read indexed Markdown or tracked revisions. Use revision_view for current/original text; revisions returns a separate snapshot for review actions. Footnote definitions follow their paragraph.',
-            inputSchema: {
-            type: 'object',
-            properties: {
-                list_headings: {
-                type: 'boolean',
-                description: 'Only heading indexes'
-                },
-                heading: {
-                type: 'string',
-                description: 'Heading title or index'
-                },
-                indexes: {
-                oneOf: [
-                    { type: 'array', items: { type: 'number' } },
-                    { type: 'string', pattern: '^\\d+(?:-\\d+)?$' }
-                ],
-                description: 'Indexes, or range such as "5-20"'
-                },
-                revision_view: { type: 'string', enum: ['current', 'original'], description: 'Current/final or original text.' },
-                revisions: READ_REVISIONS_SCHEMA,
-                from_index: {
-                type: 'number',
-                minimum: 0,
-                description: 'Resume at this paragraph index'
-                },
-                from_offset: {
-                type: 'number',
-                minimum: 0,
-                description: 'Resume inside from_index (paragraphs without footnotes only)'
-                },
-                max_chars: {
-                type: 'number',
-                minimum: 500,
-                maximum: 100000,
-                description: 'Response cap; default/max 100000 chars (~25000 tokens)'
-                }
-            }
-            }
-        },
-        {
-        name: 'edit_doc',
-        description: 'Edit indexed paragraphs or review tracked changes. Text uses CommonMark footnotes: [^id] plus a separate [^id]: definition. track_changes defaults to true and Word\'s prior mode is restored. Review actions use the read_doc revision snapshot.',
-            inputSchema: {
-            type: 'object',
-            properties: {
-                operation: {
-                type: 'string',
-                enum: ['insert_before', 'insert_after', 'delete']
-                },
-                target_index: {
-                type: 'number',
-                minimum: 0
-                },
-                text: {
-                type: 'string'
-                },
-                indexes_to_delete: {
-                type: 'array',
-                items: { type: 'number' }
-                },
-                track_changes: { type: 'boolean', description: 'Default true; false writes without tracked changes.' },
-                review: REVIEW_SCHEMA,
-                edits: {
-                type: 'array',
-                minItems: 1,
-                maxItems: 50,
-                description: 'Batch using indexes from the same read_doc result',
-                items: {
-                    type: 'object',
-                    properties: {
-                        operation: { type: 'string', enum: ['insert_before', 'insert_after', 'delete'] },
-                        target_index: { type: 'number', minimum: 0 },
-                        text: { type: 'string' },
-                        indexes_to_delete: { type: 'array', items: { type: 'number' } }
-                    },
-                    required: ['operation']
-                }
-                }
-            },
-            anyOf: [{ required: ['operation'] }, { required: ['edits'] }, { required: ['review'] }]
-            }
-        },
+        READ_DOC_TOOL,
+        EDIT_DOC_TOOL,
         {
             name: 'read_case',
             description: `Recherche et gestion des pièces du dossier juridique.
@@ -445,39 +329,64 @@ const ENABLED_TOOLS = LOCAL_TOOLS.filter((tool) => ENABLED_TOOL_NAMES.has(tool.n
 const OpenDocSchema = z.object({
   path: z.string().min(1),
   timeoutMs: z.number().int().positive().optional()
-});
+}).strict();
 
 const ReadDocSchema = z.object({
   list_headings: z.boolean().optional().default(false),
-  heading: z.string().optional(),
+  heading: z.string().min(1).optional(),
   indexes: z.union([
-    z.array(z.number().int().nonnegative()),
+    z.array(z.number().int().nonnegative()).min(1),
     z.string().regex(/^\d+(?:-\d+)?$/)
   ]).optional(),
+  // Compatibilité avec les anciens clients. Ce paramètre n'est plus annoncé :
+  // revision_view exprime sans ambiguïté la version de révision souhaitée.
   include_track_changes: z.boolean().optional().default(false),
   revision_view: z.enum(['current', 'original']).optional(),
   revisions: z.object({
-    indexes: z.array(z.number().int().positive()).optional(),
-    authors: z.array(z.string().min(1)).optional(),
-    types: z.array(z.string().min(1)).optional(),
+    indexes: z.array(z.number().int().positive()).min(1).optional(),
+    authors: z.array(z.string().min(1)).min(1).optional(),
+    types: z.array(z.string().min(1)).min(1).optional(),
     from_revision: z.number().int().positive().optional(),
     from_offset: z.number().int().nonnegative().optional()
-  }).optional(),
+  }).strict().optional(),
   from_index: z.number().int().nonnegative().optional(),
   from_offset: z.number().int().nonnegative().optional(),
   max_chars: z.number().int().min(500).max(100000).optional()
+}).strict().superRefine((value, ctx) => {
+  const modes = [
+    Boolean(value.revisions),
+    value.list_headings === true,
+    value.heading !== undefined,
+    value.indexes !== undefined
+  ];
+  if (modes.filter(Boolean).length > 1) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Choisir un seul mode : revisions, list_headings, heading ou indexes.'
+    });
+  }
+  if (value.revisions && (
+    value.revision_view !== undefined
+    || value.from_index !== undefined
+    || value.from_offset !== undefined
+  )) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Le mode revisions ne se combine pas avec revision_view, from_index ou from_offset.'
+    });
+  }
 });
 
 const InsertEditSchema = z.object({
   operation: z.enum(['insert_before', 'insert_after']),
   target_index: z.number().int().nonnegative(),
   text: z.string().min(1)
-});
+}).strict();
 
 const DeleteEditSchema = z.object({
   operation: z.literal('delete'),
   indexes_to_delete: z.array(z.number().int().nonnegative()).min(1)
-});
+}).strict();
 
 const SingleEditSchema = z.discriminatedUnion('operation', [
   InsertEditSchema,
@@ -485,30 +394,65 @@ const SingleEditSchema = z.discriminatedUnion('operation', [
 ]);
 
 const RevisionFilterInputSchema = z.object({
-  authors: z.array(z.string().min(1)).optional(),
-  types: z.array(z.string().min(1)).optional()
-});
+  authors: z.array(z.string().min(1)).min(1).optional(),
+  types: z.array(z.string().min(1)).min(1).optional()
+}).strict().refine(
+  (value) => value.authors !== undefined || value.types !== undefined,
+  { message: 'filter exige authors ou types.' }
+);
 
-const ReviewInputSchema = z.object({
-  action: z.enum(['show', 'display', 'accept', 'reject', 'accept_all', 'reject_all']),
-  snapshot: z.string().min(1).optional(),
-  index: z.number().int().positive().optional(),
-  indexes: z.array(z.number().int().positive()).min(1).optional(),
-  filter: RevisionFilterInputSchema.optional(),
-  confirm: z.boolean().optional(),
-  markup: z.enum(['none', 'simple', 'all']).optional(),
-  view: z.enum(['original', 'final']).optional(),
-  reviewers: z.enum(['all', 'none']).optional()
-});
+const ReviewInputSchema = z.union([
+  z.object({
+    action: z.literal('show'),
+    snapshot: z.string().min(1),
+    index: z.number().int().positive()
+  }).strict(),
+  z.object({
+    action: z.literal('display'),
+    markup: z.enum(['none', 'simple', 'all']).optional(),
+    view: z.enum(['original', 'final']).optional(),
+    reviewers: z.enum(['all', 'none']).optional()
+  }).strict().refine(
+    (value) => value.markup !== undefined
+      || value.view !== undefined
+      || value.reviewers !== undefined,
+    { message: 'display exige markup, view ou reviewers.' }
+  ),
+  z.object({
+    action: z.enum(['accept', 'reject']),
+    snapshot: z.string().min(1),
+    indexes: z.array(z.number().int().positive()).min(1)
+  }).strict(),
+  z.object({
+    action: z.enum(['accept', 'reject']),
+    snapshot: z.string().min(1),
+    filter: RevisionFilterInputSchema,
+    confirm: z.literal(true)
+  }).strict(),
+  z.object({
+    action: z.enum(['accept_all', 'reject_all']),
+    snapshot: z.string().min(1),
+    confirm: z.literal(true)
+  }).strict()
+]);
 
 const EditDocSchema = z.union([
-  InsertEditSchema.extend({ track_changes: z.boolean().optional().default(true) }),
-  DeleteEditSchema.extend({ track_changes: z.boolean().optional().default(true) }),
+  z.object({
+    operation: z.enum(['insert_before', 'insert_after']),
+    target_index: z.number().int().nonnegative(),
+    text: z.string().min(1),
+    track_changes: z.boolean().optional().default(true)
+  }).strict(),
+  z.object({
+    operation: z.literal('delete'),
+    indexes_to_delete: z.array(z.number().int().nonnegative()).min(1),
+    track_changes: z.boolean().optional().default(true)
+  }).strict(),
   z.object({
     edits: z.array(SingleEditSchema).min(1).max(50),
     track_changes: z.boolean().optional().default(true)
-  }),
-  z.object({ review: ReviewInputSchema })
+  }).strict(),
+  z.object({ review: ReviewInputSchema }).strict()
 ]);
 
 const ReadCaseSchema = z.object({
