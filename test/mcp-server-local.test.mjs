@@ -81,6 +81,7 @@ test('les instructions Word décrivent le lancement minimal sans ancienne comman
   assert.equal(skill.includes(['piecemaker', 'codex'].join(' ')), false);
   assert.match(skill, /Lancer `codex` ou `claude`/);
   assert.match(skill, /open_doc` démarre PieceMaker/);
+  assert.match(skill, /transmettre à chaque appel `read_doc` et `edit_doc`/);
 });
 
 test('un seul manifeste déclare le volet auto-ouvert', () => {
@@ -95,10 +96,11 @@ test('un seul manifeste déclare le volet auto-ouvert', () => {
   assert.match(wordServer, /req\.get\('X-PieceMaker-Pane'\)/);
   assert.match(wordServer, /wordPaneRegistry\.getById\(paneId\)/);
   assert.doesNotMatch(wordServer, /activeWordDocPath/);
-  assert.match(mcpServer, /'X-PieceMaker-Pane': boundPaneId/);
+  assert.match(mcpServer, /'X-PieceMaker-Pane': paneId/);
+  assert.doesNotMatch(mcpServer, /boundPaneId|boundDocumentPath/);
 });
 
-test('deux processus MCP restent liés chacun à leur propre document', async () => {
+test('un processus MCP route chaque lecture et écriture par le paneId fourni par le modèle', async () => {
   const paneA = 'a1b2';
   const paneB = 'c3d4';
   const received = [];
@@ -108,17 +110,14 @@ test('deux processus MCP restent liés chacun à leur propre document', async ()
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => {
       const payload = body ? JSON.parse(body) : {};
-      const routed = req.headers['x-piecemaker-document']
-        ? decodeURIComponent(req.headers['x-piecemaker-document'])
-        : null;
       const paneId = req.headers['x-piecemaker-pane'] || null;
-      received.push({ url: req.url, payload, routed, paneId });
+      received.push({ url: req.url, payload, paneId });
       res.setHeader('Content-Type', 'application/json');
       if (req.url === '/api/word/open-doc') {
         const openedPaneId = payload.path.includes('Dossier A') ? paneA : paneB;
         res.end(JSON.stringify({ paneId: openedPaneId }));
       } else {
-        res.end(JSON.stringify({ routed, paneId }));
+        res.end(JSON.stringify({ paneId, payload }));
       }
     });
   });
@@ -126,7 +125,7 @@ test('deux processus MCP restent liés chacun à leur propre document', async ()
   await once(proxy, 'listening');
   const { port } = proxy.address();
 
-  const spawnMcp = () => spawn(process.execPath, [serverScript], {
+  const session = spawn(process.execPath, [serverScript], {
     cwd: root,
     env: {
       ...process.env,
@@ -135,50 +134,62 @@ test('deux processus MCP restent liés chacun à leur propre document', async ()
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-  const sessionA = spawnMcp();
-  const sessionB = spawnMcp();
   const docA = '/tmp/Dossier A/assignation.docx';
   const docB = '/tmp/Dossier B/conclusions accentuées.docx';
 
   try {
-    await Promise.all([initializeMcp(sessionA), initializeMcp(sessionB)]);
-    const [openedA, openedB] = await Promise.all([
-      callTool(sessionA, 2, 'open_doc', { path: docA }),
-      callTool(sessionB, 2, 'open_doc', { path: docB }),
-    ]);
+    await initializeMcp(session);
+    const openedA = await callTool(session, 2, 'open_doc', { path: docA });
+    const openedB = await callTool(session, 3, 'open_doc', { path: docB });
     const publicA = JSON.parse(openedA.result.content[0].text);
     const publicB = JSON.parse(openedB.result.content[0].text);
     assert.deepEqual(publicA, { paneId: paneA });
     assert.deepEqual(publicB, { paneId: paneB });
-    const [readA, readB] = await Promise.all([
-      callTool(sessionA, 3, 'read_doc', { list_headings: true }),
-      callTool(sessionB, 3, 'read_doc', { list_headings: true }),
-    ]);
+    const readA = await callTool(session, 4, 'read_doc', { paneId: paneA, list_headings: true });
+    const readB = await callTool(session, 5, 'read_doc', { paneId: paneB, list_headings: true });
+    const editA = await callTool(session, 6, 'edit_doc', {
+      paneId: paneA,
+      operation: 'delete',
+      indexes_to_delete: [0],
+    });
 
-    assert.deepEqual(JSON.parse(readA.result.content[0].text), { routed: docA, paneId: paneA });
-    assert.deepEqual(JSON.parse(readB.result.content[0].text), { routed: docB, paneId: paneB });
+    assert.deepEqual(JSON.parse(readA.result.content[0].text), {
+      paneId: paneA,
+      payload: { list_headings: true, include_track_changes: false },
+    });
+    assert.deepEqual(JSON.parse(readB.result.content[0].text), {
+      paneId: paneB,
+      payload: { list_headings: true, include_track_changes: false },
+    });
+    assert.deepEqual(JSON.parse(editA.result.content[0].text), {
+      paneId: paneA,
+      payload: { operation: 'delete', indexes_to_delete: [0], track_changes: true },
+    });
     assert.deepEqual(
       received.filter(({ url }) => url === '/api/word/read-doc')
-        .map(({ routed, paneId }) => ({ routed, paneId }))
-        .sort((a, b) => a.routed.localeCompare(b.routed)),
+        .map(({ paneId, payload }) => ({ paneId, payload })),
       [
-        { routed: docA, paneId: paneA },
-        { routed: docB, paneId: paneB },
+        { paneId: paneA, payload: { list_headings: true, include_track_changes: false } },
+        { paneId: paneB, payload: { list_headings: true, include_track_changes: false } },
       ],
     );
+    assert.deepEqual(
+      received.filter(({ url }) => url === '/api/word/edit-doc')
+        .map(({ paneId, payload }) => ({ paneId, payload })),
+      [{
+        paneId: paneA,
+        payload: { operation: 'delete', indexes_to_delete: [0], track_changes: true },
+      }],
+    );
   } finally {
-    sessionA.kill('SIGTERM');
-    sessionB.kill('SIGTERM');
-    await Promise.all([
-      once(sessionA, 'exit').catch(() => {}),
-      once(sessionB, 'exit').catch(() => {}),
-    ]);
+    session.kill('SIGTERM');
+    await once(session, 'exit').catch(() => {});
     proxy.close();
     await once(proxy, 'close');
   }
 });
 
-test('open_doc sans volet prêt ne lie pas la session et read_doc échoue localement', async () => {
+test('read_doc sans paneId échoue localement sans requête serveur', async () => {
   let readRequests = 0;
   const proxy = createServer((req, res) => {
     let body = '';
@@ -218,7 +229,7 @@ test('open_doc sans volet prêt ne lie pas la session et read_doc échoue locale
     const read = await callTool(child, 3, 'read_doc', { indexes: [0] });
 
     assert.equal(read.result?.isError, true);
-    assert.match(read.result?.content?.[0]?.text || '', /Aucun document lié/);
+    assert.match(read.result?.content?.[0]?.text || '', /paneId/);
     assert.equal(readRequests, 0);
   } finally {
     child.kill('SIGTERM');

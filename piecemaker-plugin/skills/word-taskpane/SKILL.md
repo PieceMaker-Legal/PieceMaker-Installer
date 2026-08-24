@@ -17,8 +17,9 @@ directement le client normalement, sans commande intermédiaire PieceMaker.
 open_doc { "path": "/chemin/absolu/document.docx" }
 ```
 
-Chaque document Word possède son propre volet et chaque session IA reste liée
-au volet ouvert par son appel `open_doc`.
+Chaque document Word possède son propre volet. `open_doc` renvoie son `paneId` ;
+le modèle doit le transmettre à chaque appel `read_doc` et `edit_doc` visant ce
+document.
 
 Au premier appel, `open_doc` démarre PieceMaker s'il ne tourne pas, lance Word,
 prépare l'auto-ouverture du volet et attend qu'il soit prêt. Aucun clic dans le
@@ -26,14 +27,10 @@ ruban ni dans le volet n'est normalement nécessaire.
 L'approbation éventuelle se fait dans Codex ou Claude, pas une seconde fois
 dans le volet.
 
-Pour travailler simultanément dans plusieurs documents :
-
-1. ouvrir une session `codex` ou `claude` par document ;
-2. appeler `open_doc` avec le document correspondant dans chaque session ;
-3. employer ensuite `read_doc` et `edit_doc` dans cette même session.
-
-Ne rappeler `open_doc` avec un autre chemin que pour relier volontairement la
-session à un autre volet. Un « Enregistrer sous » conserve la liaison du volet.
+Pour travailler simultanément dans plusieurs documents, appeler `open_doc` pour
+chacun d'eux et conserver les `paneId` renvoyés. Une même session peut ensuite
+lire ou modifier chaque document en passant le `paneId` correspondant. Un
+« Enregistrer sous » conserve le `paneId` du volet.
 
 ## Lire sans gaspiller le contexte
 

@@ -2,6 +2,12 @@ function forbidProperties(...names) {
   return { not: { anyOf: names.map((name) => ({ required: [name] })) } };
 }
 
+const PANE_ID_PROPERTY = {
+  type: 'string',
+  pattern: '^[0-9a-zA-Z]{4}$',
+  description: 'Identifiant du volet renvoyé par open_doc.'
+};
+
 export const REVISION_FILTER_INPUT_SCHEMA = {
   type: 'object',
   properties: {
@@ -80,6 +86,7 @@ const EDIT_ITEM_SCHEMA = {
 };
 
 const READ_DOC_PROPERTIES = {
+  paneId: PANE_ID_PROPERTY,
   list_headings: { type: 'boolean', description: 'Renvoie seulement les titres indexés.' },
   heading: { type: 'string', minLength: 1, description: 'Titre ou index du titre à lire.' },
   indexes: {
@@ -112,6 +119,7 @@ export const READ_DOC_TOOL = {
   inputSchema: {
     type: 'object',
     properties: READ_DOC_PROPERTIES,
+    required: ['paneId'],
     oneOf: [
       {
         properties: { list_headings: { const: true } },
@@ -132,6 +140,7 @@ export const READ_DOC_TOOL = {
 };
 
 const EDIT_DOC_PROPERTIES = {
+  paneId: PANE_ID_PROPERTY,
   ...EDIT_ITEM_PROPERTIES,
   track_changes: {
     type: 'boolean',
@@ -154,6 +163,7 @@ export const EDIT_DOC_TOOL = {
   inputSchema: {
     type: 'object',
     properties: EDIT_DOC_PROPERTIES,
+    required: ['paneId'],
     oneOf: [
       {
         properties: { operation: { enum: ['insert_before', 'insert_after'] } },
@@ -170,9 +180,14 @@ export const EDIT_DOC_TOOL = {
 };
 
 export function toEmbeddedTool(tool) {
+  const { paneId, ...properties } = tool.inputSchema.properties;
+  const required = (tool.inputSchema.required || []).filter((name) => name !== 'paneId');
+  const inputSchema = { ...tool.inputSchema, properties };
+  if (required.length) inputSchema.required = required;
+  else delete inputSchema.required;
   return {
     name: tool.name,
     description: tool.description,
-    input_schema: tool.inputSchema
+    input_schema: inputSchema
   };
 }

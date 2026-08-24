@@ -206,8 +206,9 @@ Pour travailler sur un document depuis Codex ou Claude Code, l'étape
 CLI installées. Il suffit de lancer normalement `codex` ou `claude`, puis de
 demander l'ouverture du `.docx`. Au premier `open_doc`, le MCP démarre le
 serveur PieceMaker local s'il est arrêté, puis ouvre Word et son volet.
-`read_doc` et `edit_doc` utilisent ensuite ce même document. Aucun lanceur ni
-démarrage PieceMaker intermédiaire n'est nécessaire.
+`open_doc` renvoie le `paneId` à transmettre ensuite à chaque appel `read_doc`
+ou `edit_doc`. Aucun lanceur ni démarrage PieceMaker intermédiaire n'est
+nécessaire.
 
 ## Intégration avec Claude Code et Codex CLI
 

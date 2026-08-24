@@ -18,27 +18,14 @@ import { fetchPieceMaker } from './piecemaker-fetch.mjs';
 
 const PIECEMAKER_SERVER_URL = (process.env.PIECEMAKER_SERVER_URL || 'https://localhost:43098').replace(/\/+$/, '');
 
-// Chaque processus MCP correspond à une session Codex/Claude distincte. Le
-// document choisi par open_doc reste donc local à cette session. Son paneId
-// opaque accompagne ensuite chaque requête Word ; le chemin n'est plus utilisé
-// pour choisir le volet.
-let boundDocumentPath = null;
-let boundPaneId = null;
-
 function endpointUrl(pathname) {
   return `${PIECEMAKER_SERVER_URL}${pathname}`;
 }
 
-function documentRoutingHeaders() {
-  if (!boundDocumentPath || !boundPaneId) return {};
+function documentRoutingHeaders(paneId) {
+  if (!paneId) return {};
   return {
-    // encodeURIComponent garde l'en-tête ASCII, y compris pour les chemins
-    // contenant des accents. Le serveur accepte aussi une URL file:// envoyée
-    // directement par le volet Word.
-    'X-PieceMaker-Document': encodeURIComponent(boundDocumentPath),
-    // Identifiant local opaque : il ne passe jamais dans la réponse MCP et ne
-    // consomme donc aucun token du modèle.
-    'X-PieceMaker-Pane': boundPaneId,
+    'X-PieceMaker-Pane': paneId,
   };
 }
 
@@ -46,7 +33,7 @@ function documentRoutingHeaders() {
 const LOCAL_TOOLS = [
         {
         name: 'open_doc',
-        description: 'Ouvre un .docx dans Word avec son volet PieceMaker et lie cette session à ce document pour read_doc/edit_doc.',
+        description: 'Ouvre un .docx dans Word avec son volet PieceMaker et renvoie le paneId à passer à read_doc/edit_doc.',
             inputSchema: {
             type: 'object',
             properties: {
@@ -329,7 +316,10 @@ const OpenDocSchema = z.object({
   timeoutMs: z.number().int().positive().optional()
 }).strict();
 
+const PaneIdSchema = z.string().regex(/^[0-9a-z]{4}$/i);
+
 const ReadDocSchema = z.object({
+  paneId: PaneIdSchema,
   list_headings: z.boolean().optional().default(false),
   heading: z.string().min(1).optional(),
   indexes: z.union([
@@ -436,21 +426,24 @@ const ReviewInputSchema = z.union([
 
 const EditDocSchema = z.union([
   z.object({
+    paneId: PaneIdSchema,
     operation: z.enum(['insert_before', 'insert_after']),
     target_index: z.number().int().nonnegative(),
     text: z.string().min(1),
     track_changes: z.boolean().optional().default(true)
   }).strict(),
   z.object({
+    paneId: PaneIdSchema,
     operation: z.literal('delete'),
     indexes_to_delete: z.array(z.number().int().nonnegative()).min(1),
     track_changes: z.boolean().optional().default(true)
   }).strict(),
   z.object({
+    paneId: PaneIdSchema,
     edits: z.array(SingleEditSchema).min(1).max(50),
     track_changes: z.boolean().optional().default(true)
   }).strict(),
-  z.object({ review: ReviewInputSchema }).strict()
+  z.object({ paneId: PaneIdSchema, review: ReviewInputSchema }).strict()
 ]);
 
 const ReadCaseSchema = z.object({
@@ -533,10 +526,6 @@ async function callLocalTool(toolName, toolArgs) {
     }
   }
 
-  if (toolName !== 'open_doc' && (!boundDocumentPath || !boundPaneId)) {
-    throw new Error('Aucun document lié à cette session. Appelez open_doc avant read_doc/edit_doc.');
-  }
-
   if (toolName === 'open_doc') {
     const server = await ensurePieceMakerServer(PIECEMAKER_SERVER_URL);
     if (!server.ready) {
@@ -577,13 +566,17 @@ async function callLocalTool(toolName, toolArgs) {
       throw new Error(`Outil inconnu: ${toolName}`);
   }
 
+  const paneId = toolName === 'read_doc' || toolName === 'edit_doc' ? toolArgs.paneId : null;
+  const forwardedArgs = paneId ? { ...toolArgs } : toolArgs;
+  if (paneId) delete forwardedArgs.paneId;
+
   const response = await fetchPieceMaker(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...documentRoutingHeaders(),
+      ...documentRoutingHeaders(paneId),
     },
-    body: JSON.stringify(toolArgs)
+    body: JSON.stringify(forwardedArgs)
   });
 
   const data = await response.json();
@@ -608,10 +601,6 @@ async function callLocalTool(toolName, toolArgs) {
   if (typeof data === 'string') return data;
 
   if (toolName === 'open_doc') {
-    if (typeof data.paneId === 'string') {
-      boundDocumentPath = toolArgs.path;
-      boundPaneId = data.paneId;
-    }
     return JSON.stringify({ paneId: data.paneId });
   }
 

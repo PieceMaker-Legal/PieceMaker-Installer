@@ -14,23 +14,27 @@ import {
 } from '../taskpane/modules/word-tool-schemas.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const PANE = { paneId: 'a1b2' };
 
 test('les variantes JSON excluent les combinaisons ambiguës', () => {
   const ajv = new Ajv({ strict: false });
   const validateRead = ajv.compile(READ_DOC_TOOL.inputSchema);
   const validateEdit = ajv.compile(EDIT_DOC_TOOL.inputSchema);
 
-  assert.equal(validateRead({ list_headings: false, indexes: [0] }), true);
-  assert.equal(validateRead({ list_headings: true, indexes: [0] }), false);
-  assert.equal(validateRead({ revisions: {}, revision_view: 'current' }), false);
+  assert.equal(validateRead({ ...PANE, list_headings: false, indexes: [0] }), true);
+  assert.equal(validateRead({ ...PANE, list_headings: true, indexes: [0] }), false);
+  assert.equal(validateRead({ ...PANE, revisions: {}, revision_view: 'current' }), false);
+  assert.equal(validateRead({ list_headings: true }), false);
 
-  assert.equal(validateEdit({ operation: 'delete', indexes_to_delete: [0] }), true);
+  assert.equal(validateEdit({ ...PANE, operation: 'delete', indexes_to_delete: [0] }), true);
   assert.equal(validateEdit({
+    ...PANE,
     operation: 'delete',
     indexes_to_delete: [0],
     review: { action: 'display', markup: 'all' }
   }), false);
   assert.equal(validateEdit({
+    ...PANE,
     review: {
       action: 'accept',
       snapshot: 'snapshot',
@@ -39,6 +43,7 @@ test('les variantes JSON excluent les combinaisons ambiguës', () => {
     }
   }), false);
   assert.equal(validateEdit({
+    ...PANE,
     review: {
       action: 'accept',
       snapshot: 'snapshot',
@@ -46,6 +51,7 @@ test('les variantes JSON excluent les combinaisons ambiguës', () => {
       confirm: true
     }
   }), true);
+  assert.equal(validateEdit({ operation: 'delete', indexes_to_delete: [0] }), false);
   assert.match(EDIT_DOC_TOOL.inputSchema.properties.review.description, /display: markup\/view\/reviewers/);
 });
 
@@ -97,11 +103,13 @@ test('les outils actifs documentent les vues, révisions et écritures suivies',
     assert.equal(read.properties.max_chars.maximum, 100000);
     assert.equal(read.properties.indexes.oneOf[0].items.type, 'integer');
     assert.ok(read.properties.revisions.properties.from_revision);
+    assert.deepEqual(read.required, ['paneId']);
     assert.equal('include_track_changes' in read.properties, false);
 
     const edit = tools.find((tool) => tool.name === 'edit_doc').inputSchema;
     assert.deepEqual(edit, EDIT_DOC_TOOL.inputSchema);
     assert.equal(edit.properties.track_changes.type, 'boolean');
+    assert.deepEqual(edit.required, ['paneId']);
     assert.deepEqual(
       edit.properties.review.properties.action.enum,
       ['show', 'display', 'accept', 'reject', 'accept_all', 'reject_all']
@@ -115,6 +123,7 @@ test('les outils actifs documentent les vues, révisions et écritures suivies',
       params: {
         name: 'edit_doc',
         arguments: {
+          paneId: 'a1b2',
           operation: 'delete',
           indexes_to_delete: [0],
           review: { action: 'display', markup: 'all' }
@@ -131,7 +140,7 @@ test('les outils actifs documentent les vues, révisions et écritures suivies',
       method: 'tools/call',
       params: {
         name: 'read_doc',
-        arguments: { revisions: {}, indexes: [0] }
+        arguments: { paneId: 'a1b2', revisions: {}, indexes: [0] }
       }
     })}\n`);
     const ambiguousRead = await readMessage(child.stdout);
@@ -147,9 +156,9 @@ test('les outils actifs documentent les vues, révisions et écritures suivies',
         arguments: { list_headings: false, indexes: [0] }
       }
     })}\n`);
-    const explicitFalse = await readMessage(child.stdout);
-    assert.equal(explicitFalse.result?.isError, true);
-    assert.match(explicitFalse.result?.content?.[0]?.text || '', /Aucun document lié/);
+    const missingPane = await readMessage(child.stdout);
+    assert.equal(missingPane.result?.isError, true);
+    assert.match(missingPane.result?.content?.[0]?.text || '', /paneId/);
 
     child.stdin.write(`${JSON.stringify({
       jsonrpc: '2.0',
@@ -158,6 +167,7 @@ test('les outils actifs documentent les vues, révisions et écritures suivies',
       params: {
         name: 'edit_doc',
         arguments: {
+          paneId: 'a1b2',
           review: {
             action: 'accept',
             snapshot: 'snapshot',
@@ -177,7 +187,7 @@ test('les outils actifs documentent les vues, révisions et écritures suivies',
       method: 'tools/call',
       params: {
         name: 'edit_doc',
-        arguments: { review: { action: 'display' } }
+        arguments: { paneId: 'a1b2', review: { action: 'display' } }
       }
     })}\n`);
     const incompleteDisplay = await readMessage(child.stdout);
@@ -190,7 +200,7 @@ test('les outils actifs documentent les vues, révisions et écritures suivies',
       method: 'tools/call',
       params: {
         name: 'edit_doc',
-        arguments: { edits: [{ operation: 'insert_after' }] }
+        arguments: { paneId: 'a1b2', edits: [{ operation: 'insert_after' }] }
       }
     })}\n`);
     const incompleteBatch = await readMessage(child.stdout);
@@ -203,7 +213,7 @@ test('les outils actifs documentent les vues, révisions et écritures suivies',
       method: 'tools/call',
       params: {
         name: 'edit_doc',
-        arguments: { review: { action: 'show', index: 1 } }
+        arguments: { paneId: 'a1b2', review: { action: 'show', index: 1 } }
       }
     })}\n`);
     const incompleteShow = await readMessage(child.stdout);
@@ -230,9 +240,9 @@ test('le schéma du modèle intégré reste aligné sans réannoncer le paramèt
   assert.match(callLlmBlock, /const tools = \[\.\.\.ACTIVE_LOCAL_TOOL_SCHEMAS\.values\(\)\]/);
   assert.doesNotMatch(callLlmBlock, /name: ['"]read_doc['"]/);
   assert.doesNotMatch(callLlmBlock, /name: ['"]edit_doc['"]/);
-  assert.deepEqual(toEmbeddedTool(READ_DOC_TOOL), {
-    name: 'read_doc',
-    description: READ_DOC_TOOL.description,
-    input_schema: READ_DOC_TOOL.inputSchema
-  });
+  const embeddedRead = toEmbeddedTool(READ_DOC_TOOL);
+  assert.equal(embeddedRead.name, 'read_doc');
+  assert.equal(embeddedRead.description, READ_DOC_TOOL.description);
+  assert.equal('paneId' in embeddedRead.input_schema.properties, false);
+  assert.equal('required' in embeddedRead.input_schema, false);
 });
