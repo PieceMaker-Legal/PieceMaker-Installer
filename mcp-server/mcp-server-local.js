@@ -624,6 +624,13 @@ function editDocSuccessPayload(result) {
   return JSON.stringify({ success: true });
 }
 
+function editDocFailurePayload(message) {
+  return JSON.stringify({
+    success: false,
+    message: String(message || 'Échec de la modification Word.')
+  });
+}
+
 // Système anti-doublons pour les éditions exposées
 // Pour éviter les insertions en double dues aux retries réseau
 const editRequestCache = new Map();
@@ -684,11 +691,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       if (ageMs < EDIT_CACHE_TTL) {
         console.error(`[MCP] ⚠️ Doublon ${toolName} détecté - Longueur: ${requestKey}, Âge: ${ageMs}ms - BLOQUÉ`);
+        const message = `Requête ${toolName} identique détectée il y a ${ageMs}ms. Pour éviter les insertions en double, cette requête est ignorée.`;
         return {
-          content: [{
-            type: 'text',
-            text: `⏳ Requête ${toolName} identique détectée il y a ${ageMs}ms. Pour éviter les insertions en double, cette requête est ignorée.`
-          }]
+          content: [{ type: 'text', text: editDocFailurePayload(message) }],
+          isError: true
         };
       }
     }
@@ -716,6 +722,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       content: [{ type: 'text', text: result }]
     };
   } catch (error) {
+    if (toolName === 'edit_doc') {
+      return {
+        content: [{ type: 'text', text: editDocFailurePayload(error.message) }],
+        isError: true
+      };
+    }
     return {
       content: [{ type: 'text', text: `❌ ${error.message}` }],
       isError: true

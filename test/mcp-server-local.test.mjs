@@ -186,6 +186,49 @@ test('un processus MCP route chaque lecture et écriture par le paneId fourni pa
   }
 });
 
+test('edit_doc réduit aussi un échec à success false et son message', async () => {
+  const proxy = createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ success: false, error: 'Index Word introuvable.' }));
+    });
+  });
+  proxy.listen(0, '127.0.0.1');
+  await once(proxy, 'listening');
+  const { port } = proxy.address();
+
+  const session = spawn(process.execPath, [serverScript], {
+    cwd: root,
+    env: {
+      ...process.env,
+      PIECEMAKER_SERVER_URL: `http://127.0.0.1:${port}`,
+      OUTPUT_PATH: '/tmp/obsolete-piece-maker-output',
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  try {
+    await initializeMcp(session);
+    const result = await callTool(session, 2, 'edit_doc', {
+      paneId: 'a1b2',
+      operation: 'delete',
+      indexes_to_delete: [999],
+    });
+
+    assert.equal(result.result?.isError, true);
+    assert.deepEqual(JSON.parse(result.result.content[0].text), {
+      success: false,
+      message: 'Index Word introuvable.',
+    });
+  } finally {
+    session.kill('SIGTERM');
+    await once(session, 'exit').catch(() => {});
+    proxy.close();
+    await once(proxy, 'close');
+  }
+});
+
 test('read_doc sans paneId échoue localement sans requête serveur', async () => {
   let readRequests = 0;
   const proxy = createServer((req, res) => {
