@@ -179,6 +179,23 @@ export const EDIT_DOC_TOOL = {
   }
 };
 
+export const TEMPLATE_TOOL = {
+  name: 'template',
+  description: 'Injecte un template .docx local dans le document Word ouvert et renvoie { success: true, content: texte intégral du template, placeholders inclus }. Remplace intégralement le contenu et les styles ; utiliser uniquement sur un document de travail.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      paneId: PANE_ID_PROPERTY,
+      path: {
+        type: 'string',
+        minLength: 1,
+        description: 'Chemin absolu du fichier template .docx à injecter.'
+      }
+    },
+    required: ['paneId', 'path']
+  }
+};
+
 export function toEmbeddedTool(tool) {
   const { paneId, ...properties } = tool.inputSchema.properties;
   const required = (tool.inputSchema.required || []).filter((name) => name !== 'paneId');

@@ -1,6 +1,6 @@
 ---
 name: word-taskpane
-description: Ouvrir, lire ou modifier un document Word (.docx) avec le volet PieceMaker, via open_doc, read_doc et edit_doc, avec suivi des modifications et anonymisation transparente.
+description: Ouvrir, lire, modifier ou injecter un template dans un document Word (.docx) avec le volet PieceMaker, via open_doc, read_doc, edit_doc et template, avec suivi des modifications et anonymisation transparente.
 ---
 
 # Travailler dans Word
@@ -18,8 +18,8 @@ open_doc { "path": "/chemin/absolu/document.docx" }
 ```
 
 Chaque document Word possède son propre volet. `open_doc` renvoie son `paneId` ;
-le modèle doit le transmettre à chaque appel `read_doc` et `edit_doc` visant ce
-document.
+le modèle doit le transmettre à chaque appel `read_doc`, `edit_doc` et
+`template` visant ce document.
 
 Au premier appel, `open_doc` démarre PieceMaker s'il ne tourne pas, lance Word,
 prépare l'auto-ouverture du volet et attend qu'il soit prêt. Aucun clic dans le
@@ -38,9 +38,32 @@ Pour un gros document, commencer par `list_headings`, `heading` ou une plage
 `indexes` plutôt que lire tout le document. Suivre ensuite le curseur fourni par
 `[TRUNCATED]` jusqu'à couvrir la zone utile.
 
+## Injecter un template
+
+`template` prend le `paneId` du document de travail et le chemin absolu du
+template `.docx` :
+
+```text
+template { "paneId": "a1b2", "path": "/chemin/absolu/template.docx" }
+```
+
+L'injection remplace intégralement le contenu et les styles du document ouvert.
+Ne jamais cibler un original ni un document contenant un travail à conserver.
+En cas de succès, l'outil renvoie directement :
+
+```json
+{ "success": true, "content": "<texte intégral du template injecté, placeholders inclus>" }
+```
+
+`content` n'est ni une liste de placeholders, ni le contenu d'un placeholder
+isolé : c'est tout le texte du template tel qu'il figure dans Word après
+l'injection. Il constitue la lecture courante du document. Repérer les
+placeholders `{{...}}` directement dans ce texte et poursuivre avec `edit_doc` ;
+aucun fichier JSON de description ou d'état des placeholders n'est requis.
+
 ## Dépannage
 
-- Si les outils `open_doc`, `read_doc` et `edit_doc` n'apparaissent pas,
+- Si les outils `open_doc`, `read_doc`, `edit_doc` et `template` n'apparaissent pas,
   relancer l'étape d'installation « volet Word », puis redémarrer le client.
 - Si le démarrage automatique échoue, suivre l'erreur précise renvoyée par
   `open_doc` ; `piecemaker logs` fournit le journal du serveur.

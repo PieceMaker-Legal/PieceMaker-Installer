@@ -10,6 +10,7 @@ import Ajv from 'ajv';
 import {
   EDIT_DOC_TOOL,
   READ_DOC_TOOL,
+  TEMPLATE_TOOL,
   toEmbeddedTool
 } from '../taskpane/modules/word-tool-schemas.js';
 
@@ -20,6 +21,7 @@ test('les variantes JSON excluent les combinaisons ambiguës', () => {
   const ajv = new Ajv({ strict: false });
   const validateRead = ajv.compile(READ_DOC_TOOL.inputSchema);
   const validateEdit = ajv.compile(EDIT_DOC_TOOL.inputSchema);
+  const validateTemplate = ajv.compile(TEMPLATE_TOOL.inputSchema);
 
   assert.equal(validateRead({ ...PANE, list_headings: false, indexes: [0] }), true);
   assert.equal(validateRead({ ...PANE, list_headings: true, indexes: [0] }), false);
@@ -53,6 +55,9 @@ test('les variantes JSON excluent les combinaisons ambiguës', () => {
   }), true);
   assert.equal(validateEdit({ operation: 'delete', indexes_to_delete: [0] }), false);
   assert.match(EDIT_DOC_TOOL.inputSchema.properties.review.description, /display: markup\/view\/reviewers/);
+
+  assert.equal(validateTemplate({ ...PANE, path: '/tmp/template.docx' }), true);
+  assert.equal(validateTemplate({ path: '/tmp/template.docx' }), false);
 });
 
 function readMessage(stdout) {
@@ -95,7 +100,7 @@ test('les outils actifs documentent les vues, révisions et écritures suivies',
     child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })}\n`);
     const response = await readMessage(child.stdout);
     const tools = response.result.tools;
-    assert.deepEqual(tools.map((tool) => tool.name), ['open_doc', 'read_doc', 'edit_doc']);
+    assert.deepEqual(tools.map((tool) => tool.name), ['open_doc', 'read_doc', 'edit_doc', 'template']);
 
     const read = tools.find((tool) => tool.name === 'read_doc').inputSchema;
     assert.deepEqual(read, READ_DOC_TOOL.inputSchema);
@@ -115,6 +120,11 @@ test('les outils actifs documentent les vues, révisions et écritures suivies',
       ['show', 'display', 'accept', 'reject', 'accept_all', 'reject_all']
     );
     assert.ok(edit.oneOf.some((branch) => branch.required?.includes('review')));
+
+    const template = tools.find((tool) => tool.name === 'template').inputSchema;
+    assert.deepEqual(template, TEMPLATE_TOOL.inputSchema);
+    assert.deepEqual(template.required, ['paneId', 'path']);
+    assert.match(TEMPLATE_TOOL.description, /success: true, content: texte intégral du template, placeholders inclus/);
 
     child.stdin.write(`${JSON.stringify({
       jsonrpc: '2.0',
@@ -219,6 +229,19 @@ test('les outils actifs documentent les vues, révisions et écritures suivies',
     const incompleteShow = await readMessage(child.stdout);
     assert.equal(incompleteShow.result?.isError, true);
     assert.match(incompleteShow.result?.content?.[0]?.text || '', /Arguments invalides/);
+
+    child.stdin.write(`${JSON.stringify({
+      jsonrpc: '2.0',
+      id: 10,
+      method: 'tools/call',
+      params: {
+        name: 'template',
+        arguments: { paneId: 'a1b2', path: 'template.docx' }
+      }
+    })}\n`);
+    const relativeTemplate = await readMessage(child.stdout);
+    assert.equal(relativeTemplate.result?.isError, true);
+    assert.match(relativeTemplate.result?.content?.[0]?.text || '', /chemin absolu/);
   } finally {
     if (child.exitCode === null) {
       child.kill('SIGTERM');

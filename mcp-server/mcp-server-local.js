@@ -11,8 +11,13 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import path from 'node:path';
 import { z } from 'zod';
-import { EDIT_DOC_TOOL, READ_DOC_TOOL } from '../taskpane/modules/word-tool-schemas.js';
+import {
+  EDIT_DOC_TOOL,
+  READ_DOC_TOOL,
+  TEMPLATE_TOOL,
+} from '../taskpane/modules/word-tool-schemas.js';
 import { ensurePieceMakerServer } from './ensure-piecemaker-server.mjs';
 import { fetchPieceMaker } from './piecemaker-fetch.mjs';
 
@@ -33,7 +38,7 @@ function documentRoutingHeaders(paneId) {
 const LOCAL_TOOLS = [
         {
         name: 'open_doc',
-        description: 'Ouvre un .docx dans Word avec son volet PieceMaker et renvoie le paneId à passer à read_doc/edit_doc.',
+        description: 'Ouvre un .docx dans Word avec son volet PieceMaker et renvoie le paneId à passer à read_doc/edit_doc/template.',
             inputSchema: {
             type: 'object',
             properties: {
@@ -53,6 +58,7 @@ const LOCAL_TOOLS = [
         },
         READ_DOC_TOOL,
         EDIT_DOC_TOOL,
+        TEMPLATE_TOOL,
         {
             name: 'read_case',
             description: `Recherche et gestion des pièces du dossier juridique.
@@ -307,7 +313,7 @@ Use it if analysis is empty`,
 // Les autres outils restent implémentés et validés ci-dessous, mais ne sont
 // plus annoncés ni exécutables par le modèle. Réactivation volontaire = ajouter
 // leur nom ici, sans restaurer de code supprimé.
-const ENABLED_TOOL_NAMES = new Set(['open_doc', 'read_doc', 'edit_doc']);
+const ENABLED_TOOL_NAMES = new Set(['open_doc', 'read_doc', 'edit_doc', 'template']);
 const ENABLED_TOOLS = LOCAL_TOOLS.filter((tool) => ENABLED_TOOL_NAMES.has(tool.name));
 
 // Schémas Zod pour validation des arguments
@@ -446,6 +452,15 @@ const EditDocSchema = z.union([
   z.object({ paneId: PaneIdSchema, review: ReviewInputSchema }).strict()
 ]);
 
+const TemplateSchema = z.object({
+  paneId: PaneIdSchema,
+  path: z.string().min(1).refine(
+    (value) => (path.posix.isAbsolute(value) || path.win32.isAbsolute(value))
+      && path.extname(value).toLowerCase() === '.docx',
+    { message: 'path doit être un chemin absolu vers un fichier .docx.' }
+  )
+}).strict();
+
 const ReadCaseSchema = z.object({
   query: z.string().optional(),
   show_structure: z.boolean().optional().default(false),
@@ -506,6 +521,7 @@ const TOOL_SCHEMAS = {
   'open_doc': OpenDocSchema,
   'read_doc': ReadDocSchema,
   'edit_doc': EditDocSchema,
+  'template': TemplateSchema,
   'read_case': ReadCaseSchema,
   'get_resource': GetResourceSchema,
   'draft': DraftSchema,
@@ -544,6 +560,9 @@ async function callLocalTool(toolName, toolArgs) {
     case 'edit_doc':
       endpoint = endpointUrl('/api/word/edit-doc');
       break;
+    case 'template':
+      endpoint = endpointUrl('/api/word/template');
+      break;
     case 'read_case':
       endpoint = endpointUrl('/api/word/search-case');
       break;
@@ -566,7 +585,7 @@ async function callLocalTool(toolName, toolArgs) {
       throw new Error(`Outil inconnu: ${toolName}`);
   }
 
-  const paneId = toolName === 'read_doc' || toolName === 'edit_doc' ? toolArgs.paneId : null;
+  const paneId = ['read_doc', 'edit_doc', 'template'].includes(toolName) ? toolArgs.paneId : null;
   const forwardedArgs = paneId ? { ...toolArgs } : toolArgs;
   if (paneId) delete forwardedArgs.paneId;
 
@@ -585,6 +604,10 @@ async function callLocalTool(toolName, toolArgs) {
     const errorMessage = data.error || 'Erreur inconnue';
 
     if (toolName === 'open_doc' && response.status === 504) {
+      throw new Error(errorMessage);
+    }
+
+    if (toolName === 'template' && response.status < 500) {
       throw new Error(errorMessage);
     }
 

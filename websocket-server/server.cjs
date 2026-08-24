@@ -2774,6 +2774,75 @@ app.post('/api/word/get-resource', async (req, res) => {
   }
 });
 
+// Outil Template - injecte un template .docx local dans le volet explicitement
+// ciblé. Le modèle ne reçoit jamais le binaire : le serveur le lit et l'envoie
+// directement au volet Word par WebSocket.
+app.post('/api/word/template', async (req, res) => {
+  try {
+    const { client } = getRequestPane(req);
+    if (!client) {
+      return res.status(503).json({
+        error: 'Aucun volet Word connecté pour le document actif. Appelez open_doc d’abord.'
+      });
+    }
+
+    const sourcePath = typeof req.body?.path === 'string' ? req.body.path.trim() : '';
+    if (!sourcePath) {
+      return res.status(400).json({ error: 'Paramètre « path » requis (chemin absolu du template .docx).' });
+    }
+    if (!path.isAbsolute(sourcePath)) {
+      return res.status(400).json({ error: 'Le chemin du template doit être absolu.' });
+    }
+
+    const resolved = path.resolve(sourcePath);
+    if (!fs.existsSync(resolved)) {
+      return res.status(404).json({ error: `Template introuvable : ${resolved}` });
+    }
+    if (path.extname(resolved).toLowerCase() !== '.docx') {
+      return res.status(400).json({ error: 'Le template doit être un fichier .docx.' });
+    }
+    if (!fs.statSync(resolved).isFile()) {
+      return res.status(400).json({ error: 'Le chemin du template ne désigne pas un fichier.' });
+    }
+
+    const requestId = Date.now().toString();
+    const params = {
+      template_name: path.basename(resolved),
+      template_base64: fs.readFileSync(resolved).toString('base64')
+    };
+
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        client.off('message', messageHandler);
+        resolve(res.status(504).json({ error: 'Timeout: Le client Word n\'a pas répondu' }));
+      }, 120000);
+
+      const messageHandler = (data) => {
+        try {
+          const response = JSON.parse(data);
+          if (response.requestId === requestId) {
+            clearTimeout(timeout);
+            client.off('message', messageHandler);
+            resolve(res.json(response.result));
+          }
+        } catch (e) {
+          // Ignorer les messages mal formés
+        }
+      };
+
+      client.on('message', messageHandler);
+      client.send(JSON.stringify({
+        requestId,
+        action: 'template',
+        params
+      }));
+    });
+  } catch (error) {
+    console.error('Erreur /api/word/template:', error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 // Outil Draft Conclusions - Rédaction de conclusions juridiques par étapes
 app.post('/api/word/draft-conclusions', async (req, res) => {
   try {

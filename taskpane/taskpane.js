@@ -233,6 +233,16 @@ async function handleToolRequest(action, params) {
                 return await readDoc(params);
             case 'edit_doc':
                 return await editDoc(params);
+            case 'template': {
+                const result = await localTools.draft({
+                    action: 'inject_template',
+                    template_name: params.template_name,
+                    template_base64: params.template_base64,
+                    return_content: true
+                });
+                if (result?.success === true) markDocRead();
+                return result;
+            }
             case 'read_case':
                 return await localTools.read_case(params);
             case 'get_resource':
@@ -1461,12 +1471,13 @@ getNextPlaceholder: async (sortedPlaceholders, filledPlaceholders) => {
 },
 
 draft: async (params) => {
-    const { action, template_name, placeholder, content } = params;
+    const { action, template_name, template_base64, return_content = false, placeholder, content } = params;
 
     console.log('[draft] 📝 Action:', action);
 
-    // Charger l'état sauvegardé au début
-    await loadDraftState();
+    // Le nouvel outil `template` lit ses placeholders directement dans le
+    // texte injecté. L'ancien workflow `draft` conserve son état historique.
+    if (!return_content) await loadDraftState();
 
     // ÉTAPE 1 : Vérification du template
     if (action === 'check_template') {
@@ -1599,35 +1610,41 @@ if (action === 'inject_template') {
     }
 
     try {
-        // Récupérer le template en base64 (fichier .docx complet)
-        const response = await fetch(`https://localhost:43098/api/resources/${encodeURIComponent(template_name)}?format=base64`, {
-            method: 'GET',
-            headers: { 'Content-Type': 'application/json' }
-        });
+        // Le nouvel outil MCP `template` transmet directement le fichier local
+        // en base64. Le chemin historique par la bibliothèque de ressources
+        // reste disponible pour l'ancien outil `draft`.
+        let templateContent = template_base64;
+        if (!templateContent) {
+            const response = await fetch(`https://localhost:43098/api/resources/${encodeURIComponent(template_name)}?format=base64`, {
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json' }
+            });
 
-        if (!response.ok) {
-            return {
-                error: `Template "${template_name}" introuvable dans les ressources`,
-                instruction: 'Vérifiez le nom du fichier avec get_resource({ action: "list" })'
-            };
+            if (!response.ok) {
+                return {
+                    error: `Template "${template_name}" introuvable dans les ressources`,
+                    instruction: 'Vérifiez le nom du fichier avec get_resource({ action: "list" })'
+                };
+            }
+
+            const result = await response.json();
+            templateContent = result.content;
         }
 
-        const result = await response.json();
-
-        if (!result.content) {
+        if (!templateContent) {
             return { error: 'Template base64 vide ou invalide' };
         }
 
         // ═══════════════════════════════════════════════════════════════
         // EXTRACTION ET APPLICATION COMPLÈTE DES STYLES DU TEMPLATE
         // ═══════════════════════════════════════════════════════════════
-        await Word.run(async (context) => {
+        const injectedContent = await Word.run(async (context) => {
             // ───────────────────────────────────────────────────────────
             // ÉTAPE 1: EXTRACTION COMPLÈTE DES STYLES DU TEMPLATE
             // ───────────────────────────────────────────────────────────
             console.log('[draft] 📥 Récupération des styles du template...');
 
-            const templateStyles = context.application.retrieveStylesFromBase64(result.content);
+            const templateStyles = context.application.retrieveStylesFromBase64(templateContent);
             await context.sync();
 
             // Parser le JSON retourné - peut être un objet ou un tableau
@@ -1687,7 +1704,7 @@ if (action === 'inject_template') {
             // ÉTAPE 3: INSERTION DU TEMPLATE
             // ───────────────────────────────────────────────────────────
             context.document.insertFileFromBase64(
-                result.content,
+                templateContent,
                 Word.InsertLocation.replace,
                 {
                     importTheme: true,
@@ -1851,7 +1868,19 @@ if (action === 'inject_template') {
 
             console.log(`[draft] ✅ ${stylesUpdated} styles mis à jour`);
             console.log(`[draft] ⏭️ ${stylesSkipped} styles ignorés`);
+
+            const body = context.document.body;
+            body.load('text');
+            await context.sync();
+            return body.text;
         });
+
+        if (return_content) {
+            return {
+                success: true,
+                content: injectedContent
+            };
+        }
 
         // Marquer que le template a été injecté et réinitialiser l'état
         draftConclusionsState.templateInjected = true;

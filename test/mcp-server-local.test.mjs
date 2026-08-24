@@ -74,6 +74,9 @@ test('le chat du volet limite aussi les outils locaux actifs', () => {
   assert.match(source, /'X-PieceMaker-Pane': paneId/);
   assert.match(source, /message\.type === 'pane-bound'/);
   assert.match(source, /type: 'pane-hello', docUrl, paneId/);
+  assert.match(source, /case 'template':[\s\S]*action: 'inject_template'[\s\S]*return_content: true/);
+  assert.match(source, /if \(!return_content\) await loadDraftState\(\)/);
+  assert.match(source, /success: true,\s*content: injectedContent/);
 });
 
 test('les instructions Word décrivent le lancement minimal sans ancienne commande', () => {
@@ -81,7 +84,8 @@ test('les instructions Word décrivent le lancement minimal sans ancienne comman
   assert.equal(skill.includes(['piecemaker', 'codex'].join(' ')), false);
   assert.match(skill, /Lancer `codex` ou `claude`/);
   assert.match(skill, /open_doc` démarre PieceMaker/);
-  assert.match(skill, /transmettre à chaque appel `read_doc` et `edit_doc`/);
+  assert.match(skill, /transmettre à chaque appel `read_doc`, `edit_doc` et\s+`template`/);
+  assert.match(skill, /template \{ "paneId": "a1b2", "path":/);
 });
 
 test('un seul manifeste déclare le volet auto-ouvert', () => {
@@ -98,9 +102,11 @@ test('un seul manifeste déclare le volet auto-ouvert', () => {
   assert.doesNotMatch(wordServer, /activeWordDocPath/);
   assert.match(mcpServer, /'X-PieceMaker-Pane': paneId/);
   assert.doesNotMatch(mcpServer, /boundPaneId|boundDocumentPath/);
+  assert.match(wordServer, /app\.post\('\/api\/word\/template'/);
+  assert.match(wordServer, /template_base64: fs\.readFileSync\(resolved\)\.toString\('base64'\)/);
 });
 
-test('un processus MCP route chaque lecture et écriture par le paneId fourni par le modèle', async () => {
+test('un processus MCP route chaque lecture, écriture et injection par le paneId fourni par le modèle', async () => {
   const paneA = 'a1b2';
   const paneB = 'c3d4';
   const received = [];
@@ -116,6 +122,20 @@ test('un processus MCP route chaque lecture et écriture par le paneId fourni pa
       if (req.url === '/api/word/open-doc') {
         const openedPaneId = payload.path.includes('Dossier A') ? paneA : paneB;
         res.end(JSON.stringify({ paneId: openedPaneId }));
+      } else if (req.url === '/api/word/edit-doc') {
+        res.end(JSON.stringify({
+          success: true,
+          message: '✅ Inserted 2 paragraph(s) insert before index 38',
+          operation: payload.operation,
+          target_index: payload.target_index,
+          inserted_indexes: [38, 39],
+          placeholders: [],
+        }));
+      } else if (req.url === '/api/word/template') {
+        res.end(JSON.stringify({
+          success: true,
+          content: '{{PARTIE_CLIENTE}}\rTexte intégral du template',
+        }));
       } else {
         res.end(JSON.stringify({ paneId, payload }));
       }
@@ -149,8 +169,13 @@ test('un processus MCP route chaque lecture et écriture par le paneId fourni pa
     const readB = await callTool(session, 5, 'read_doc', { paneId: paneB, list_headings: true });
     const editA = await callTool(session, 6, 'edit_doc', {
       paneId: paneA,
-      operation: 'delete',
-      indexes_to_delete: [0],
+      operation: 'insert_before',
+      target_index: 38,
+      text: 'Premier paragraphe\nSecond paragraphe',
+    });
+    const templateB = await callTool(session, 7, 'template', {
+      paneId: paneB,
+      path: '/tmp/01 - Template Assignation.docx',
     });
 
     assert.deepEqual(JSON.parse(readA.result.content[0].text), {
@@ -162,6 +187,11 @@ test('un processus MCP route chaque lecture et écriture par le paneId fourni pa
       payload: { list_headings: true, include_track_changes: false },
     });
     assert.deepEqual(JSON.parse(editA.result.content[0].text), { success: true });
+    assert.equal(editA.result.structuredContent, undefined);
+    assert.deepEqual(JSON.parse(templateB.result.content[0].text), {
+      success: true,
+      content: '{{PARTIE_CLIENTE}}\rTexte intégral du template',
+    });
     assert.deepEqual(
       received.filter(({ url }) => url === '/api/word/read-doc')
         .map(({ paneId, payload }) => ({ paneId, payload })),
@@ -175,7 +205,20 @@ test('un processus MCP route chaque lecture et écriture par le paneId fourni pa
         .map(({ paneId, payload }) => ({ paneId, payload })),
       [{
         paneId: paneA,
-        payload: { operation: 'delete', indexes_to_delete: [0], track_changes: true },
+        payload: {
+          operation: 'insert_before',
+          target_index: 38,
+          text: 'Premier paragraphe\nSecond paragraphe',
+          track_changes: true,
+        },
+      }],
+    );
+    assert.deepEqual(
+      received.filter(({ url }) => url === '/api/word/template')
+        .map(({ paneId, payload }) => ({ paneId, payload })),
+      [{
+        paneId: paneB,
+        payload: { path: '/tmp/01 - Template Assignation.docx' },
       }],
     );
   } finally {
@@ -279,7 +322,7 @@ test('read_doc sans paneId échoue localement sans requête serveur', async () =
   }
 });
 
-test('le serveur MCP local n’expose que open_doc, read_doc et edit_doc', async () => {
+test('le serveur MCP local expose les outils Word actifs, dont template', async () => {
   const child = spawn(process.execPath, [serverScript], {
     cwd: root,
     env: { ...process.env, OUTPUT_PATH: '/tmp/obsolete-piece-maker-output' },
@@ -317,7 +360,7 @@ test('le serveur MCP local n’expose que open_doc, read_doc et edit_doc', async
     assert.equal(toolsResponse.id, 2);
     assert.deepEqual(
       toolsResponse.result?.tools?.map((tool) => tool.name),
-      ['open_doc', 'read_doc', 'edit_doc'],
+      ['open_doc', 'read_doc', 'edit_doc', 'template'],
     );
 
     child.stdin.write(encodeMessage({

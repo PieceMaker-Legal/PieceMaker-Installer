@@ -1,7 +1,7 @@
 # PieceMaker — repères d'architecture (code base)
 
 Ce fichier, versionné dans ce dépôt, oriente le travail **sur le code** de
-PieceMaker. La persona utilisateur (« Avocat ») est disponible dans le gabarit
+PieceMaker. La persona utilisateur (« Avocat ») est disponible dans le template
 versionné `installer/templates/root-CLAUDE.md`.
 
 ## Audit du projet
@@ -34,7 +34,7 @@ Markdown, rédaction et tamponnage de pièces. Node ≥ 18, Python ≥ 3.10.
 
 | Dossier | Rôle |
 | --- | --- |
-| `installer/` | Installateur terminal, sans dépendance. `bin/piecemaker.mjs` = commande + orchestrateur ; `steps/00..14-*.mjs` = étapes idempotentes (`{ meta, install, check }`), jouées dans l'ordre du nom ; `lib/` = UI, prompts, plateforme, état ; `templates/` = gabarits déposés chez l'utilisateur. |
+| `installer/` | Installateur terminal, sans dépendance. `bin/piecemaker.mjs` = commande + orchestrateur ; `steps/00..14-*.mjs` = étapes idempotentes (`{ meta, install, check }`), jouées dans l'ordre du nom ; `lib/` = UI, prompts, plateforme, état ; `templates/` = templates déposés chez l'utilisateur. |
 | `websocket-server/` | `server.cjs` (Express + HTTPS + WS). `admin-routes.cjs` = API d'administration ; `case-registry.cjs`, `document-index.cjs`, `originals-pipeline.cjs` = dossiers/pièces ; `central-hook-install.cjs` + `global-hooks/` = hook global d'anonymisation ; `mxc-sandbox.cjs` = bac à sable OS ; `scripts/` = Python (GLiNER/Presidio, conversion). |
 | `admin/` | Interface web locale servie sur `/admin/` (`app.js`, `index.html`, éditeur Markdown des skills/agents, aperçus facturation). |
 | `taskpane/` | Complément Office (volet Word). `taskpane.js` reçoit les ordres MCP par WebSocket et agit sur le document ; `modules/anonymization-server.cjs` = mapping côté volet. |
@@ -47,8 +47,8 @@ Archives à ignorer : `admin.backup-*`, `_mxc_hooktest/`, `ARCHITECTURE_FIX.md`,
 
 ## Flux clé — outils document (Word)
 
-Les outils MCP `read_doc` / `edit_doc` ne touchent jamais le disque
-directement :
+Les outils MCP `read_doc` / `edit_doc` / `template` ne touchent jamais le
+document Word directement :
 
 ```
 Claude Code ──stdio──▶ mcp-server-local.js ──HTTPS POST──▶ server.cjs
@@ -59,7 +59,9 @@ Claude Code ──stdio──▶ mcp-server-local.js ──HTTPS POST──▶ s
 
 Conséquence : ces outils supposent `piecemaker start` **et** Word ouvert sur
 le document. Sans cela l'appel échoue — vérifier `piecemaker status` avant de
-conclure à un bug.
+conclure à un bug. `template` lit localement le template `.docx` désigné par son
+chemin absolu, puis le volet remplace le contenu et les styles du document de
+travail ciblé par `paneId`.
 
 ## Anonymisation (invariant central)
 
@@ -115,9 +117,8 @@ Volet Word : `https://localhost:43098/taskpane.html`.
 
 ## Conventions
 
-- **Commits directs sur `main`** — pas de branche ni de PR sur ce dépôt (sauf
-  la branche `sessions/auto` du hook de fin de session). Ne commiter/pousser
-  que sur demande.
+- **Commits directs sur `main`** — pas de branche ni de PR sur ce dépôt. Ne
+  pousser que sur demande.
 - Tout en **français** (code, commentaires, messages), style existant.
 - Tests : `node --test` (`.test.cjs` / `.test.mjs`), sans framework externe.
 - `.env`, mappings et données client ne sont **jamais** versionnés (voir
