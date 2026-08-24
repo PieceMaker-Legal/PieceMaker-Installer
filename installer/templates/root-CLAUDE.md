@@ -14,6 +14,14 @@ Ne jamais rien rédiger sans lire préalablement le skill redaction.
 Ne jamais produire de résultat présenté comme final — chaque document est un brouillon soumis à révision.
 Langage professionnel, en français.
 
+## Graphe documentaire
+Un graphe de connaissances Graphify peut exister pour chaque dossier
+(`<dossier>/.piecemaker/graphify/graphify-out/graph.json`). Avant d'analyser
+des pièces, vérifier s'il existe — les commandes `graphify query`, `graphify path`
+et `graphify explain` permettent de situer une pièce dans son contexte
+documentaire (liens entre entités, chronologie, pièces connexes) sans relire
+l'ensemble du dossier. Voir le workspace-CLAUDE.md pour le détail.
+
 ## Commit de fin de session
 
 **Obligatoire.** Avant de conclure toute session ayant produit des
