@@ -161,10 +161,7 @@ test('un processus MCP route chaque lecture et écriture par le paneId fourni pa
       paneId: paneB,
       payload: { list_headings: true, include_track_changes: false },
     });
-    assert.deepEqual(JSON.parse(editA.result.content[0].text), {
-      paneId: paneA,
-      payload: { operation: 'delete', indexes_to_delete: [0], track_changes: true },
-    });
+    assert.deepEqual(JSON.parse(editA.result.content[0].text), { success: true });
     assert.deepEqual(
       received.filter(({ url }) => url === '/api/word/read-doc')
         .map(({ paneId, payload }) => ({ paneId, payload })),

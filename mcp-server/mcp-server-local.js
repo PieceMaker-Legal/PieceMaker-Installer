@@ -607,6 +607,23 @@ async function callLocalTool(toolName, toolArgs) {
   return JSON.stringify(data);
 }
 
+function editDocSuccessPayload(result) {
+  let parsed = result;
+  if (typeof result === 'string') {
+    try {
+      parsed = JSON.parse(result);
+    } catch {
+      parsed = null;
+    }
+  }
+
+  if (parsed?.error || parsed?.success === false) {
+    throw new Error(parsed.error || 'Échec de la modification Word.');
+  }
+
+  return JSON.stringify({ success: true });
+}
+
 // Système anti-doublons pour les éditions exposées
 // Pour éviter les insertions en double dues aux retries réseau
 const editRequestCache = new Map();
@@ -690,6 +707,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   try {
     const result = await callLocalTool(toolName, toolArgs);
+    if (toolName === 'edit_doc') {
+      return {
+        content: [{ type: 'text', text: editDocSuccessPayload(result) }]
+      };
+    }
     return {
       content: [{ type: 'text', text: result }]
     };
