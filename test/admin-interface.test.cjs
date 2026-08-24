@@ -6,6 +6,35 @@ const test = require('node:test');
 const root = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 
+test('l’administration expose un manifeste PWA limité à /admin/', () => {
+  const html = read('admin/index.html');
+  const app = read('admin/app.js');
+  const manifest = JSON.parse(read('admin/manifest.webmanifest'));
+  const serviceWorker = read('admin/service-worker.js');
+  const offline = read('admin/offline.html');
+
+  assert.match(html, /<link rel="manifest" href="manifest\.webmanifest">/);
+  assert.doesNotMatch(html, /href="\/taskpane\.html"/);
+  assert.equal(manifest.id, '/admin/');
+  assert.equal(manifest.start_url, '/admin/');
+  assert.equal(manifest.scope, '/admin/');
+  assert.equal(manifest.display, 'standalone');
+  assert.deepEqual(manifest.icons.map(({ sizes }) => sizes), ['192x192', '512x512']);
+  for (const icon of manifest.icons) {
+    const image = fs.readFileSync(path.join(root, 'admin', icon.src));
+    const expectedSize = Number.parseInt(icon.sizes, 10);
+    assert.equal(image.subarray(1, 4).toString(), 'PNG', `${icon.src} doit être un PNG`);
+    assert.equal(image.readUInt32BE(16), expectedSize, `${icon.src} doit avoir la largeur déclarée`);
+    assert.equal(image.readUInt32BE(20), expectedSize, `${icon.src} doit avoir la hauteur déclarée`);
+  }
+  assert.match(app, /navigator\.serviceWorker\.register\('service-worker\.js', \{ scope: '\.\/' \}\)/);
+  assert.match(serviceWorker, /event\.request\.mode === 'navigate'/);
+  assert.match(serviceWorker, /name\.startsWith\(CACHE_PREFIX\)/);
+  assert.doesNotMatch(serviceWorker, /\/api\/admin/);
+  assert.match(offline, /href="piecemaker:\/\/start"/);
+  assert.match(offline, /piecemaker start/);
+});
+
 test('Dossiers est le premier onglet ; Paramètres et Telegram sont regroupés dans la Configuration', () => {
   const html = read('admin/index.html');
   const nav = html.match(/<nav class="tabs"[\s\S]*?<\/nav>/)?.[0] || '';

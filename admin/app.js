@@ -4596,6 +4596,11 @@ initLogViewer();
 initPerformanceMonitoring();
 loadAdminTheme();
 
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('service-worker.js', { scope: './' })
+    .catch((error) => dwarn('pwa', `Service worker non enregistré : ${error.message}`));
+}
+
 const requestedTab = location.hash.slice(1);
 setActiveTab(['history', 'configuration', 'pieces', 'files'].includes(requestedTab) ? requestedTab : 'history');
 // Un hash de section peut faire défiler le document avant que les panneaux

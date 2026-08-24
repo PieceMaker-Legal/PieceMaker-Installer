@@ -130,6 +130,7 @@ environnement virtuel Python et modèles GLiNER2 + spaCy.
 | 12-word-taskpane | Ouverture automatique du volet Word | permet à PieceMaker d’ouvrir Word avec le volet déjà affiché |
 | 13-garde-secrets | Garde-fou secrets (Claude Code) | empêche Claude Code de lire le `.env` du serveur |
 | 14-mxc-sandbox | Confinement OS (mxc) | construit microsoft/mxc pour isoler la session Claude Code |
+| 15-pwa-desktop | Application PieceMaker sur le Bureau | propose une icône qui démarre le serveur avant d’ouvrir l’administration |
 
 Les secrets Telegram vont dans `~/.claude/channels/` en 0600. Sur macOS, le
 daemon est installé comme service utilisateur dans `~/Library/LaunchAgents/`.
@@ -198,8 +199,11 @@ piecemaker update
 ```
 
 Le tableau de bord est servi uniquement en local sur
-`https://localhost:43098/admin/`. Le volet Word reste disponible sur
-`https://localhost:43098/taskpane.html`.
+`https://localhost:43098/admin/`. Il peut être installé comme PWA. L’icône
+Bureau proposée par l’installateur démarre le serveur avant de l’ouvrir ; si
+une PWA déjà ouverte détecte le serveur arrêté, sa page de secours propose le
+même redémarrage local. Le volet Word reste réservé au fonctionnement interne
+de l’add-in et n’est pas proposé dans l’administration.
 
 Pour travailler sur un document depuis Codex ou Claude Code, l'étape
 `12-word-taskpane` enregistre automatiquement le MCP `piecemaker-word` dans les

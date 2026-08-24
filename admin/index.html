@@ -4,6 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#ffffff">
+  <meta name="apple-mobile-web-app-title" content="PieceMaker">
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <title>PieceMaker — Administration</title>
   <script>
     try {
@@ -11,6 +13,9 @@
       if (theme === 'dark') document.documentElement.dataset.theme = theme;
     } catch {}
   </script>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -366,7 +371,6 @@
 
       <section id="settings" class="panel">
         <div id="settingsConfigurationGroup" class="configuration-form-group">
-        <div class="configuration-inline-actions"><a class="button secondary" href="/taskpane.html">Ouvrir le volet Word</a></div>
         <div class="metrics">
           <article class="card metric"><span>Version</span><strong id="version">—</strong></article>
           <article class="card metric"><span>Word connecté</span><strong id="wordStatus">—</strong></article>

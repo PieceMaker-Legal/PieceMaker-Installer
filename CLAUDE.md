@@ -34,7 +34,7 @@ Markdown, rédaction et tamponnage de pièces. Node ≥ 18, Python ≥ 3.10.
 
 | Dossier | Rôle |
 | --- | --- |
-| `installer/` | Installateur terminal, sans dépendance. `bin/piecemaker.mjs` = commande + orchestrateur ; `steps/00..14-*.mjs` = étapes idempotentes (`{ meta, install, check }`), jouées dans l'ordre du nom ; `lib/` = UI, prompts, plateforme, état ; `templates/` = templates déposés chez l'utilisateur. |
+| `installer/` | Installateur terminal, sans dépendance. `bin/piecemaker.mjs` = commande + orchestrateur ; `steps/00..15-*.mjs` = étapes idempotentes (`{ meta, install, check }`), jouées dans l'ordre du nom ; `lib/` = UI, prompts, plateforme, état ; `templates/` = templates déposés chez l'utilisateur. |
 | `websocket-server/` | `server.cjs` (Express + HTTPS + WS). `admin-routes.cjs` = API d'administration ; `case-registry.cjs`, `document-index.cjs`, `originals-pipeline.cjs` = dossiers/pièces ; `central-hook-install.cjs` + `global-hooks/` = hook global d'anonymisation ; `mxc-sandbox.cjs` = bac à sable OS ; `scripts/` = Python (GLiNER/Presidio, conversion). |
 | `admin/` | Interface web locale servie sur `/admin/` (`app.js`, `index.html`, éditeur Markdown des skills/agents, aperçus facturation). |
 | `taskpane/` | Complément Office (volet Word). `taskpane.js` reçoit les ordres MCP par WebSocket et agit sur le document ; `modules/anonymization-server.cjs` = mapping côté volet. |
