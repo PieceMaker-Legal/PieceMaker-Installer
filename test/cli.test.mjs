@@ -15,6 +15,7 @@ test('la CLI documente les commandes du serveur et de l’interface web', () => 
   });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /open\s+démarre le serveur/);
+  assert.match(result.stdout, /restart\s+redémarre le serveur/);
   assert.match(result.stdout, /install\s+ouvre le menu/);
   assert.match(result.stdout, /doctor, check/);
 });

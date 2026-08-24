@@ -47,7 +47,7 @@ Pour un gros document, commencer par `list_headings`, `heading` ou une plage
   relancer l'étape d'installation « volet Word », puis redémarrer le client.
 - Si le démarrage automatique échoue, suivre l'erreur précise renvoyée par
   `open_doc` ; `piecemaker logs` fournit le journal du serveur.
-- Si `paneReady` vaut `false`, fermer le document — au besoin quitter Word —
-  puis rappeler `open_doc`.
+- Si `open_doc` le demande, exécuter `piecemaker restart`, puis rappeler
+  `open_doc`.
 - Si Word refuse le certificat, exécuter `piecemaker --step 05-certificats`,
   puis quitter et relancer Word.

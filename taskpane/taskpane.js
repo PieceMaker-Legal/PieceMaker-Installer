@@ -33,21 +33,15 @@ let ws = null;
 let paneId = createPaneId();
 
 function createPaneId() {
+    const alphabet = '0123456789abcdefghijklmnopqrstuvwxyz';
     const cryptoApi = window.crypto;
-    if (cryptoApi && typeof cryptoApi.randomUUID === 'function') {
-        return cryptoApi.randomUUID();
-    }
-
-    const bytes = new Uint8Array(16);
+    const bytes = new Uint8Array(4);
     if (cryptoApi && typeof cryptoApi.getRandomValues === 'function') {
         cryptoApi.getRandomValues(bytes);
     } else {
         for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
     }
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('');
 }
 
 function documentRoutingHeaders() {

@@ -99,8 +99,8 @@ test('un seul manifeste déclare le volet auto-ouvert', () => {
 });
 
 test('deux processus MCP restent liés chacun à leur propre document', async () => {
-  const paneA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-  const paneB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const paneA = 'a1b2';
+  const paneB = 'c3d4';
   const received = [];
   const proxy = createServer((req, res) => {
     let body = '';
@@ -116,17 +116,7 @@ test('deux processus MCP restent liés chacun à leur propre document', async ()
       res.setHeader('Content-Type', 'application/json');
       if (req.url === '/api/word/open-doc') {
         const openedPaneId = payload.path.includes('Dossier A') ? paneA : paneB;
-        const publicPath = payload.path
-          .replace('Dossier A', 'DOSSIER_01')
-          .replace('Dossier B', 'DOSSIER_02');
-        res.end(JSON.stringify({
-          ok: true,
-          path: publicPath,
-          resolvedPath: payload.path,
-          paneId: openedPaneId,
-          paneReady: true,
-          message: 'prêt',
-        }));
+        res.end(JSON.stringify({ paneId: openedPaneId }));
       } else {
         res.end(JSON.stringify({ routed, paneId }));
       }
@@ -158,12 +148,8 @@ test('deux processus MCP restent liés chacun à leur propre document', async ()
     ]);
     const publicA = JSON.parse(openedA.result.content[0].text);
     const publicB = JSON.parse(openedB.result.content[0].text);
-    assert.equal('paneId' in publicA, false);
-    assert.equal('paneId' in publicB, false);
-    assert.equal('resolvedPath' in publicA, false);
-    assert.equal('resolvedPath' in publicB, false);
-    assert.equal(publicA.path, '/tmp/DOSSIER_01/assignation.docx');
-    assert.equal(publicB.path, '/tmp/DOSSIER_02/conclusions accentuées.docx');
+    assert.deepEqual(publicA, { paneId: paneA });
+    assert.deepEqual(publicB, { paneId: paneB });
     const [readA, readB] = await Promise.all([
       callTool(sessionA, 3, 'read_doc', { list_headings: true }),
       callTool(sessionB, 3, 'read_doc', { list_headings: true }),
@@ -203,14 +189,8 @@ test('open_doc sans volet prêt ne lie pas la session et read_doc échoue locale
       if (req.url === '/health') {
         res.end(JSON.stringify({ status: 'ok' }));
       } else if (req.url === '/api/word/open-doc') {
-        const payload = JSON.parse(body);
-        res.end(JSON.stringify({
-          ok: true,
-          path: payload.path,
-          paneReady: false,
-          paneId: null,
-          message: 'volet absent',
-        }));
+        res.statusCode = 504;
+        res.end(JSON.stringify({ error: 'Exécutez `piecemaker restart`, puis rappelez `open_doc`.' }));
       } else {
         readRequests += 1;
         res.end(JSON.stringify({ unexpected: true }));
@@ -231,7 +211,10 @@ test('open_doc sans volet prêt ne lie pas la session et read_doc échoue locale
 
   try {
     await initializeMcp(child);
-    await callTool(child, 2, 'open_doc', { path: '/tmp/sans-volet.docx' });
+    const opened = await callTool(child, 2, 'open_doc', { path: '/tmp/sans-volet.docx' });
+    assert.equal(opened.result?.isError, true);
+    assert.match(opened.result?.content?.[0]?.text || '', /piecemaker restart/);
+    assert.doesNotMatch(opened.result?.content?.[0]?.text || '', /Vérifiez que le complément Word/);
     const read = await callTool(child, 3, 'read_doc', { indexes: [0] });
 
     assert.equal(read.result?.isError, true);

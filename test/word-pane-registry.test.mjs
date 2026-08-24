@@ -5,9 +5,9 @@ import test from 'node:test';
 const require = createRequire(import.meta.url);
 const { createWordPaneRegistry } = require('../websocket-server/lib/word-pane-registry.cjs');
 
-const ID_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-const ID_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
-const ID_C = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const ID_A = 'a1b2';
+const ID_B = 'c3d4';
+const ID_C = 'e5f6';
 
 function registry(options = {}) {
   const generated = [ID_C];
@@ -18,6 +18,13 @@ function registry(options = {}) {
     ...options,
   });
 }
+
+test('génère un paneId alphanumérique de quatre caractères', () => {
+  const panes = createWordPaneRegistry({ realpathSync: (value) => value });
+  const client = { readyState: 1 };
+
+  assert.match(panes.register(client, '/tmp/A.docx').paneId, /^[0-9a-z]{4}$/);
+});
 
 test('trois volets ou plus sont routés par leur identifiant opaque, sans slots', () => {
   const panes = registry();

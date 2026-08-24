@@ -27,7 +27,7 @@ l'administration.
 | --- | --- |
 | Racine des dossiers | ce répertoire (`workspacePath` de `~/.piecemaker/config.json`) |
 | Administration | `https://localhost:43098/admin/` |
-| Serveur | `piecemaker start` / `stop` / `status` / `logs` |
+| Serveur | `piecemaker start` / `stop` / `restart` / `status` / `logs` |
 | Historique des dossiers | `~/.piecemaker/case-history/` |
 | Facturation | `~/.piecemaker/billing/` |
 | Configuration | `~/.piecemaker/config.json` |

@@ -189,6 +189,7 @@ Commandes directes disponibles :
 ```bash
 piecemaker start          # serveur HTTPS en arrière-plan
 piecemaker stop
+piecemaker restart
 piecemaker status
 piecemaker logs
 piecemaker doctor         # diagnostic sans modification

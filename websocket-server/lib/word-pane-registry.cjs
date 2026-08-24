@@ -2,14 +2,23 @@
 
 const fs = require('fs');
 const path = require('path');
-const { randomUUID } = require('crypto');
+const { randomInt } = require('crypto');
 
-const PANE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PANE_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
+const PANE_ID_PATTERN = /^[0-9a-z]{4}$/i;
+
+function randomPaneId() {
+  let paneId = '';
+  for (let index = 0; index < 4; index += 1) {
+    paneId += PANE_ID_ALPHABET[randomInt(PANE_ID_ALPHABET.length)];
+  }
+  return paneId;
+}
 
 function createWordPaneRegistry(options = {}) {
   const platform = options.platform || process.platform;
   const realpathSync = options.realpathSync || fs.realpathSync.native;
-  const createPaneId = options.createPaneId || randomUUID;
+  const createPaneId = options.createPaneId || randomPaneId;
   const panesByPath = new Map();
   const panesById = new Map();
   const panePaths = new WeakMap();

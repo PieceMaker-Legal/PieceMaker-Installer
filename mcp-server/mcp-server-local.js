@@ -591,6 +591,10 @@ async function callLocalTool(toolName, toolArgs) {
   if (!response.ok) {
     const errorMessage = data.error || 'Erreur inconnue';
 
+    if (toolName === 'open_doc' && response.status === 504) {
+      throw new Error(errorMessage);
+    }
+
     // Si l'erreur contient déjà "<error>" (erreur de validation métier),
     // ne pas ajouter les instructions serveur
     if (errorMessage.includes('<error>')) {
@@ -604,20 +608,11 @@ async function callLocalTool(toolName, toolArgs) {
   if (typeof data === 'string') return data;
 
   if (toolName === 'open_doc') {
-    if (data.ok === true && data.paneReady === true
-        && typeof data.path === 'string' && typeof data.paneId === 'string') {
-      // Le serveur garde le chemin réel dans un champ local distinct et expose
-      // `path` recodé au modèle. Ne jamais retransmettre `resolvedPath` dans le
-      // résultat MCP, mais l'utiliser pour router read_doc/edit_doc.
-      boundDocumentPath = typeof data.resolvedPath === 'string' ? data.resolvedPath : data.path;
+    if (typeof data.paneId === 'string') {
+      boundDocumentPath = toolArgs.path;
       boundPaneId = data.paneId;
     }
-    return JSON.stringify({
-      ok: data.ok === true,
-      paneReady: data.paneReady === true,
-      path: data.path,
-      message: data.message
-    });
+    return JSON.stringify({ paneId: data.paneId });
   }
 
   return JSON.stringify(data);

@@ -9,7 +9,7 @@
  * Usage:
  *   piecemaker                 menu interactif
  *   piecemaker open            démarre le serveur et ouvre l'interface web
- *   piecemaker start|stop      gère le serveur local
+ *   piecemaker start|stop|restart gère le serveur local
  *   piecemaker status|logs     affiche l'état ou les journaux
  *   piecemaker install         ouvre le menu des composants
  *   piecemaker doctor          diagnostic seul
@@ -89,7 +89,7 @@ function reconcileCentralHook() {
 }
 
 const STEPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'steps');
-const COMMANDS = new Set(['open', 'start', 'stop', 'status', 'logs', 'install', 'doctor', 'check', 'update']);
+const COMMANDS = new Set(['open', 'start', 'stop', 'restart', 'status', 'logs', 'install', 'doctor', 'check', 'update']);
 
 const STATUS_BADGE = {
   done: badge.done,
@@ -259,6 +259,7 @@ function printHelp() {
   write('  open            démarre le serveur et ouvre l’interface web');
   write('  start           démarre le serveur local en arrière-plan');
   write('  stop            arrête le serveur local');
+  write('  restart         redémarre le serveur local');
   write('  status          affiche l’état du serveur');
   write('  logs            affiche les dernières lignes du journal');
   write('  install         ouvre le menu d’installation/réparation');
@@ -338,6 +339,12 @@ async function runOperationalCommand(command, knownUpdate = null) {
     const status = await stopServer();
     if (status.alreadyStopped) log.info('Le serveur est déjà arrêté.');
     else log.ok('Serveur arrêté.');
+    return 0;
+  }
+  if (command === 'restart') {
+    await stopServer();
+    const status = await startServer();
+    log.ok(`Serveur redémarré : ${status.url}`);
     return 0;
   }
   if (command === 'status') {

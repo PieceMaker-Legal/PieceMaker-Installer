@@ -683,12 +683,11 @@ app.post('/api/word/open-doc', async (req, res) => {
     // 1. Un seul manifeste/add-in est enregistré. Word crée une instance du
     // volet dans chaque document ; leur WebSocket et leur chemin permettent de
     // les distinguer côté serveur.
-    const registration = await ensureDevRegistration(MANIFEST_PATH, ADDIN_ID);
+    await ensureDevRegistration(MANIFEST_PATH, ADDIN_ID);
 
     // 2. Injection des parties d'auto-ouverture avec l'unique GUID PieceMaker.
-    let injection;
     try {
-      injection = await injectAutoOpen(resolved);
+      await injectAutoOpen(resolved);
     } catch (err) {
       return res.status(422).json({
         error: `Impossible de préparer le document (n'est peut-être pas un .docx valide) : ${err.message}`,
@@ -714,39 +713,18 @@ app.post('/api/word/open-doc', async (req, res) => {
     const startedWaitingAt = Date.now();
     const autoOpenGraceMs = Math.min(10000, Math.max(1000, Math.floor(timeoutMs / 3)));
     let paneClient = await waitForPane(autoOpenGraceMs, resolved);
-    let paneFallback = null;
     if (!paneClient && process.platform === 'darwin') {
-      paneFallback = showTaskpaneForDocument(resolved);
+      showTaskpaneForDocument(resolved);
       const remainingMs = Math.max(0, timeoutMs - (Date.now() - startedWaitingAt));
       if (remainingMs > 0) paneClient = await waitForPane(remainingMs, resolved);
     }
-    const paneReady = Boolean(paneClient);
-    const paneId = paneClient ? wordPaneRegistry.idFor(paneClient) : null;
-    const legalCase = caseMappingForDocument(resolved);
-    // `resolvedPath` reste un détail local du pont MCP, qui en a besoin pour
-    // router les appels suivants. `path`, seul champ retransmis au modèle, est
-    // recodé ici : Codex ne passe pas par les hooks Claude Code et doit
-    // bénéficier de la même frontière de confidentialité côté serveur.
-    const publicPath = legalCase ? applyMapping(resolved, legalCase.mapping) : resolved;
+    if (!paneClient) {
+      return res.status(504).json({
+        error: 'Exécutez `piecemaker restart`, puis rappelez `open_doc`.',
+      });
+    }
 
-    return res.json({
-      ok: true,
-      path: publicPath,
-      resolvedPath: resolved,
-      registered: registration.registered,
-      registrationMethod: registration.method,
-      injected: injection.injected,
-      injectionReason: injection.reason,
-      launchMethod: launch.method,
-      paneReady,
-      paneId,
-      paneFallbackMethod: paneFallback?.method || null,
-      paneFallbackError: paneFallback?.error || null,
-      panesConnected: wordPaneRegistry.idCount,
-      message: paneReady
-        ? 'Word ouvert et volet PieceMaker prêt : vous pouvez utiliser read_doc / edit_doc.'
-        : 'Word lancé mais aucun volet ne s\'est annoncé dans le délai imparti — vérifiez que l\'add-in est bien installé (étape installeur « volet Word »).',
-    });
+    return res.json({ paneId: wordPaneRegistry.idFor(paneClient) });
   } catch (error) {
     console.error('Erreur /api/word/open-doc:', error);
     return res.status(500).json({ error: error.message });
