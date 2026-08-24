@@ -215,23 +215,39 @@ test('renderChronologyHtml — n\'émet jamais le contenu de graph.viewerHtml', 
 
 test('renderHistoryHtml — le total en pied vaut la somme des temps décumulés', () => {
   const entries = [
-    { hash: 'h1', shortHash: 'h1', author: 'Ted', timestamp: '2026-08-22T10:00:00Z', subject: 'Acte 1', sessionId: 's1', durationMs: 5 * MIN, files: ['a.md'], filesCount: 1 },
-    { hash: 'h2', shortHash: 'h2', author: 'Ted', timestamp: '2026-08-22T10:07:00Z', subject: 'Acte 2', sessionId: 's1', durationMs: 12 * MIN, files: ['a.md', 'b.md'], filesCount: 2 },
-    { hash: 'h3', shortHash: 'h3', author: 'Ted', timestamp: '2026-08-23T09:00:00Z', subject: 'Acte 3', sessionId: '', durationMs: null, files: [], filesCount: 0 },
+    { hash: 'h1', shortHash: 'h1', author: 'Ted', timestamp: '2026-08-22T10:00:00Z', subject: 'Recherche juridique', comment: 'Analyse de la jurisprudence.', sessionId: 's1', durationMs: 5 * MIN, files: ['a.md'], filesCount: 1 },
+    { hash: 'h2', shortHash: 'h2', author: 'Ted', timestamp: '2026-08-22T10:07:00Z', subject: 'Projet de conclusions', comment: 'Rédaction du dispositif.\nVérification des demandes.', sessionId: 's1', durationMs: 12 * MIN, files: ['a.md', 'b.md'], filesCount: 2 },
+    { hash: 'h3', shortHash: 'h3', author: 'Ted', timestamp: '2026-08-23T09:00:00Z', subject: 'Classement', comment: '', sessionId: '', durationMs: null, files: [], filesCount: 0 },
   ];
   const html = renderHistoryHtml(entries, { caseName: 'Dupont c/ Martin', month: '2026-08' });
   // Total attendu : 5min + 7min (décumulé) + 0 = 12 min.
   const expectedTotal = formatDurationFr(12 * MIN);
   assert.ok(html.includes(`>${expectedTotal}<`), `attendu ${expectedTotal} dans le pied de tableau`);
-  assert.ok(html.includes('Acte 1'));
-  assert.ok(html.includes('Acte 2'));
-  assert.ok(html.includes('Acte 3'));
+  assert.ok(html.includes('<h1>Feuille de temps</h1>'));
+  assert.ok(!html.includes('Historique des actes'));
+  assert.ok(html.indexOf('<h1>Feuille de temps</h1>') < html.indexOf('Auteur : Ted'));
+  assert.ok(html.indexOf('Auteur : Ted') < html.indexOf('Dossier « Dupont c/ Martin »'));
+  assert.ok(html.includes('<th width="18%">Date</th>'));
+  assert.ok(html.includes('<th width="64%">Tâches réalisées</th>'));
+  assert.ok(html.includes('Temps passé total'));
+  assert.ok(!html.includes('<th>Heure</th>'));
+  assert.ok(!html.includes('<th>Auteur</th>'));
+  assert.ok(!html.includes('<th>Fichiers</th>'));
+  assert.ok(html.includes('Recherche juridique'));
+  assert.ok(html.includes('Analyse de la jurisprudence.'));
+  assert.ok(html.includes('Projet de conclusions'));
+  assert.ok(html.includes('Rédaction du dispositif.<br>Vérification des demandes.'));
+  assert.ok(html.includes('<li>a.md</li>'));
+  assert.ok(html.includes('<li>b.md</li>'));
+  assert.equal(html.split('22 août 2026').length - 1, 2, 'chaque commit porte sa date, même le même jour');
+  assert.ok(!html.includes('10:00'));
+  assert.ok(!html.includes('10:07'));
   assert.ok(html.includes('août 2026'));
-  assert.ok(html.includes('—')); // Acte 3 : ownMs = 0 -> tiret
+  assert.ok(html.includes('—')); // Classement : ownMs = 0 -> tiret
 });
 
 test('renderHistoryHtml — dossier vide n\'explose pas et affiche un total nul', () => {
   const html = renderHistoryHtml([], { caseName: 'Vide', month: '2026-08' });
-  assert.ok(html.includes('Aucun acte'));
+  assert.ok(html.includes('Aucune tâche'));
   assert.ok(html.includes('>—<'));
 });

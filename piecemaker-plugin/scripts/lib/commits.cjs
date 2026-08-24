@@ -1347,8 +1347,8 @@ async function listHistoryPeriod(casesRoot, homeDir, { caseName, since, until } 
     '--pretty=format:%x1e%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1f%b%x1f', historyRef,
   ], { gitDir })).stdout;
   const history = parseLogWithFiles(raw).map((entry) => {
-    const { sessionId, durationMs } = parseCommitTrailers(entry.body);
-    return { ...entry, sessionId, durationMs };
+    const { comment, sessionId, durationMs } = parseCommitTrailers(entry.body);
+    return { ...entry, comment, sessionId, durationMs };
   });
   logPerformance('listHistoryPeriod', startedAt, { commits: history.length, since, until });
   return history;

@@ -13,6 +13,7 @@ const {
   chooseChain,
   pandocArgs,
   metadataYaml,
+  applyA4PageLayoutXml,
   generateDocument,
 } = require('../websocket-server/lib/doc-generate.cjs');
 const { renderHistoryHtml } = require('../websocket-server/lib/export-render.cjs');
@@ -114,6 +115,20 @@ test('metadataYaml — contient les clés de mise en page attendues par le moteu
   assert.match(yaml, /page-numbering:\s*"1"/);
 });
 
+test('applyA4PageLayoutXml — remplace le format Letter et les marges Word par A4 / 2 cm', () => {
+  const xml = '<w:document><w:body><w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr></w:body></w:document>';
+  const result = applyA4PageLayoutXml(xml);
+  assert.match(result, /<w:pgSz w:w="11906" w:h="16838"\/>/);
+  assert.match(result, /<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/);
+  assert.doesNotMatch(result, /w:w="12240"|w:h="15840"|w:top="1440"/);
+});
+
+test('applyA4PageLayoutXml — ajoute les éléments de mise en page absents', () => {
+  const result = applyA4PageLayoutXml('<w:document><w:body><w:sectPr><w:cols w:space="720"/></w:sectPr></w:body></w:document>');
+  assert.match(result, /<w:pgSz w:w="11906" w:h="16838"\/><w:pgMar/);
+  assert.match(result, /<w:cols w:space="720"\/>/);
+});
+
 // --- findPandoc / findTypst ---------------------------------------------
 // Test volontairement peu contraignant : il doit passer sur n'importe
 // quelle machine, avec ou sans les binaires installés.
@@ -141,7 +156,8 @@ test('generateDocument — pandoc produit un vrai DOCX avec styles Word (Heading
   const entries = [
     {
       hash: 'h1', shortHash: 'h1', author: 'Ted', timestamp: '2026-08-22T10:00:00Z',
-      subject: 'Acte 1', sessionId: 's1', durationMs: 5 * MIN, files: ['a.md'], filesCount: 1,
+      subject: 'Recherche juridique', comment: 'Analyse de la jurisprudence.',
+      sessionId: 's1', durationMs: 5 * MIN, files: ['a.md'], filesCount: 1,
     },
   ];
   const html = renderHistoryHtml(entries, { caseName: 'Dupont c/ Martin', month: '2026-08' });
@@ -162,6 +178,8 @@ test('generateDocument — pandoc produit un vrai DOCX avec styles Word (Heading
   const extraction = spawnSync('unzip', ['-p', result.path, 'word/document.xml']);
   assert.equal(extraction.status, 0, 'extraction de word/document.xml échouée');
   const documentXml = extraction.stdout.toString('utf8');
+  assert.match(documentXml, /<w:pgSz w:w="11906" w:h="16838"\/>/, 'le document Word doit être en A4 portrait');
+  assert.match(documentXml, /<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/, 'les marges Word doivent être de 2 cm');
   assert.match(documentXml, /w:pStyle[^>]*w:val="Heading1"/, 'aucun style Heading1 trouvé dans le document.xml produit');
 
   // Le gabarit porte le titre deux fois : dans <title> et dans le <h1>. pandoc
@@ -170,6 +188,10 @@ test('generateDocument — pandoc produit un vrai DOCX avec styles Word (Heading
   // (pandocArgs) neutralise la métadonnée ; on vérifie ici le résultat réel,
   // car c'est un défaut invisible en test unitaire d'arguments.
   assert.doesNotMatch(documentXml, /w:pStyle[^>]*w:val="Title"/, 'le style Title réapparaît : le titre est composé en double');
-  const occurrences = documentXml.split('Historique des actes').length - 1;
+  const occurrences = documentXml.split('Feuille de temps').length - 1;
   assert.equal(occurrences, 1, `le titre doit apparaître une seule fois, vu ${occurrences} fois`);
+  assert.match(documentXml, /Auteur : Ted/, 'le nom de l’auteur doit apparaître sous le titre');
+  assert.match(documentXml, /Tâches réalisées/, 'le nouveau libellé de colonne doit être conservé');
+  assert.match(documentXml, /Analyse de la jurisprudence\./, 'le commentaire du commit doit être conservé');
+  assert.match(documentXml, /a\.md/, 'la liste des fichiers modifiés doit être conservée');
 });

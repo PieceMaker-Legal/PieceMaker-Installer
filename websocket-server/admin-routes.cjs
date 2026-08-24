@@ -2755,7 +2755,7 @@ function createAdminRouter({
     }
   });
 
-  // Export « papier » (PDF/DOCX) de l'historique des actes d'un mois donné.
+  // Export « papier » (PDF/DOCX) de la feuille de temps d'un mois donné.
   router.get('/history/export', async (req, res) => {
     const startedAt = performance.now();
     try {
@@ -2783,7 +2783,7 @@ function createAdminRouter({
       finishAdminTiming(res, 'history-export', startedAt, { commits: entries.length, format });
       await sendGeneratedDocument(res, {
         html,
-        filename: `Historique ${month} — ${legalCase.caseName}`,
+        filename: `Feuille de temps ${month} — ${legalCase.caseName}`,
         format,
       });
     } catch (error) {

@@ -616,6 +616,7 @@ test('historyMonths et listHistoryPeriod exposent l’historique par mois avec l
     caseName: 'Dossier Alpha',
     homeDir: data.home,
     label: 'Version 1',
+    description: 'Préparation du contrat.',
     sessionId: 'sess-mois-1',
     durationMs: 12_000,
   });
@@ -640,8 +641,10 @@ test('historyMonths et listHistoryPeriod exposent l’historique par mois avec l
   assert.deepEqual(secondEntry.files, ['contrat.md']);
   assert.deepEqual(firstEntry.files.sort(), ['contrat.md', 'contrat_sensitive_map.json']);
   assert.equal(firstEntry.filesCount, 2);
+  assert.equal(firstEntry.comment, 'Préparation du contrat.');
   assert.equal(firstEntry.sessionId, 'sess-mois-1');
   assert.equal(firstEntry.durationMs, 12000);
+  assert.equal(secondEntry.comment, '');
   assert.equal(secondEntry.sessionId, null);
   assert.equal(secondEntry.durationMs, null);
 

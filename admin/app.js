@@ -3223,7 +3223,7 @@ function renderHistoryMonthOptions() {
   if (!historyMonths.length) {
     const option = document.createElement('option');
     option.value = '';
-    option.textContent = 'Aucun acte enregistré';
+    option.textContent = 'Aucune tâche enregistrée';
     select.append(option);
     select.disabled = true;
   } else {
@@ -3260,7 +3260,7 @@ async function exportHistoryMonth(format) {
   button.textContent = 'Génération en cours…';
   try {
     const query = new URLSearchParams({ case: selectedFolder, month, format });
-    const fallbackName = `historique-${month}.${format}`;
+    const fallbackName = `feuille-de-temps-${month}.${format}`;
     await downloadFile(`/api/admin/history/export?${query}`, fallbackName);
   } catch (error) {
     toast(error.message);

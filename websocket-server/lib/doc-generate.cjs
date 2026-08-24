@@ -1,6 +1,6 @@
 /**
  * Rendu d'un export PieceMaker (HTML produit par `export-render.cjs`) en PDF
- * ou DOCX — chronologie, historique des actes.
+ * ou DOCX — chronologie, feuille de temps.
  *
  * À ne pas confondre avec `office-to-pdf.cjs` (`convertToPdf`), qui convertit
  * les PIÈCES DU CLIENT (.xlsx, .doc, .ppt, .rtf, .odt) avant tamponnage.
@@ -21,6 +21,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const JSZip = require('jszip');
 
 const { execFilePromise, officeToPdf } = require('./office-to-pdf.cjs');
 
@@ -98,6 +99,41 @@ page-numbering: "1"
 }
 
 /**
+ * Force chaque section Word en A4 portrait avec des marges de 2 cm. Le writer
+ * DOCX de pandoc n'applique pas les métadonnées `papersize`/`margin` (elles
+ * servent au gabarit typst) et son document de référence par défaut est en
+ * Letter. La correction se fait donc directement dans `word/document.xml`,
+ * sans dépendre de LibreOffice ni du poste utilisateur.
+ */
+function applyA4PageLayoutXml(xml) {
+  return String(xml || '').replace(/<w:sectPr\b[^>]*>[\s\S]*?<\/w:sectPr>/g, (section) => {
+    const pageSize = '<w:pgSz w:w="11906" w:h="16838"/>';
+    const pageMargins = '<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="567" w:footer="567" w:gutter="0"/>';
+    let updated = /<w:pgSz\b[^>]*\/>/.test(section)
+      ? section.replace(/<w:pgSz\b[^>]*\/>/, pageSize)
+      : section.replace(/(<w:sectPr\b[^>]*>)/, `$1${pageSize}`);
+    updated = /<w:pgMar\b[^>]*\/>/.test(updated)
+      ? updated.replace(/<w:pgMar\b[^>]*\/>/, pageMargins)
+      : updated.replace(/(<w:pgSz\b[^>]*\/>)/, `$1${pageMargins}`);
+    return updated;
+  });
+}
+
+async function applyA4PageLayout(docxPath) {
+  const zip = await JSZip.loadAsync(fs.readFileSync(docxPath));
+  const documentPart = zip.file('word/document.xml');
+  if (!documentPart) throw new Error('DOCX pandoc invalide : word/document.xml est absent.');
+  const documentXml = await documentPart.async('string');
+  zip.file('word/document.xml', applyA4PageLayoutXml(documentXml));
+  const normalized = await zip.generateAsync({
+    type: 'nodebuffer',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 6 },
+  });
+  fs.writeFileSync(docxPath, normalized);
+}
+
+/**
  * PURE : ne fait qu'assembler les arguments. `typst`, si fourni, doit être le
  * CHEMIN RÉSOLU du binaire (pas seulement `'typst'`) — trouvé via
  * `TYPST_PATH`, il n'est pas forcément sur le PATH que pandoc utilisera.
@@ -109,8 +145,8 @@ page-numbering: "1"
  * l'onglet du navigateur et les propriétés du document) et dans le `<h1>` du
  * corps. pandoc lit le `<title>` comme métadonnée et, en sortie autonome
  * (toujours le cas en DOCX et en PDF), le compose en tête sous le style
- * `Title` — juste avant le `<h1>` devenu `Heading1`. Sans ce drapeau, « Historique
- * des actes » apparaît donc deux fois de suite. On garde le `<h1>` (seul
+ * `Title` — juste avant le `<h1>` devenu `Heading1`. Sans ce drapeau, le titre
+ * du document apparaît donc deux fois de suite. On garde le `<h1>` (seul
  * visible par le repli LibreOffice) et on supprime la métadonnée : le gabarit
  * typst, lui, teste `#if title != none` et n'imprime alors aucun bloc de titre.
  */
@@ -158,6 +194,7 @@ async function generateDocument(html, workDir, { format = 'pdf', timeout = 12000
   if (chain === 'pandoc-soffice') {
     const docxPath = path.join(workDir, 'export.docx');
     await runPandoc(pandoc, pandocArgs(htmlPath, docxPath, { metadataPath }), timeout);
+    await applyA4PageLayout(docxPath);
     const pdfPath = await officeToPdf(docxPath, workDir, { format: 'pdf', timeout });
     return { path: pdfPath, engine: 'pandoc+libreoffice' };
   }
@@ -165,6 +202,7 @@ async function generateDocument(html, workDir, { format = 'pdf', timeout = 12000
   // 'pandoc' (docx direct) ou 'pandoc-typst' (pdf via typst)
   const outPath = path.join(workDir, `export.${format}`);
   await runPandoc(pandoc, pandocArgs(htmlPath, outPath, { metadataPath, typst }), timeout);
+  if (format === 'docx') await applyA4PageLayout(outPath);
   return { path: outPath, engine: chain === 'pandoc-typst' ? 'pandoc+typst' : 'pandoc' };
 }
 
@@ -186,5 +224,6 @@ module.exports = {
   chooseChain,
   pandocArgs,
   metadataYaml,
+  applyA4PageLayoutXml,
   generateDocument,
 };

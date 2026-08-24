@@ -141,8 +141,9 @@ function decumulateDurations(entries) {
 }
 
 /** Enveloppe HTML commune : squelette + CSS inline, sobre pour LibreOffice. */
-function documentHtml({ title, subtitle, bodyHtml }) {
+function documentHtml({ title, byline, subtitle, bodyHtml }) {
   const safeTitle = escapeHtml(title || '');
+  const safeByline = byline ? escapeHtml(byline) : '';
   const safeSubtitle = subtitle ? escapeHtml(subtitle) : '';
   return `<!DOCTYPE html>
 <html lang="fr">
@@ -155,15 +156,24 @@ function documentHtml({ title, subtitle, bodyHtml }) {
     font-family: Arial, Helvetica, sans-serif;
     font-size: 10pt;
     color: #1a1a1a;
+    line-height: 1.35;
   }
   h1 {
-    font-size: 16pt;
-    margin: 0 0 4px 0;
+    color: #183153;
+    font-size: 19pt;
+    margin: 0 0 6px 0;
+    padding-bottom: 7px;
+    border-bottom: 3px solid #2f6f9f;
+  }
+  .export-byline {
+    font-size: 10pt;
+    color: #183153;
+    margin: 0 0 5px 0;
   }
   .export-subtitle {
     font-size: 9pt;
     color: #555555;
-    margin: 0 0 16px 0;
+    margin: 0 0 18px 0;
   }
   h2 {
     font-size: 12pt;
@@ -209,6 +219,54 @@ function documentHtml({ title, subtitle, bodyHtml }) {
     background-color: #f2f2f2;
     font-weight: bold;
   }
+  .export-task-title {
+    font-weight: bold;
+    color: #183153;
+    font-size: 10pt;
+  }
+  .export-task-comment {
+    margin-top: 4px;
+    color: #3f4852;
+  }
+  .export-task-files-label {
+    margin-top: 6px;
+    color: #66717d;
+    font-size: 8pt;
+  }
+  .export-task-files {
+    margin: 2px 0 0 18px;
+    padding: 0;
+    color: #66717d;
+    font-size: 8pt;
+  }
+  .export-task-time {
+    text-align: right;
+    white-space: nowrap;
+    color: #183153;
+    font-weight: bold;
+  }
+  .export-task-date {
+    color: #3f4852;
+    white-space: nowrap;
+  }
+  .export-timesheet th {
+    background-color: #183153;
+    color: #ffffff;
+    border-color: #183153;
+    padding: 7px 8px;
+  }
+  .export-timesheet td {
+    border-color: #d7dee5;
+    padding: 8px;
+  }
+  .export-timesheet tbody tr:nth-child(even) td {
+    background-color: #f7f9fb;
+  }
+  .export-timesheet tfoot td {
+    background-color: #eaf1f6;
+    border-top: 2px solid #2f6f9f;
+    padding: 8px;
+  }
   .export-empty {
     color: #777777;
     font-style: italic;
@@ -217,6 +275,7 @@ function documentHtml({ title, subtitle, bodyHtml }) {
 </head>
 <body>
 <h1>${safeTitle}</h1>
+${safeByline ? `<p class="export-byline"><strong>${safeByline}</strong></p>` : ''}
 ${safeSubtitle ? `<p class="export-subtitle">${safeSubtitle}</p>` : ''}
 ${bodyHtml}
 </body>
@@ -300,61 +359,66 @@ function renderChronologyHtml(chronology, { caseName } = {}) {
   return documentHtml({ title: 'Chronologie du dossier', subtitle, bodyHtml });
 }
 
-/** Rendu HTML papier de l'historique des actes (commits) d'un mois donné. */
+/** Rendu HTML papier de la feuille de temps (commits) d'un mois donné. */
 function renderHistoryHtml(entries, { caseName, month } = {}) {
   const decumulated = decumulateDurations(Array.isArray(entries) ? entries : []);
 
   const monthLabel = formatMonthFr(month);
   const subtitle = `${caseName ? `Dossier « ${caseName} » — ` : ''}${monthLabel || (month || '')}`;
+  const authors = [...new Set(decumulated
+    .map((item) => String(item.author || '').trim())
+    .filter(Boolean))];
+  const byline = authors.length
+    ? `${authors.length > 1 ? 'Auteurs' : 'Auteur'} : ${authors.join(', ')}`
+    : '';
 
-  let previousDay = '';
   const rows = [];
   let totalMs = 0;
 
   for (const item of decumulated) {
     const timestamp = item.timestamp ? new Date(item.timestamp) : null;
     const validDate = timestamp && !Number.isNaN(timestamp.getTime());
-    const day = validDate
+    const date = validDate
       ? timestamp.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })
       : 'Date inconnue';
-    const heure = validDate
-      ? timestamp.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
-      : '';
-
-    if (day !== previousDay) {
-      rows.push(`<tr class="export-daysep"><td colspan="5">${escapeHtml(day)}</td></tr>`);
-      previousDay = day;
-    }
 
     const ownMs = Number.isFinite(item.ownMs) ? item.ownMs : 0;
     totalMs += ownMs;
     const tempsLabel = ownMs > 0 ? (formatDurationFr(ownMs) || '—') : '—';
+    const comment = String(item.comment || '').trim();
+    const commentHtml = comment
+      ? `<div class="export-task-comment"><em>${escapeHtml(comment).replace(/\r?\n/g, '<br>')}</em></div>`
+      : '';
+    const files = Array.isArray(item.files) ? item.files : [];
+    const filesHtml = files.length
+      ? `<div class="export-task-files-label"><em>Fichiers modifiés :</em></div>
+        <ul class="export-task-files">${files.map((file) => `<li>${escapeHtml(file)}</li>`).join('')}</ul>`
+      : '<div class="export-task-files-label"><em>Fichiers modifiés : aucun</em></div>';
 
     rows.push(`<tr>
-      <td>${escapeHtml(heure)}</td>
-      <td>${escapeHtml(item.subject || '')}</td>
-      <td>${escapeHtml(item.author || '')}</td>
-      <td>${escapeHtml(item.filesCount ?? (Array.isArray(item.files) ? item.files.length : 0))}</td>
-      <td>${escapeHtml(tempsLabel)}</td>
+      <td width="18%" class="export-task-date"><strong>${escapeHtml(date)}</strong></td>
+      <td width="64%"><strong class="export-task-title">${escapeHtml(item.subject || '')}</strong>${commentHtml}${filesHtml}</td>
+      <td width="18%" class="export-task-time"><strong>${escapeHtml(tempsLabel)}</strong></td>
     </tr>`);
   }
 
   const totalLabel = totalMs > 0 ? (formatDurationFr(totalMs) || '—') : '—';
 
   const bodyHtml = `
-<table width="100%" border="1" cellspacing="0" cellpadding="4">
+<table class="export-timesheet" width="100%" border="1" cellspacing="0" cellpadding="7">
+  <colgroup><col width="18%"><col width="64%"><col width="18%"></colgroup>
   <thead>
-    <tr><th>Heure</th><th>Acte</th><th>Auteur</th><th>Fichiers</th><th>Temps</th></tr>
+    <tr><th width="18%">Date</th><th width="64%">Tâches réalisées</th><th width="18%">Temps passé total</th></tr>
   </thead>
   <tbody>
-    ${rows.length ? rows.join('\n') : '<tr><td colspan="5" class="export-empty">Aucun acte pour cette période.</td></tr>'}
+    ${rows.length ? rows.join('\n') : '<tr><td colspan="3" class="export-empty">Aucune tâche pour cette période.</td></tr>'}
   </tbody>
   <tfoot>
-    <tr><td colspan="4">Total du mois</td><td>${escapeHtml(totalLabel)}</td></tr>
+    <tr><td colspan="2"><strong>Total du mois</strong></td><td class="export-task-time"><strong>${escapeHtml(totalLabel)}</strong></td></tr>
   </tfoot>
 </table>`;
 
-  return documentHtml({ title: 'Historique des actes', subtitle, bodyHtml });
+  return documentHtml({ title: 'Feuille de temps', byline, subtitle, bodyHtml });
 }
 
 /** `'2026-08'` → `'août 2026'`. Entrée invalide → null. */
