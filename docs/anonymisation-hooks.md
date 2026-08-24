@@ -13,15 +13,18 @@ données personnelles.
 
 ## Le principe
 
-**Aucun fichier n'est réécrit sur le disque.** Le cabinet garde son Markdown
-lisible. Seul le *résultat* d'outil remis au modèle est codé, et seule
-l'*entrée* d'outil sur le point de s'exécuter est rétablie. Le nom réel ne
-transite donc jamais par l'API, et le document produit pour un humain le porte
-malgré tout.
+**Aucun fichier existant n'est réécrit sur le disque par le hook.** Le cabinet
+garde son Markdown lisible. Seul le *résultat* d'outil remis au modèle est codé,
+et l'*entrée* d'un Write/Edit visant un dossier juridique enregistré est
+rétablie avant exécution. Une écriture de travail hors dossier (scratchpad,
+fichier temporaire) conserve les codes. Le nom réel ne transite donc jamais par
+l'API, et le document produit dans le dossier pour un humain le porte malgré
+tout.
 
 ```
-disque (noms réels)  ──Read/Grep/Glob/Bash──►  hook central   ──►  modèle (codes)
-disque (noms réels)  ◄──Write/Edit/Telegram──  hook central   ◄──  modèle (codes)
+dossier (noms réels) ──Read/Grep/Glob/Bash──► hook central ──► modèle (codes)
+dossier (noms réels) ◄──Write/Edit─────────── hook central ◄── modèle (codes)
+scratchpad (codes)   ◄──Write/Edit─────────── hook central ◄── modèle (codes)
 ```
 
 Les hooks **ne scannent rien** : ni GLiNER, ni Presidio, ni heuristique. Ils
@@ -40,14 +43,16 @@ n'est pas limité aux dossiers juridiques enregistrés par le plugin.
 
 | Événement | Filtre | Script | Rôle |
 | --- | --- | --- | --- |
-| `PostToolUse` | `Read\|Grep\|Glob\|Bash` | `piecemaker-central-anonymize.mjs` | `updatedToolOutput` : mapping central (entité → code) |
-| `PreToolUse` | `Write\|Edit\|mcp__.*telegram.*__(reply\|edit_message)` | `piecemaker-central-anonymize.mjs` | `updatedInput` : mapping inversé (code → entité) |
+| `PostToolUse` | `Read\|Grep\|Glob\|Write\|Edit\|Bash` et outils MCP Word | `piecemaker-central-anonymize.mjs` | `updatedToolOutput` : mapping central (entité → code), y compris les confirmations et chemins renvoyés |
+| `PreToolUse` | `Read\|Grep\|Glob\|Write\|Edit\|Bash`, Telegram et `open_doc` | `piecemaker-central-anonymize.mjs` | `updatedInput` : chemins codés résolus ; contenus Write/Edit ré-identifiés seulement dans un dossier enregistré |
 
 Le mapping lu est `~/.piecemaker/central-mapping.json`. Il est reconstruit par
 `central-mapping.cjs` en fusionnant les mappings des dossiers et en
 dé-conflictant les codes. Le hook central ignore les fichiers de mapping/scan,
-et ne réécrit jamais le disque : il transforme uniquement la réponse remise au
-modèle ou l'entrée d'outil avant exécution. En l'absence de configuration, de
+et ne réécrit jamais lui-même le disque : il transforme uniquement la réponse
+remise au modèle ou l'entrée d'outil avant exécution. Pour Write/Edit, il résout
+le chemin réel (liens symboliques compris) et ne ré-identifie le contenu que si
+la destination appartient à `caseFolders`. En l'absence de configuration, de
 mapping, de moteur ou en cas d'erreur, il échoue ouvert (sortie vide, code 0).
 
 Les scripts `piecemaker-plugin/scripts/anonymize-read.mjs` et
@@ -85,7 +90,13 @@ Quelques points qui ne se devinent pas à la lecture des noms :
 - **`Edit` rétablit les deux chaînes.** Le modèle a lu le fichier à travers le
   mapping : son `old_string` porte des codes, le disque porte les noms. Ne
   reverter que `new_string` ferait échouer chaque édition sur « chaîne
-  introuvable ».
+  introuvable ». Cette ré-identification ne s'applique que si `file_path` est
+  dans un dossier juridique enregistré ; ailleurs, `old_string` et `new_string`
+  restent codés.
+- **Les confirmations d'écriture sont recodées.** Après un PreToolUse,
+  Write/Edit et `open_doc` peuvent renvoyer au modèle l'entrée réelle qu'ils ont
+  exécutée. Le PostToolUse couvre donc aussi leurs résultats, y compris le nom
+  réel d'un document Word renvoyé dans une structure MCP.
 - **`Bash` est couvert par les deux couches actives.** Le hook central anonymise
   `stdout`/`stderr` pour `Bash` avec le mapping central, quel que soit le chemin
   du dossier. En parallèle, `protect-originals.mjs` inspecte les chemins cités
@@ -98,9 +109,10 @@ Quelques points qui ne se devinent pas à la lecture des noms :
 - **Les dossiers ont des mappings locaux, pas un hook par dossier.** Chaque
   mapping de dossier est une entrée du rebuild central :
   `central-mapping.cjs` les fusionne et dé-conflicte les codes pour produire
-  `~/.piecemaker/central-mapping.json`. Le hook central actif ne déduit donc
-  pas un dossier depuis `cwd` ou le chemin de l'outil et n'attribue pas de code
-  local à la volée.
+  `~/.piecemaker/central-mapping.json`. Le hook central n'attribue pas de code
+  local à la volée. Il utilise toutefois le `file_path` de Write/Edit pour
+  distinguer un document humain du dossier (noms réels) d'un scratchpad hors
+  dossier (codes).
 
 ## La protection des pièces
 
@@ -159,8 +171,10 @@ du chemin d'un dossier juridique. Référence :
 les scripts du plugin sortent 0 sans stdout en cas d'erreur, de timeout, de
 configuration absente ou de situation hors dossier; le hook central fait de
 même en cas d'erreur, de configuration/mapping absent ou de moteur indisponible,
-et il continue à fonctionner avec son mapping central même quand `cwd` et le
-chemin visé ne correspondent à aucun dossier juridique. Le script autonome
+et il continue à anonymiser les résultats de lecture avec son mapping central
+même quand `cwd` et le chemin visé ne correspondent à aucun dossier juridique.
+Dans cette situation, il laisse en revanche les productions Write/Edit codées.
+Le script autonome
 `anonymize-read.mjs` reste également muet quand sa substitution ne change rien,
 pour que `Read` conserve sa numérotation de lignes native.
 
@@ -213,8 +227,10 @@ au-delà du tampon du tube.
 
 `test/central-hook.test.mjs`, `test/central-hook-install.test.cjs` et
 `test/central-mapping.test.cjs` couvrent respectivement l'anonymisation globale
-(y compris hors dossier), le câblage idempotent dans `settings.json`, et la
-fusion/dé-confliction des mappings locaux ainsi que la copie du moteur central.
+(y compris hors dossier), la conservation des codes dans un scratchpad, la
+ré-identification d'un Write du dossier, la résolution d'un chemin codé, le
+recodage des confirmations Write/open_doc, le câblage idempotent et sa migration
+dans `settings.json`, ainsi que la fusion/dé-confliction des mappings locaux.
 
 ### 2. L'auto-test de l'installateur
 
@@ -261,7 +277,15 @@ Une modification d'un script du dépôt est donc utilisée directement, sans
 publication ni cache intermédiaire. Après l'ajout ou le retrait d'un événement
 dans `hooks/hooks.json`, relancer l'étape 06, `piecemaker update` ou le serveur
 pour réconcilier `settings.json`, puis ouvrir une nouvelle session Claude Code.
-Le hook central, lui, dépend du redémarrage du serveur pour recopier sa source.
+Dans un clone de développement modifié sur place, redémarrer le serveur recopie
+la source du hook central.
+
+Pour une installation cliente, `piecemaker update` réconcilie désormais le
+hook central directement après la mise à jour du clone, même si le serveur était
+arrêté. S'il tournait, il est en plus redémarré avec le nouveau code serveur.
+Il faut ensuite rouvrir les sessions Claude Code/Codex actives afin qu'elles
+rechargent leurs hooks et leur processus MCP. Aucun `claude plugin update` ni
+bump de version du plugin PieceMaker n'est requis pour ce chemin central.
 
 ## Où vit quoi
 

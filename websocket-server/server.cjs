@@ -659,7 +659,18 @@ app.post('/api/word/open-doc', async (req, res) => {
     if (!docPath) {
       return res.status(400).json({ error: 'Paramètre « path » requis (chemin du document .docx).' });
     }
-    const resolved = path.resolve(docPath);
+    let resolved = path.resolve(docPath);
+    // Défense en profondeur : le chemin peut porter des codes d'anonymisation
+    // (le modèle ne voit que des noms codés). On tente un revert si le chemin
+    // littéral n'existe pas — le hook PreToolUse le fait normalement en amont,
+    // mais un appel MCP direct peut le contourner.
+    if (!fs.existsSync(resolved)) {
+      const lc = caseMappingForDocument(resolved);
+      if (lc) {
+        const reverted = revertMapping(resolved, lc.reverse_mapping);
+        if (reverted !== resolved) resolved = path.resolve(reverted);
+      }
+    }
     if (!fs.existsSync(resolved)) {
       return res.status(404).json({ error: `Document introuvable : ${resolved}` });
     }
@@ -711,10 +722,17 @@ app.post('/api/word/open-doc', async (req, res) => {
     }
     const paneReady = Boolean(paneClient);
     const paneId = paneClient ? wordPaneRegistry.idFor(paneClient) : null;
+    const legalCase = caseMappingForDocument(resolved);
+    // `resolvedPath` reste un détail local du pont MCP, qui en a besoin pour
+    // router les appels suivants. `path`, seul champ retransmis au modèle, est
+    // recodé ici : Codex ne passe pas par les hooks Claude Code et doit
+    // bénéficier de la même frontière de confidentialité côté serveur.
+    const publicPath = legalCase ? applyMapping(resolved, legalCase.mapping) : resolved;
 
     return res.json({
       ok: true,
-      path: resolved,
+      path: publicPath,
+      resolvedPath: resolved,
       registered: registration.registered,
       registrationMethod: registration.method,
       injected: injection.injected,

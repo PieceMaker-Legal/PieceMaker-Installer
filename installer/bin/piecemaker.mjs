@@ -46,6 +46,7 @@ import {
 const require = createRequire(import.meta.url);
 const CLAUDE_ASSETS_MODULE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../websocket-server/claude-assets.cjs');
 const CLAUDE_HOOKS_MODULE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../websocket-server/claude-hooks.cjs');
+const CENTRAL_HOOK_MODULE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../websocket-server/central-hook-install.cjs');
 
 /**
  * The bootstrap/update command is also distributed as an installer-only
@@ -59,6 +60,32 @@ function loadClaudeIntegrations() {
   return typeof integrations.syncClaudeAssets === 'function' && typeof integrations.installClaudeHooks === 'function'
     ? integrations
     : null;
+}
+
+/** Le hook central ne dépend ni du plugin ni d'un serveur déjà démarré. Le
+ * charger après le reset Git permet à `piecemaker update` d'installer aussitôt
+ * la nouvelle version et de migrer ses matchers, même si PieceMaker était
+ * arrêté au moment de la mise à jour. */
+function loadCentralHookIntegration() {
+  if (!fs.existsSync(CENTRAL_HOOK_MODULE)) return null;
+  try {
+    const integration = require(CENTRAL_HOOK_MODULE);
+    return typeof integration.installCentralHook === 'function' ? integration : null;
+  } catch {
+    return null;
+  }
+}
+
+function reconcileCentralHook() {
+  const integration = loadCentralHookIntegration();
+  if (!integration) return false;
+  const centralHook = integration.installCentralHook();
+  if (centralHook.hook && centralHook.settings?.wired) {
+    log.ok('Hook central d’anonymisation mis à jour et matchers réconciliés.');
+    return true;
+  }
+  log.warn('Hook central d’anonymisation non réinstallé ; relancez « piecemaker start ».');
+  return false;
 }
 
 const STEPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'steps');
@@ -330,6 +357,9 @@ async function runOperationalCommand(command, knownUpdate = null) {
     const pending = knownUpdate ?? checkForUpdate();
     if (!pending.available) {
       log.ok(`PieceMaker est déjà à jour (${pending.ref}, ${pending.current.slice(0, 7)}).`);
+      if (reconcileCentralHook()) {
+        log.info('Rouvrez les sessions Claude Code/Codex actives pour charger les hooks et le MCP à jour.');
+      }
       return 0;
     }
     if (pending.remoteAvailable) {
@@ -377,6 +407,9 @@ async function runOperationalCommand(command, knownUpdate = null) {
         if (!claudeHooks.ok) log.warn(`Hooks Claude Code non synchronisés (${claudeHooks.reason}).`);
         else if (claudeHooks.changed) log.ok(`${claudeHooks.registered} hook(s) PieceMaker synchronisé(s) pour Claude Code.`);
       }
+
+      reconcileCentralHook();
+      log.info('Rouvrez les sessions Claude Code/Codex actives pour charger les hooks et le MCP mis à jour.');
     } finally {
       if (previous.running) {
         const restarted = await startServer();

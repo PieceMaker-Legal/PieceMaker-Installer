@@ -45,7 +45,11 @@ test('wireSettings ajoute les deux événements puis est idempotent', () => {
   const post = JSON.stringify(settings.hooks.PostToolUse);
   const pre = JSON.stringify(settings.hooks.PreToolUse);
   assert.match(post, /piecemaker-central-anonymize\.mjs/);
+  assert.match(post, /Write\|Edit/);
+  assert.match(post, /open_doc\|read_doc\|edit_doc/);
   assert.match(pre, /piecemaker-central-anonymize\.mjs/);
+  assert.match(pre, /Read\|Grep\|Glob/);
+  assert.match(pre, /[Pp].*iece.*[Mm].*aker.*open_doc/);
 
   // Deuxième passage : rien ajouté.
   const second = wireSettings();
@@ -53,6 +57,31 @@ test('wireSettings ajoute les deux événements puis est idempotent', () => {
   const after = JSON.parse(fs.readFileSync(CLAUDE_SETTINGS, 'utf8'));
   assert.equal(after.hooks.PostToolUse.length, 1);
   assert.equal(after.hooks.PreToolUse.length, 1);
+});
+
+test('wireSettings migre les anciens matchers du hook central', () => {
+  fs.writeFileSync(CLAUDE_SETTINGS, JSON.stringify({
+    hooks: {
+      PostToolUse: [{
+        matcher: 'Read|Grep|Glob|Bash',
+        hooks: [{ type: 'command', command: 'node ~/.claude/hooks/piecemaker-central-anonymize.mjs' }],
+      }],
+      PreToolUse: [{
+        matcher: 'Write|Edit|mcp__.*telegram.*__(reply|edit_message)',
+        hooks: [{ type: 'command', command: 'node ~/.claude/hooks/piecemaker-central-anonymize.mjs' }],
+      }],
+    },
+  }, null, 2));
+
+  const result = wireSettings();
+  assert.equal(result.changed, true);
+  const settings = JSON.parse(fs.readFileSync(CLAUDE_SETTINGS, 'utf8'));
+  assert.equal(settings.hooks.PostToolUse.length, 1);
+  assert.equal(settings.hooks.PreToolUse.length, 1);
+  assert.match(settings.hooks.PostToolUse[0].matcher, /Write\|Edit/);
+  assert.match(settings.hooks.PostToolUse[0].matcher, /open_doc\|read_doc\|edit_doc/);
+  assert.match(settings.hooks.PreToolUse[0].matcher, /Read\|Grep\|Glob/);
+  assert.match(settings.hooks.PreToolUse[0].matcher, /open_doc/);
 });
 
 test('registerCentralAsSecret ajoute le fichier central, idempotent', () => {

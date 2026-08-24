@@ -32,8 +32,8 @@ const HOOK_TARGET = path.join(CLAUDE_HOOKS_DIR, HOOK_BASENAME);
 /** Commande câblée dans settings.json (repérée par sous-chaîne, idempotence). */
 const HOOK_COMMAND = `node ~/.claude/hooks/${HOOK_BASENAME}`;
 
-const READ_MATCHER = 'Read|Grep|Glob|Bash';
-const WRITE_MATCHER = 'Write|Edit|mcp__.*telegram.*__(reply|edit_message)';
+const POST_MATCHER = 'Read|Grep|Glob|Write|Edit|Bash|mcp__.*[Pp]iece[Mm]aker.*__(open_doc|read_doc|edit_doc)';
+const PRE_MATCHER = 'Read|Grep|Glob|Write|Edit|Bash|mcp__.*telegram.*__(reply|edit_message)|mcp__.*[Pp]iece[Mm]aker.*__open_doc';
 
 /**
  * Ajoute le fichier central à la liste noire du garde-secrets global, pour que
@@ -76,11 +76,16 @@ function groupHasCommand(group) {
   return hooks.some((hook) => typeof hook?.command === 'string' && hook.command.includes(HOOK_BASENAME));
 }
 
-/** Ajoute notre hook à un événement (matcher donné) s'il n'y est pas déjà. */
+/** Câble notre hook dans un événement. Ajoute si absent, met à jour le matcher si changé. */
 function ensureEvent(hooks, eventName, matcher) {
   if (!Array.isArray(hooks[eventName])) hooks[eventName] = [];
   const groups = hooks[eventName];
-  if (groups.some(groupHasCommand)) return false; // déjà câblé, quelque matcher que ce soit
+  const existing = groups.find(groupHasCommand);
+  if (existing) {
+    if (existing.matcher === matcher) return false;
+    existing.matcher = matcher;
+    return true;
+  }
   groups.push({ matcher, hooks: [{ type: 'command', command: HOOK_COMMAND }] });
   return true;
 }
@@ -103,14 +108,14 @@ function wireSettings() {
   }
 
   if (!settings.hooks || typeof settings.hooks !== 'object') settings.hooks = {};
-  const addedRead = ensureEvent(settings.hooks, 'PostToolUse', READ_MATCHER);
-  const addedWrite = ensureEvent(settings.hooks, 'PreToolUse', WRITE_MATCHER);
+  const addedPost = ensureEvent(settings.hooks, 'PostToolUse', POST_MATCHER);
+  const addedPre = ensureEvent(settings.hooks, 'PreToolUse', PRE_MATCHER);
 
-  if (!addedRead && !addedWrite) return { wired: true, changed: false };
+  if (!addedPost && !addedPre) return { wired: true, changed: false };
 
   try {
     fs.writeFileSync(CLAUDE_SETTINGS, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
-    return { wired: true, changed: true, addedRead, addedWrite };
+    return { wired: true, changed: true, addedPost, addedPre };
   } catch {
     return { wired: false, reason: 'write-failed' };
   }

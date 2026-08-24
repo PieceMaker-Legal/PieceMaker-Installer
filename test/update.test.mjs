@@ -34,6 +34,18 @@ function sandbox() {
   git(work, ['config', 'user.name', 'test']);
 
   fs.cpSync(path.join(root, 'installer'), path.join(work, 'installer'), { recursive: true });
+  // Intégration factice suffisante pour prouver que `piecemaker update`
+  // réinstalle le hook central même quand aucun serveur n'était actif.
+  fs.mkdirSync(path.join(work, 'websocket-server'), { recursive: true });
+  fs.writeFileSync(path.join(work, 'websocket-server', 'central-hook-install.cjs'), `
+const fs = require('node:fs');
+const path = require('node:path');
+module.exports.installCentralHook = () => {
+  fs.mkdirSync(process.env.PIECEMAKER_HOME, { recursive: true });
+  fs.writeFileSync(path.join(process.env.PIECEMAKER_HOME, 'central-hook-update-test'), 'installed\\n');
+  return { hook: 'test-hook', settings: { wired: true } };
+};
+`);
   fs.writeFileSync(path.join(work, '.gitignore'), 'package-lock.json\nnode_modules/\noutput/*\n');
   fs.writeFileSync(
     path.join(work, 'package.json'),
@@ -114,6 +126,8 @@ test('la mise à jour supprime les fichiers obsolètes et télécharge les nouve
   const upToDate = update(client, home);
   assert.equal(upToDate.status, 0, upToDate.stderr);
   assert.match(upToDate.stdout, /déjà à jour/);
+  assert.match(upToDate.stdout, /Hook central d’anonymisation mis à jour/);
+  assert.equal(fs.readFileSync(path.join(home, 'central-hook-update-test'), 'utf8'), 'installed\n');
 
   git(work, ['rm', '-q', '-r', 'deprecated.txt', 'oldir']);
   fs.mkdirSync(path.join(work, 'newdir'));
@@ -125,6 +139,8 @@ test('la mise à jour supprime les fichiers obsolètes et télécharge les nouve
   const applied = update(client, home);
   assert.equal(applied.status, 0, applied.stderr);
   assert.match(applied.stdout, /mis à jour/);
+  assert.match(applied.stdout, /Hook central d’anonymisation mis à jour/);
+  assert.equal(fs.readFileSync(path.join(home, 'central-hook-update-test'), 'utf8'), 'installed\n');
 
   assert.equal(fs.existsSync(path.join(client, 'deprecated.txt')), false, 'fichier obsolète non supprimé');
   assert.equal(fs.existsSync(path.join(client, 'oldir')), false, 'dossier obsolète non supprimé');

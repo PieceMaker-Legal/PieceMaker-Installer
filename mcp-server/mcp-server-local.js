@@ -606,7 +606,10 @@ async function callLocalTool(toolName, toolArgs) {
   if (toolName === 'open_doc') {
     if (data.ok === true && data.paneReady === true
         && typeof data.path === 'string' && typeof data.paneId === 'string') {
-      boundDocumentPath = data.path;
+      // Le serveur garde le chemin réel dans un champ local distinct et expose
+      // `path` recodé au modèle. Ne jamais retransmettre `resolvedPath` dans le
+      // résultat MCP, mais l'utiliser pour router read_doc/edit_doc.
+      boundDocumentPath = typeof data.resolvedPath === 'string' ? data.resolvedPath : data.path;
       boundPaneId = data.paneId;
     }
     return JSON.stringify({

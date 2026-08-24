@@ -11,8 +11,13 @@
  * Il applique le mapping central `~/.piecemaker/central-mapping.json`, produit et
  * dé-conflicté par `central-mapping.cjs` (fusion de tous les mappings de dossiers,
  * codes renumérotés pour qu'un même code ne désigne jamais deux personnes) :
- *   - PostToolUse (Read|Grep|Glob|Bash)  → anonymise le résultat (entité → code) ;
- *   - PreToolUse  (Write|Edit|telegram)  → dé-anonymise l'entrée (code → entité) ;
+ *   - PostToolUse (Read|Grep|Glob|Write|Edit|Bash|MCP Word) → anonymise le
+ *     résultat (entité → code), y compris les chemins réels renvoyés après une
+ *     écriture ou un `open_doc` ;
+ *   - PreToolUse  (Write|Edit) → dé-anonymise l'entrée (code → entité), mais
+ *     uniquement si le fichier cible appartient à un dossier enregistré ; un
+ *     scratchpad extérieur au dossier conserve donc les codes ;
+ *   - PreToolUse  (telegram) → dé-anonymise le message sortant ;
  *   - PreToolUse  (Read|Grep|Glob|Bash)  → rétablit le vrai CHEMIN en entrée
  *     (code → entité), symétrique du codage des noms de fichiers listés à la
  *     lecture : sans lui un chemin codé est introuvable sur disque (défaut A).
@@ -45,7 +50,7 @@ const CENTRAL_FILE = path.join(HOME_DIR, 'central-mapping.json');
 const SUBSTITUTION_LIB = path.join(HOME_DIR, 'lib', 'substitution.cjs');
 const CONFIG_FILE = path.join(HOME_DIR, 'config.json');
 
-const READ_TOOLS = new Set(['Read', 'Grep', 'Glob', 'Bash']);
+const NATIVE_OUTPUT_TOOLS = new Set(['Read', 'Grep', 'Glob', 'Write', 'Edit', 'Bash']);
 const WRITE_FIELDS = { Write: ['content'], Edit: ['old_string', 'new_string'] };
 // Défaut A — chemins/commandes EN ENTRÉE des outils de lecture : le modèle a vu
 // un nom de fichier CODÉ (anonymize-read code les noms listés), un Read/Grep/
@@ -53,6 +58,8 @@ const WRITE_FIELDS = { Write: ['content'], Edit: ['old_string', 'new_string'] };
 // vrai chemin (code → entité), symétrique du codage de la sortie.
 const READ_INPUT_FIELDS = { Read: ['file_path'], Grep: ['path'], Glob: ['path'], Bash: ['command'] };
 const TELEGRAM_TOOLS = /^mcp__[^_]*telegram[^_]*__(reply|edit_message)$/;
+const PIECEMAKER_PATH_TOOLS = /^mcp__.*piecemaker.*__open_doc$/i;
+const PIECEMAKER_OUTPUT_TOOLS = /^mcp__.*piecemaker.*__(open_doc|read_doc|edit_doc)$/i;
 /** Un mapping/scan ne doit jamais être « anonymisé » puis relu : on n'y touche pas. */
 const MAPPING_FILE_PATTERNS = [/^mapping.*\.json$/i, /_sensitive_map\.json$/i, /^central-mapping\.json$/i];
 const FLUSH_TIMEOUT_MS = 2000;
@@ -91,9 +98,66 @@ function readJson(file) {
   }
 }
 
-function anonymizationEnabled() {
-  const config = readJson(CONFIG_FILE);
+function anonymizationEnabled(config = readJson(CONFIG_FILE)) {
   return !(config && config.anonymization && config.anonymization.enabled === false);
+}
+
+function absolutePath(value, cwd) {
+  if (!value) return null;
+  const raw = String(value);
+  return path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(cwd, raw);
+}
+
+/** Résout un chemin existant ou, pour un Write vers un nouveau fichier, son
+ *  plus proche parent existant puis rattache la partie manquante. Les liens
+ *  symboliques sont ainsi suivis avant de décider qu'une cible est dans le
+ *  dossier : un lien placé dans le dossier mais pointant au-dehors ne suffit
+ *  jamais à ré-identifier un scratchpad extérieur. */
+function realTarget(value, cwd) {
+  const requested = absolutePath(value, cwd);
+  if (!requested) return null;
+  try {
+    return fs.realpathSync(requested);
+  } catch {
+    let current = requested;
+    const tail = [];
+    while (path.dirname(current) !== current) {
+      try {
+        return path.join(fs.realpathSync(current), ...tail);
+      } catch {
+        tail.unshift(path.basename(current));
+        current = path.dirname(current);
+      }
+    }
+    return null;
+  }
+}
+
+function isInsideOrEqual(root, candidate) {
+  const relative = path.relative(root, candidate);
+  return relative === ''
+    || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+/** Une production Write/Edit ne doit porter des noms réels que si elle atterrit
+ *  dans un dossier juridique explicitement enregistré. La lecture reste, elle,
+ *  globalement anonymisée : le mapping central protège toute session. */
+function isRegisteredCaseTarget(config, value, cwd) {
+  const target = realTarget(value, cwd);
+  if (!target) return false;
+  const roots = Array.isArray(config?.caseFolders) ? config.caseFolders : [];
+  for (const configured of roots) {
+    if (!configured || !path.isAbsolute(String(configured))) continue;
+    let root;
+    try {
+      root = fs.realpathSync(path.resolve(String(configured)));
+      if (!fs.statSync(root).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    if (isInsideOrEqual(root, target)) return true;
+  }
+  return false;
 }
 
 /**
@@ -148,13 +212,22 @@ function resultText(toolResponse) {
   if (typeof toolResponse.stdout === 'string' || typeof toolResponse.stderr === 'string') {
     return [toolResponse.stdout, toolResponse.stderr].filter(Boolean).join('\n');
   }
-  return null;
+  try {
+    return JSON.stringify(toolResponse);
+  } catch {
+    return null;
+  }
+}
+
+function handlesOutput(toolName) {
+  return NATIVE_OUTPUT_TOOLS.has(toolName) || PIECEMAKER_OUTPUT_TOOLS.test(toolName);
 }
 
 function fieldsFor(toolName) {
   if (WRITE_FIELDS[toolName]) return WRITE_FIELDS[toolName];
   if (READ_INPUT_FIELDS[toolName]) return READ_INPUT_FIELDS[toolName];
   if (TELEGRAM_TOOLS.test(toolName)) return ['text'];
+  if (PIECEMAKER_PATH_TOOLS.test(toolName)) return ['path'];
   return null;
 }
 
@@ -208,22 +281,23 @@ function shapeFromRaw(raw, coded) {
   return { content: coded };
 }
 
-/** Le brut ressemble-t-il à une LECTURE (PostToolUse) ? Seule direction où un
- *  fail-open laisserait fuiter des noms réels ; une écriture illisible n'expose
- *  que des codes. */
-function looksLikeReadPost(raw) {
+/** Le brut ressemble-t-il à une SORTIE (PostToolUse) ? C'est la direction où un
+ *  fail-open peut laisser fuiter des noms réels, y compris après un Write/Edit
+ *  dont l'entrée a été ré-identifiée. Un PreToolUse illisible, lui, n'expose
+ *  encore que les codes fournis par le modèle. */
+function looksLikeOutputPost(raw) {
   if (/"hook_event_name"\s*:\s*"PostToolUse"/.test(raw)) return true;
   if (/"old_string"\s*:/.test(raw)) return false; // signature d'un Edit
   return /"tool_response"\s*:/.test(raw) || /"stdout"\s*:/.test(raw) || /"file"\s*:/.test(raw);
 }
 
 /**
- * Fail-closed (défaut C) : un payload de LECTURE non vide mais illisible ne doit
+ * Fail-closed (défaut C) : un payload de SORTIE non vide mais illisible ne doit
  * pas faire retomber le harnais sur le résultat d'outil ORIGINAL en clair. On
  * code au mieux ce qu'on récupère du brut. Sans changement (aucune entité), ou
  * si le chemin visé est un fichier de mapping, on s'efface comme la voie normale.
  */
-function readFailClosed(raw, mapping, applyMapping) {
+function outputFailClosed(raw, mapping, applyMapping) {
   const fp = extractJsonString(raw, 'file_path') || extractJsonString(raw, 'path');
   if (fp && isMappingBasename(fp)) return null;
   const recovered = salvageResponseText(raw);
@@ -236,7 +310,8 @@ function readFailClosed(raw, mapping, applyMapping) {
 }
 
 async function main() {
-  if (!anonymizationEnabled()) return;
+  const config = readJson(CONFIG_FILE) || {};
+  if (!anonymizationEnabled(config)) return;
 
   const { data: raw, complete } = await readStdin(2000);
   if (!raw || !raw.trim()) return; // stdin vide / TTY → vraiment rien à faire
@@ -265,11 +340,11 @@ async function main() {
   } catch {
     // Fail-CLOSED (défaut C) : un payload NON VIDE mais illisible (tronqué au
     // tampon du tube) ne doit pas faire retomber le harnais sur le résultat
-    // d'outil ORIGINAL en clair. Pour la LECTURE seulement (la frontière RGPD),
-    // on code au mieux ce qu'on récupère ; une écriture illisible n'expose que
-    // des codes, fail-open y reste acceptable.
-    if (hasMapping && looksLikeReadPost(raw)) {
-      const out = readFailClosed(raw, mapping, applyMapping);
+    // d'outil ORIGINAL en clair. Pour PostToolUse (la frontière RGPD), on code
+    // au mieux ce qu'on récupère ; un PreToolUse illisible n'expose encore que
+    // les codes du modèle, donc fail-open y reste acceptable.
+    if (hasMapping && looksLikeOutputPost(raw)) {
+      const out = outputFailClosed(raw, mapping, applyMapping);
       if (out) return emit(out);
     }
     return;
@@ -280,7 +355,7 @@ async function main() {
 
   // Parse réussi mais flux marqué incomplet : par sécurité, on code quand même
   // (défaut C, côté défense en profondeur) au lieu de faire confiance au flux.
-  if (!complete && hasMapping && event === 'PostToolUse' && READ_TOOLS.has(toolName)) {
+  if (!complete && hasMapping && event === 'PostToolUse' && handlesOutput(toolName)) {
     const targetPath = payload.tool_input?.file_path || payload.tool_input?.path;
     if (!(targetPath && isMappingBasename(targetPath))) {
       const text = resultText(payload.tool_response);
@@ -298,8 +373,11 @@ async function main() {
     }
   }
 
-  // ── Lecture : anonymise le résultat d'outil (entité → code) ────────────────
-  if (event === 'PostToolUse' && READ_TOOLS.has(toolName) && mapping && Object.keys(mapping).length) {
+  // ── Sortie : anonymise le résultat d'outil (entité → code) ────────────────
+  // Write/Edit et open_doc peuvent renvoyer l'entrée ré-identifiée qu'ils ont
+  // réellement exécutée. Leur confirmation doit donc repasser par la même
+  // frontière que Read avant d'être remise au modèle.
+  if (event === 'PostToolUse' && handlesOutput(toolName) && mapping && Object.keys(mapping).length) {
     // On ne code pas le contenu d'un fichier de mapping/scan (il est de toute
     // façon refusé en amont) : l'y appliquer produirait un charabia trompeur.
     const targetPath = payload.tool_input?.file_path || payload.tool_input?.path;
@@ -320,6 +398,10 @@ async function main() {
   // ── Écriture : dé-anonymise l'entrée (code → entité) ───────────────────────
   const fields = fieldsFor(toolName);
   if (event === 'PreToolUse' && fields && reverse && Object.keys(reverse).length) {
+    if (WRITE_FIELDS[toolName]) {
+      const cwd = payload.cwd || process.cwd();
+      if (!isRegisteredCaseTarget(config, payload.tool_input?.file_path, cwd)) return;
+    }
     const updated = {};
     for (const field of fields) {
       const value = payload.tool_input?.[field];

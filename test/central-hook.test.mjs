@@ -18,12 +18,19 @@ const CENTRAL = {
 
 function fixture({ enabled = true, central = CENTRAL } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-central-hook-'));
+  const legalCase = path.join(home, 'Dossier juridique');
+  fs.mkdirSync(legalCase, { recursive: true });
   fs.mkdirSync(path.join(home, 'lib'), { recursive: true });
   fs.copyFileSync(SUBSTITUTION_SRC, path.join(home, 'lib', 'substitution.cjs'));
   if (central) fs.writeFileSync(path.join(home, 'central-mapping.json'), JSON.stringify(central));
-  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ anonymization: { enabled } }));
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({
+    anonymization: { enabled },
+    caseFolders: [legalCase],
+  }));
   return home;
 }
+
+const caseRoot = (home) => path.join(home, 'Dossier juridique');
 
 function runHook(payload, home) {
   const result = spawnSync(process.execPath, [HOOK], {
@@ -75,8 +82,11 @@ test('à l’écriture, les codes sont restitués en vrais noms sur le disque', 
   const out = runHook({
     hook_event_name: 'PreToolUse',
     tool_name: 'Write',
-    cwd: '/tmp',
-    tool_input: { file_path: '/tmp/out.md', content: 'Note pour PERSONNE_PHYSIQUE_01 et PERSONNE_PHYSIQUE_07.' },
+    cwd: caseRoot(home),
+    tool_input: {
+      file_path: path.join(caseRoot(home), 'out.md'),
+      content: 'Note pour PERSONNE_PHYSIQUE_01 et PERSONNE_PHYSIQUE_07.',
+    },
   }, home);
   const content = out.hookSpecificOutput.updatedInput.content;
   assert.equal(content.includes('Jean Dupont'), true);
@@ -91,8 +101,12 @@ test('un Edit restitue les deux chaînes', (t) => {
   const out = runHook({
     hook_event_name: 'PreToolUse',
     tool_name: 'Edit',
-    cwd: '/tmp',
-    tool_input: { file_path: '/tmp/out.md', old_string: 'PERSONNE_PHYSIQUE_01', new_string: 'cher PERSONNE_PHYSIQUE_01' },
+    cwd: caseRoot(home),
+    tool_input: {
+      file_path: path.join(caseRoot(home), 'out.md'),
+      old_string: 'PERSONNE_PHYSIQUE_01',
+      new_string: 'cher PERSONNE_PHYSIQUE_01',
+    },
   }, home);
   assert.equal(out.hookSpecificOutput.updatedInput.old_string, 'Jean Dupont');
   assert.equal(out.hookSpecificOutput.updatedInput.new_string, 'cher Jean Dupont');
@@ -101,14 +115,114 @@ test('un Edit restitue les deux chaînes', (t) => {
 test('un Read restitue le vrai chemin avant exécution', (t) => {
   const home = fixture();
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const realPath = path.join(caseRoot(home), '06_Jean Dupont.md');
+  fs.writeFileSync(realPath, 'Pièce concernant Jean Dupont.');
 
   const out = runHook({
     hook_event_name: 'PreToolUse',
     tool_name: 'Read',
-    cwd: '/tmp',
-    tool_input: { file_path: '/tmp/06_PERSONNE_PHYSIQUE_01.md' },
+    cwd: caseRoot(home),
+    tool_input: { file_path: path.join(caseRoot(home), '06_PERSONNE_PHYSIQUE_01.md') },
   }, home);
-  assert.equal(out.hookSpecificOutput.updatedInput.file_path, '/tmp/06_Jean Dupont.md');
+  assert.equal(out.hookSpecificOutput.updatedInput.file_path, realPath);
+  assert.equal(fs.readFileSync(out.hookSpecificOutput.updatedInput.file_path, 'utf8'), 'Pièce concernant Jean Dupont.');
+});
+
+test('acceptation — scratchpad codé, fichier du dossier ré-identifié, Read au chemin codé', (t) => {
+  const home = fixture();
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const legalCase = caseRoot(home);
+  const scratchDir = path.join(home, 'scratchpads');
+  fs.mkdirSync(scratchDir);
+
+  const scratchInput = {
+    file_path: path.join(scratchDir, 'travail.md'),
+    content: 'Projet pour PERSONNE_PHYSIQUE_01.',
+  };
+  const scratchHook = runHook({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Write',
+    cwd: legalCase,
+    tool_input: scratchInput,
+  }, home);
+  assert.equal(scratchHook, null, 'un Write hors dossier ne doit pas être ré-identifié');
+  fs.writeFileSync(scratchInput.file_path, scratchInput.content);
+  assert.match(fs.readFileSync(scratchInput.file_path, 'utf8'), /PERSONNE_PHYSIQUE_01/);
+  assert.doesNotMatch(fs.readFileSync(scratchInput.file_path, 'utf8'), /Jean Dupont/);
+
+  const caseInput = {
+    file_path: path.join(legalCase, 'note.md'),
+    content: 'Projet pour PERSONNE_PHYSIQUE_01.',
+  };
+  const caseHook = runHook({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Write',
+    cwd: legalCase,
+    tool_input: caseInput,
+  }, home);
+  const effectiveCaseInput = caseHook.hookSpecificOutput.updatedInput;
+  fs.writeFileSync(effectiveCaseInput.file_path, effectiveCaseInput.content);
+  assert.match(fs.readFileSync(caseInput.file_path, 'utf8'), /Jean Dupont/);
+  assert.doesNotMatch(fs.readFileSync(caseInput.file_path, 'utf8'), /PERSONNE_PHYSIQUE_01/);
+
+  const realPath = path.join(legalCase, '06_Jean Dupont.md');
+  const codedPath = path.join(legalCase, '06_PERSONNE_PHYSIQUE_01.md');
+  fs.writeFileSync(realPath, 'Jean Dupont a signé.');
+  const readPre = runHook({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Read',
+    cwd: legalCase,
+    tool_input: { file_path: codedPath },
+  }, home);
+  const resolvedPath = readPre.hookSpecificOutput.updatedInput.file_path;
+  const clearContent = fs.readFileSync(resolvedPath, 'utf8');
+  const readPost = runHook({
+    hook_event_name: 'PostToolUse',
+    tool_name: 'Read',
+    cwd: legalCase,
+    tool_input: { file_path: resolvedPath },
+    tool_response: { file: { content: clearContent } },
+  }, home);
+  assert.equal(resolvedPath, realPath);
+  assert.equal(readPost.hookSpecificOutput.updatedToolOutput.file.content, 'PERSONNE_PHYSIQUE_01 a signé.');
+});
+
+test('le résultat de Write et open_doc est recodé avant de revenir au modèle', (t) => {
+  const home = fixture();
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const legalCase = caseRoot(home);
+
+  const writeOut = runHook({
+    hook_event_name: 'PostToolUse',
+    tool_name: 'Write',
+    cwd: legalCase,
+    tool_input: { file_path: path.join(legalCase, 'note.md'), content: 'Jean Dupont' },
+    tool_response: { content: 'Fichier écrit pour Jean Dupont.' },
+  }, home);
+  assert.equal(writeOut.hookSpecificOutput.updatedToolOutput.content, 'Fichier écrit pour PERSONNE_PHYSIQUE_01.');
+
+  for (const toolName of ['mcp__piecemaker-word__open_doc', 'mcp__PieceMaker__open_doc']) {
+    const openPre = runHook({
+      hook_event_name: 'PreToolUse',
+      tool_name: toolName,
+      cwd: legalCase,
+      tool_input: { path: path.join(legalCase, 'Projet PERSONNE_PHYSIQUE_01.docx') },
+    }, home);
+    assert.match(openPre.hookSpecificOutput.updatedInput.path, /Projet Jean Dupont\.docx$/);
+
+    const openPost = runHook({
+      hook_event_name: 'PostToolUse',
+      tool_name: toolName,
+      cwd: legalCase,
+      tool_input: openPre.hookSpecificOutput.updatedInput,
+      tool_response: {
+        content: [{ type: 'text', text: JSON.stringify({ path: openPre.hookSpecificOutput.updatedInput.path }) }],
+      },
+    }, home);
+    const returned = JSON.stringify(openPost.hookSpecificOutput.updatedToolOutput);
+    assert.doesNotMatch(returned, /Jean Dupont/);
+    assert.match(returned, /PERSONNE_PHYSIQUE_01/);
+  }
 });
 
 test('une commande Bash restitue les vrais noms avant exécution', (t) => {

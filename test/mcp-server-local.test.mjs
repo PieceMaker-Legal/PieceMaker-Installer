@@ -116,9 +116,13 @@ test('deux processus MCP restent liés chacun à leur propre document', async ()
       res.setHeader('Content-Type', 'application/json');
       if (req.url === '/api/word/open-doc') {
         const openedPaneId = payload.path.includes('Dossier A') ? paneA : paneB;
+        const publicPath = payload.path
+          .replace('Dossier A', 'DOSSIER_01')
+          .replace('Dossier B', 'DOSSIER_02');
         res.end(JSON.stringify({
           ok: true,
-          path: payload.path,
+          path: publicPath,
+          resolvedPath: payload.path,
           paneId: openedPaneId,
           paneReady: true,
           message: 'prêt',
@@ -152,8 +156,14 @@ test('deux processus MCP restent liés chacun à leur propre document', async ()
       callTool(sessionA, 2, 'open_doc', { path: docA }),
       callTool(sessionB, 2, 'open_doc', { path: docB }),
     ]);
-    assert.equal('paneId' in JSON.parse(openedA.result.content[0].text), false);
-    assert.equal('paneId' in JSON.parse(openedB.result.content[0].text), false);
+    const publicA = JSON.parse(openedA.result.content[0].text);
+    const publicB = JSON.parse(openedB.result.content[0].text);
+    assert.equal('paneId' in publicA, false);
+    assert.equal('paneId' in publicB, false);
+    assert.equal('resolvedPath' in publicA, false);
+    assert.equal('resolvedPath' in publicB, false);
+    assert.equal(publicA.path, '/tmp/DOSSIER_01/assignation.docx');
+    assert.equal(publicB.path, '/tmp/DOSSIER_02/conclusions accentuées.docx');
     const [readA, readB] = await Promise.all([
       callTool(sessionA, 3, 'read_doc', { list_headings: true }),
       callTool(sessionB, 3, 'read_doc', { list_headings: true }),
