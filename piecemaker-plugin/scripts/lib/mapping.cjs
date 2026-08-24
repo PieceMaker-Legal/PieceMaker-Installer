@@ -32,6 +32,7 @@ const {
   byDescendingEntityLength,
   escapeRegex,
   escapeWithVariants,
+  resolveMappedPath,
   revertMapping,
 } = require('./substitution.cjs');
 
@@ -317,6 +318,7 @@ module.exports = {
   readJsonFile,
   resolveConfiguredCaseMapping,
   resolveCaseMapping,
+  resolveMappedPath,
   revertMapping,
   sortedMapping,
   CANONICAL_MAPPING_FILE,

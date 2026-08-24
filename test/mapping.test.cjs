@@ -8,6 +8,7 @@ const {
   applyMapping,
   readCaseMapping,
   resolveCaseMapping,
+  resolveMappedPath,
   revertMapping,
 } = require('../piecemaker-plugin/scripts/lib/mapping.cjs');
 
@@ -62,6 +63,64 @@ test('l’aller-retour restitue le texte de départ', () => {
 test('un mapping vide ou un texte hors dossier laisse le contenu intact', () => {
   assert.equal(applyMapping('Rien à coder.', {}), 'Rien à coder.');
   assert.equal(revertMapping('Rien à rétablir.', {}), 'Rien à rétablir.');
+});
+
+test('la résolution d’un chemin conserve en priorité un fichier littéralement codé', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-resolve-path-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const coded = path.join(root, 'Projet_SOCIETE_01.docx');
+  const real = path.join(root, 'Projet_Alpha.docx');
+  fs.writeFileSync(coded, 'coded');
+  fs.writeFileSync(real, 'real');
+
+  assert.equal(
+    resolveMappedPath(coded, { Alpha: 'SOCIETE_01' }, { SOCIETE_01: ['Alpha'] }, root),
+    coded
+  );
+});
+
+test('la résolution d’un chemin utilise la variante canonique quand elle existe', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-resolve-path-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const real = path.join(root, 'Projet_Alpha Conseil.docx');
+  const coded = path.join(root, 'Projet_SOCIETE_01.docx');
+  fs.writeFileSync(real, 'real');
+
+  assert.equal(
+    resolveMappedPath(
+      coded,
+      { 'Alpha Conseil': 'SOCIETE_01' },
+      { SOCIETE_01: ['Alpha Conseil'] },
+      root
+    ),
+    real
+  );
+});
+
+test('la résolution retrouve l’unique variante de nom qui produit le chemin codé', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-resolve-path-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const realDir = path.join(root, 'Dossier Alpha');
+  const real = path.join(realDir, '26_Lettre_par_Alpha_SA.md');
+  const coded = path.join(root, 'Dossier SOCIETE_01', '26_Lettre_par_SOCIETE_01_SA.md');
+  fs.mkdirSync(realDir);
+  fs.writeFileSync(real, 'real');
+  const mapping = { 'Alpha Conseil': 'SOCIETE_01', Alpha: 'SOCIETE_01' };
+  const reverse = { SOCIETE_01: ['Alpha Conseil', 'Alpha'] };
+
+  assert.equal(resolveMappedPath(coded, mapping, reverse, root), real);
+});
+
+test('la résolution refuse de choisir entre deux variantes de fichier ambiguës', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-resolve-path-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const coded = path.join(root, 'Note_SOCIETE_01.md');
+  fs.writeFileSync(path.join(root, 'Note_Alpha.md'), 'one');
+  fs.writeFileSync(path.join(root, 'Note_A. Conseil.md'), 'two');
+  const mapping = { 'Alpha Conseil': 'SOCIETE_01', Alpha: 'SOCIETE_01', 'A. Conseil': 'SOCIETE_01' };
+  const reverse = { SOCIETE_01: ['Alpha Conseil', 'Alpha', 'A. Conseil'] };
+
+  assert.equal(resolveMappedPath(coded, mapping, reverse, root), coded);
 });
 
 test('le sens inverse est reconstruit quand le fichier ne porte que le sens direct', (t) => {

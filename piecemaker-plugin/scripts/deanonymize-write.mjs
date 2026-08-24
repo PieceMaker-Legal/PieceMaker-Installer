@@ -22,10 +22,11 @@
  * DE FICHIERS listés dans un résultat : le modèle voit donc un chemin codé
  * (« 06_..._SOCIETE_SA_02_SA.md ») alors que le disque porte le vrai nom. Sans
  * symétrie, le `Read`/`Grep`/`Glob`/`Bash` qui suit vise un chemin codé
- * introuvable (« file does not exist »). Ce hook rétablit donc aussi le vrai
- * chemin en entrée : `file_path`/`path` pour Read/Grep/Glob, et la `command`
- * entière pour Bash (un code est un identifiant unique, le reverter au complet
- * est sûr et symétrique du codage de la sortie Bash par anonymize-read).
+ * introuvable (« file does not exist »). Pour `file_path`/`path`, le hook garde
+ * d'abord le chemin littéral s'il existe, puis tente la variante canonique et
+ * enfin l'unique nom voisin qui s'anonymise vers le nom demandé. La `command`
+ * Bash entière reste ré-identifiée comme du texte (un code est un identifiant
+ * unique, le reverter au complet est sûr et symétrique du codage de sa sortie).
  */
 
 import path from 'node:path';
@@ -33,7 +34,7 @@ import { createRequire } from 'node:module';
 import { loadPieceMakerConfig, readHookPayload, runHook, noop } from './lib/hook-io.mjs';
 
 const require = createRequire(import.meta.url);
-const { resolveConfiguredCaseMapping, revertMapping } = require('./lib/mapping.cjs');
+const { resolveConfiguredCaseMapping, resolveMappedPath, revertMapping } = require('./lib/mapping.cjs');
 
 /**
  * Champs textuels à rétablir, par outil. Deux familles, même traitement (un
@@ -89,7 +90,10 @@ async function main() {
   for (const field of fields) {
     const value = payload.tool_input?.[field];
     if (typeof value !== 'string' || !value) continue;
-    const reverted = revertMapping(value, legalCase.reverse_mapping);
+    const isPath = field === 'file_path' || field === 'path';
+    const reverted = isPath
+      ? resolveMappedPath(value, legalCase.mapping, legalCase.reverse_mapping, cwd)
+      : revertMapping(value, legalCase.reverse_mapping);
     if (reverted !== value) updatedInput[field] = reverted;
   }
   if (!Object.keys(updatedInput).length) return null;

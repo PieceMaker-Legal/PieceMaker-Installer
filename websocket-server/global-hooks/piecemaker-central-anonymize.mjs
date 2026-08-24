@@ -330,7 +330,7 @@ async function main() {
   } catch {
     return; // moteur absent → échec ouvert
   }
-  const { applyMapping, revertMapping } = substitution;
+  const { applyMapping, resolveMappedPath, revertMapping } = substitution;
 
   const hasMapping = mapping && Object.keys(mapping).length;
 
@@ -407,7 +407,10 @@ async function main() {
       const value = payload.tool_input?.[field];
       if (typeof value !== 'string' || !value) continue;
       if (field === 'command' && value.length > MAX_COMMAND_LENGTH) continue;
-      const reverted = revertMapping(value, reverse);
+      const isPath = field === 'file_path' || field === 'path';
+      const reverted = isPath
+        ? resolveMappedPath(value, mapping, reverse, payload.cwd || process.cwd())
+        : revertMapping(value, reverse);
       if (reverted !== value) updated[field] = reverted;
     }
     if (!Object.keys(updated).length) return;

@@ -12,8 +12,15 @@ const SUBSTITUTION_SRC = path.join(repoRoot, 'piecemaker-plugin', 'scripts', 'li
 
 const CENTRAL = {
   version: 1,
-  mapping: { 'Jean Dupont': 'PERSONNE_PHYSIQUE_01', 'Marie Martin': 'PERSONNE_PHYSIQUE_07' },
-  reverse_mapping: { PERSONNE_PHYSIQUE_01: ['Jean Dupont'], PERSONNE_PHYSIQUE_07: ['Marie Martin'] },
+  mapping: {
+    'Jean Dupont': 'PERSONNE_PHYSIQUE_01',
+    'M. Dupont': 'PERSONNE_PHYSIQUE_01',
+    'Marie Martin': 'PERSONNE_PHYSIQUE_07',
+  },
+  reverse_mapping: {
+    PERSONNE_PHYSIQUE_01: ['Jean Dupont', 'M. Dupont'],
+    PERSONNE_PHYSIQUE_07: ['Marie Martin'],
+  },
 };
 
 function fixture({ enabled = true, central = CENTRAL } = {}) {
@@ -128,6 +135,39 @@ test('un Read restitue le vrai chemin avant exécution', (t) => {
   assert.equal(fs.readFileSync(out.hookSpecificOutput.updatedInput.file_path, 'utf8'), 'Pièce concernant Jean Dupont.');
 });
 
+test('un Read conserve un chemin codé qui existe déjà littéralement', (t) => {
+  const home = fixture();
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const codedPath = path.join(caseRoot(home), '06_PERSONNE_PHYSIQUE_01.md');
+  fs.writeFileSync(codedPath, 'Pièce déjà nommée avec le code.');
+
+  const out = runHook({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Read',
+    cwd: caseRoot(home),
+    tool_input: { file_path: codedPath },
+  }, home);
+  assert.equal(out, null);
+  assert.equal(fs.existsSync(codedPath), true);
+});
+
+test('un Read retrouve une variante de nom non canonique par son nom anonymisé', (t) => {
+  const home = fixture();
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const realPath = path.join(caseRoot(home), '06_M. Dupont.md');
+  const codedPath = path.join(caseRoot(home), '06_PERSONNE_PHYSIQUE_01.md');
+  fs.writeFileSync(realPath, 'Pièce concernant une variante du nom.');
+
+  const out = runHook({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'Read',
+    cwd: caseRoot(home),
+    tool_input: { file_path: codedPath },
+  }, home);
+  assert.equal(out.hookSpecificOutput.updatedInput.file_path, realPath);
+  assert.equal(fs.existsSync(out.hookSpecificOutput.updatedInput.file_path), true);
+});
+
 test('acceptation — scratchpad codé, fichier du dossier ré-identifié, Read au chemin codé', (t) => {
   const home = fixture();
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
@@ -191,6 +231,8 @@ test('le résultat de Write et open_doc est recodé avant de revenir au modèle'
   const home = fixture();
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const legalCase = caseRoot(home);
+  const realDocument = path.join(legalCase, 'Projet Jean Dupont.docx');
+  fs.writeFileSync(realDocument, 'fixture');
 
   const writeOut = runHook({
     hook_event_name: 'PostToolUse',
@@ -208,7 +250,7 @@ test('le résultat de Write et open_doc est recodé avant de revenir au modèle'
       cwd: legalCase,
       tool_input: { path: path.join(legalCase, 'Projet PERSONNE_PHYSIQUE_01.docx') },
     }, home);
-    assert.match(openPre.hookSpecificOutput.updatedInput.path, /Projet Jean Dupont\.docx$/);
+    assert.equal(openPre.hookSpecificOutput.updatedInput.path, realDocument);
 
     const openPost = runHook({
       hook_event_name: 'PostToolUse',
@@ -223,6 +265,22 @@ test('le résultat de Write et open_doc est recodé avant de revenir au modèle'
     assert.doesNotMatch(returned, /Jean Dupont/);
     assert.match(returned, /PERSONNE_PHYSIQUE_01/);
   }
+});
+
+test('open_doc ne ré-identifie pas un document dont le nom codé existe', (t) => {
+  const home = fixture();
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const codedDocument = path.join(caseRoot(home), 'Projet PERSONNE_PHYSIQUE_01.docx');
+  fs.writeFileSync(codedDocument, 'fixture');
+
+  const out = runHook({
+    hook_event_name: 'PreToolUse',
+    tool_name: 'mcp__PieceMaker__open_doc',
+    cwd: caseRoot(home),
+    tool_input: { path: codedDocument },
+  }, home);
+  assert.equal(out, null);
+  assert.equal(fs.existsSync(codedDocument), true);
 });
 
 test('une commande Bash restitue les vrais noms avant exécution', (t) => {

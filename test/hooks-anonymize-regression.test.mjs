@@ -83,6 +83,8 @@ test('A — un file_path CODÉ passé à Read est ramené au vrai chemin sur dis
 test('A — un path CODÉ de Grep/Glob est rétabli', (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const realPath = path.join(data.caseRoot, '08_Note_URGOT SA.md');
+  fs.writeFileSync(realPath, 'Note.');
 
   const { parsed } = runHook(DEANONYMIZE, {
     tool_name: 'Grep',
@@ -90,7 +92,7 @@ test('A — un path CODÉ de Grep/Glob est rétabli', (t) => {
     tool_input: { pattern: 'retard', path: path.join(data.caseRoot, '08_Note_SOCIETE_SA_02.md') },
   }, data);
   assert.ok(parsed);
-  assert.equal(parsed.hookSpecificOutput.updatedInput.path, path.join(data.caseRoot, '08_Note_URGOT SA.md'));
+  assert.equal(parsed.hookSpecificOutput.updatedInput.path, realPath);
 });
 
 test('A — une commande Bash citant un chemin CODÉ est rétablie', (t) => {

@@ -55,6 +55,17 @@ le chemin réel (liens symboliques compris) et ne ré-identifie le contenu que s
 la destination appartient à `caseFolders`. En l'absence de configuration, de
 mapping, de moteur ou en cas d'erreur, il échoue ouvert (sortie vide, code 0).
 
+La résolution des chemins codés n'est pas un simple remplacement code → nom :
+plusieurs variantes d'une entité peuvent partager le même code, et le premier
+nom du reverse mapping n'est pas forcément celui du fichier sur disque. Pour
+`Read`, `Grep`, `Glob` et `open_doc`, le hook conserve donc d'abord le chemin
+littéral s'il existe, essaie ensuite la variante canonique, puis parcourt le
+répertoire et accepte seulement l'unique nom dont l'anonymisation reproduit le
+segment demandé. S'il n'existe aucune correspondance unique, il garde le chemin
+codé : l'outil échoue sans divulguer de nom et sans risquer d'ouvrir le mauvais
+fichier. La route Word applique la même règle en défense en profondeur pour les
+appels MCP qui contourneraient le hook Claude Code.
+
 Les scripts `piecemaker-plugin/scripts/anonymize-read.mjs` et
 `deanonymize-write.mjs` restent présents comme implémentations autonomes et
 sont couverts par l'auto-test de l'étape `06-hooks`; ils ne sont pas des
@@ -216,7 +227,7 @@ npm test          # la suite complète
 
 `test/mapping.test.cjs` couvre le moteur de substitution : imbrication des
 entités, idempotence, variantes typographiques, aller-retour exact, absence de
-plafond et orthographes piégeuses.
+plafond, orthographes piégeuses et résolution sûre des noms de fichiers codés.
 
 `test/hooks-anonymize.test.mjs` lance les scripts **comme Claude Code le fait**
 — charge utile JSON sur stdin, `HOME` redirigé vers un faux

@@ -66,6 +66,7 @@ const { detectCompanySigle } = require('./legal-forms.cjs');
 // deanonymize-write.mjs pour les outils natifs.
 const {
   resolveConfiguredCaseMapping,
+  resolveMappedPath,
   applyMapping,
   revertMapping,
 } = require('../piecemaker-plugin/scripts/lib/mapping.cjs');
@@ -659,17 +660,16 @@ app.post('/api/word/open-doc', async (req, res) => {
     if (!docPath) {
       return res.status(400).json({ error: 'Paramètre « path » requis (chemin du document .docx).' });
     }
-    let resolved = path.resolve(docPath);
+    const requested = path.resolve(docPath);
+    let resolved = requested;
     // Défense en profondeur : le chemin peut porter des codes d'anonymisation
-    // (le modèle ne voit que des noms codés). On tente un revert si le chemin
-    // littéral n'existe pas — le hook PreToolUse le fait normalement en amont,
-    // mais un appel MCP direct peut le contourner.
-    if (!fs.existsSync(resolved)) {
-      const lc = caseMappingForDocument(resolved);
-      if (lc) {
-        const reverted = revertMapping(resolved, lc.reverse_mapping);
-        if (reverted !== resolved) resolved = path.resolve(reverted);
-      }
+    // (le modèle ne voit que des noms codés). Si le chemin littéral n'existe
+    // pas, on cherche la variante canonique puis l'unique nom présent qui
+    // s'anonymise vers le nom demandé. Le hook PreToolUse le fait normalement
+    // en amont, mais un appel MCP direct peut le contourner.
+    if (!fs.existsSync(requested)) {
+      const lc = caseMappingForDocument(requested);
+      if (lc) resolved = path.resolve(resolveMappedPath(requested, lc.mapping, lc.reverse_mapping));
     }
     if (!fs.existsSync(resolved)) {
       return res.status(404).json({ error: `Document introuvable : ${resolved}` });

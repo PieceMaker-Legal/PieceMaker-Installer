@@ -1,12 +1,12 @@
 /**
- * Moteur de substitution d'anonymisation — implémentation unique, sans dépendance.
+ * Moteur de substitution d'anonymisation — implémentation unique, sans
+ * dépendance au dépôt (modules Node natifs uniquement).
  *
  * Extrait de `mapping.cjs`, qui le ré-exporte : une seule définition des
  * frontières de mots, des variantes Unicode et du tri longest-entity-first,
  * sinon deux moteurs de substitution divergent silencieusement.
  *
- * Ce fichier ne require RIEN (ni fs, ni les autres modules du plugin). C'est
- * volontaire : le hook central global (`~/.claude/hooks/piecemaker-central-anonymize.mjs`)
+ * Le hook central global (`~/.claude/hooks/piecemaker-central-anonymize.mjs`)
  * en a besoin et est distribué hors du plugin ; il en require une copie posée à
  * un emplacement stable (`~/.piecemaker/lib/substitution.cjs`). Garder ce module
  * autonome permet de le copier tel quel sans traîner de chaîne de dépendances.
@@ -20,6 +20,9 @@
  * change rien, ce qui permet aux hooks de s'exécuter sans savoir ce qui a déjà
  * été traité.
  */
+
+const fs = require('node:fs');
+const path = require('node:path');
 
 function escapeRegex(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -217,12 +220,95 @@ function revertMapping(text, reverseMapping) {
   return output;
 }
 
+function normalizedPathName(value) {
+  return String(value || '').normalize('NFC');
+}
+
+function pathExists(value) {
+  try {
+    return fs.existsSync(value);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Résout un chemin codé vers le fichier réellement présent sur disque.
+ *
+ * Un code peut représenter plusieurs variantes d'une même entité. Le premier
+ * élément du reverse mapping est canonique pour du texte produit, mais il ne
+ * permet donc pas toujours de reconstruire un nom de fichier existant. La
+ * résolution suit cet ordre, du plus déterministe au plus prudent :
+ *
+ *  1. le chemin littéral existe déjà (un fichier peut lui-même porter le code) ;
+ *  2. le chemin obtenu par ré-identification canonique existe ;
+ *  3. chaque segment manquant est recherché parmi les enfants du répertoire
+ *     courant, et accepté seulement si UN SEUL nom s'anonymise vers le segment
+ *     demandé.
+ *
+ * Si aucune correspondance unique n'existe, le chemin codé d'origine est
+ * conservé. L'outil échouera alors avec un code, plutôt que de recevoir un nom
+ * réel inventé ou le mauvais fichier.
+ */
+function resolveMappedPath(value, mapping, reverseMapping, cwd = process.cwd()) {
+  if (typeof value !== 'string' || !value) return value;
+
+  const base = typeof cwd === 'string' && cwd ? path.resolve(cwd) : process.cwd();
+  const requestedAbsolute = path.isAbsolute(value) ? path.resolve(value) : path.resolve(base, value);
+  if (pathExists(requestedAbsolute)) return value;
+
+  const canonical = revertMapping(value, reverseMapping);
+  const canonicalAbsolute = path.isAbsolute(canonical)
+    ? path.resolve(canonical)
+    : path.resolve(base, canonical);
+  if (canonical !== value && pathExists(canonicalAbsolute)) return canonical;
+
+  const parsed = path.parse(requestedAbsolute);
+  const segments = requestedAbsolute
+    .slice(parsed.root.length)
+    .split(path.sep)
+    .filter(Boolean);
+  let current = parsed.root;
+
+  for (const segment of segments) {
+    const literal = path.join(current, segment);
+    if (pathExists(literal)) {
+      current = literal;
+      continue;
+    }
+
+    const canonicalSegment = revertMapping(segment, reverseMapping);
+    const canonicalCandidate = path.join(current, canonicalSegment);
+    if (canonicalSegment !== segment && pathExists(canonicalCandidate)) {
+      current = canonicalCandidate;
+      continue;
+    }
+
+    let entries;
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      return value;
+    }
+
+    const expected = normalizedPathName(segment);
+    const matches = entries.filter((entry) => (
+      normalizedPathName(applyMapping(entry.name, mapping)) === expected
+    ));
+    if (matches.length !== 1) return value;
+    current = path.join(current, matches[0].name);
+  }
+
+  return path.isAbsolute(value) ? current : (path.relative(base, current) || '.');
+}
+
 module.exports = {
   applyMapping,
   buildEntityRegex,
   byDescendingEntityLength,
   escapeRegex,
   escapeWithVariants,
+  resolveMappedPath,
   revertMapping,
   MIN_ENTITY_LENGTH,
   WORD_BOUNDARY_BEFORE,

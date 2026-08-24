@@ -21,8 +21,15 @@ const SUBSTITUTION_SRC = path.join(repoRoot, 'piecemaker-plugin', 'scripts', 'li
 
 const CENTRAL = {
   version: 1,
-  mapping: { 'Bernard Gilly': 'PERSONNE_PHYSIQUE_01', 'URGOT SA': 'SOCIETE_SA_02' },
-  reverse_mapping: { PERSONNE_PHYSIQUE_01: ['Bernard Gilly'], SOCIETE_SA_02: ['URGOT SA'] },
+  mapping: {
+    'Bernard Gilly': 'PERSONNE_PHYSIQUE_01',
+    'URGOT SA': 'SOCIETE_SA_02',
+    URGOT: 'SOCIETE_SA_02',
+  },
+  reverse_mapping: {
+    PERSONNE_PHYSIQUE_01: ['Bernard Gilly'],
+    SOCIETE_SA_02: ['URGOT SA', 'URGOT'],
+  },
 };
 
 function fixture({ central = CENTRAL } = {}) {
@@ -49,15 +56,19 @@ function runHook(payload, home, { rawInput } = {}) {
 test('A (central) — un file_path CODÉ passé à Read est rétabli en vrai chemin', (t) => {
   const home = fixture();
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const realPath = path.join(home, '06_Email_par_URGOT_SA.md');
+  const codedPath = path.join(home, '06_Email_par_SOCIETE_SA_02_SA.md');
+  fs.writeFileSync(realPath, 'fixture');
 
   const { parsed } = runHook({
     hook_event_name: 'PreToolUse',
     tool_name: 'Read',
-    cwd: '/tmp',
-    tool_input: { file_path: '/tmp/06_Email_par_SOCIETE_SA_02_SA.md' },
+    cwd: home,
+    tool_input: { file_path: codedPath },
   }, home);
   assert.ok(parsed);
-  assert.equal(parsed.hookSpecificOutput.updatedInput.file_path, '/tmp/06_Email_par_URGOT SA_SA.md');
+  assert.equal(parsed.hookSpecificOutput.updatedInput.file_path, realPath);
+  assert.equal(fs.existsSync(parsed.hookSpecificOutput.updatedInput.file_path), true);
 });
 
 test('A (central) — une commande Bash citant un chemin CODÉ est rétablie', (t) => {
