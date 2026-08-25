@@ -68,7 +68,7 @@ export function rule(char = '─') {
   write(c.gray(char.repeat(Math.min(columns(), 78))));
 }
 
-/** The LITELLM banner plus a tagline. */
+/** The PIECEMAKER banner plus a tagline. */
 export function banner(subtitle = 'Installateur — anonymisation & assistance juridique') {
   blank();
   for (const line of renderBanner(columns())) write(c.white(line));
