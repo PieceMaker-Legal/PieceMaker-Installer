@@ -246,6 +246,14 @@ function setMessage(element, message = '', kind = '') {
   element.className = `message ${kind}`.trim();
 }
 
+function notifyNativeShell(message) {
+  try {
+    window.webkit?.messageHandlers?.piecemakerShell?.postMessage(message);
+  } catch (error) {
+    dwarn('native-shell', `Message natif ignoré : ${error.message}`);
+  }
+}
+
 function setActiveTab(name) {
   dlog('ui', `setActiveTab triggered -> '${name}'`);
   document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === name));
@@ -258,7 +266,17 @@ function setActiveTab(name) {
   if (name === 'files' && !filesLoaded) {
     loadFiles({ selectPath: new URLSearchParams(location.search).get('file') });
   }
+  notifyNativeShell({ kind: 'section', value: name });
 }
+
+function navigateToTab(name) {
+  setActiveTab(name);
+  history.replaceState(null, '', `#${name}`);
+}
+
+// La coque native macOS appelle le même chemin de navigation que les boutons
+// web ; aucune logique d'onglet n'est dupliquée dans le lanceur Swift.
+window.piecemakerNavigateTo = navigateToTab;
 
 function showTampon(dataUrl) {
   tamponImage = dataUrl;
@@ -477,6 +495,7 @@ async function loadStatus() {
       const status = await api('/api/admin/status');
       badge.textContent = '● Serveur local actif';
       badge.className = 'status-pill ok';
+      notifyNativeShell({ kind: 'status', value: 'ok', label: badge.textContent });
       byId('version').textContent = status.version;
       byId('wordStatus').textContent = status.wordClients > 0 ? `Oui (${status.wordClients})` : 'Non';
       byId('certStatus').textContent = status.certificatesReady ? 'Prêts' : 'À installer';
@@ -493,6 +512,7 @@ async function loadStatus() {
     } catch (error) {
       badge.textContent = 'Serveur indisponible';
       badge.className = 'status-pill error';
+      notifyNativeShell({ kind: 'status', value: 'error', label: badge.textContent });
       toast(error.message);
     }
   });
@@ -4505,8 +4525,7 @@ async function createFile(event) {
 }
 
 document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => {
-  setActiveTab(tab.dataset.tab);
-  history.replaceState(null, '', `#${tab.dataset.tab}`);
+  navigateToTab(tab.dataset.tab);
 }));
 byId('refreshConfiguration').addEventListener('click', () => loadConfiguration());
 document.querySelectorAll('[data-config-component]').forEach((node) => {
@@ -4595,6 +4614,14 @@ window.addEventListener('beforeunload', (event) => {
 initLogViewer();
 initPerformanceMonitoring();
 loadAdminTheme();
+
+function syncWindowControlsOverlay() {
+  const overlay = navigator.windowControlsOverlay;
+  document.documentElement.dataset.windowControlsOverlay = overlay?.visible ? 'visible' : 'hidden';
+}
+
+syncWindowControlsOverlay();
+navigator.windowControlsOverlay?.addEventListener('geometrychange', syncWindowControlsOverlay);
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('service-worker.js', { scope: './' })

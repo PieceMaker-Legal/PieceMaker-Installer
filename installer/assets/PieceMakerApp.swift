@@ -4,10 +4,18 @@ import WebKit
 private let kAdminURL = "https://localhost:43098/admin/"
 private let kRetryInterval: TimeInterval = 1.0
 private let kMaxRetries = 30
+private let kSections = [
+    (label: "Dossiers", id: "history"),
+    (label: "Configuration", id: "configuration"),
+    (label: "Tampon et pièces", id: "pieces"),
+    (label: "Skills et agents", id: "files"),
+]
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow!
     var webView: WKWebView!
+    var sectionControl: NSSegmentedControl!
+    var statusLabel: NSTextField!
     var retryCount = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -15,6 +23,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let config = WKWebViewConfiguration()
         config.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        config.userContentController.add(self, name: "piecemakerShell")
+        config.userContentController.addUserScript(WKUserScript(
+            source: "document.documentElement.dataset.nativeShell = 'macos';",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
 
@@ -32,12 +46,62 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
         window.title = "PieceMaker"
         window.contentView = webView
+        installTitlebarControls()
         window.makeKeyAndOrderFront(nil)
 
         loadAdmin()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    private func installTitlebarControls() {
+        sectionControl = NSSegmentedControl(
+            labels: kSections.map { $0.label },
+            trackingMode: .selectOne,
+            target: self,
+            action: #selector(selectSection(_:))
+        )
+        sectionControl.controlSize = .small
+        sectionControl.segmentStyle = .texturedRounded
+        sectionControl.selectedSegment = 0
+        sectionControl.setAccessibilityLabel("Sections PieceMaker")
+        sectionControl.sizeToFit()
+
+        let navigationContainer = NSView(frame: NSRect(
+            x: 0,
+            y: 0,
+            width: sectionControl.frame.width + 12,
+            height: max(28, sectionControl.frame.height)
+        ))
+        sectionControl.frame.origin = NSPoint(
+            x: 6,
+            y: (navigationContainer.frame.height - sectionControl.frame.height) / 2
+        )
+        navigationContainer.addSubview(sectionControl)
+        let navigationAccessory = NSTitlebarAccessoryViewController()
+        navigationAccessory.layoutAttribute = .left
+        navigationAccessory.view = navigationContainer
+        window.addTitlebarAccessoryViewController(navigationAccessory)
+
+        statusLabel = NSTextField(labelWithString: "Connexion…")
+        statusLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.alignment = .right
+        statusLabel.sizeToFit()
+        let statusContainer = NSView(frame: NSRect(x: 0, y: 0, width: 142, height: 28))
+        statusLabel.frame = NSRect(x: 0, y: 5, width: 134, height: 18)
+        statusContainer.addSubview(statusLabel)
+        let statusAccessory = NSTitlebarAccessoryViewController()
+        statusAccessory.layoutAttribute = .right
+        statusAccessory.view = statusContainer
+        window.addTitlebarAccessoryViewController(statusAccessory)
+    }
+
+    @objc private func selectSection(_ sender: NSSegmentedControl) {
+        guard sender.selectedSegment >= 0, sender.selectedSegment < kSections.count else { return }
+        let section = kSections[sender.selectedSegment].id
+        webView.evaluateJavaScript("window.piecemakerNavigateTo?.('\(section)')")
+    }
 
     private func startServer() {
         var node = "/usr/local/bin/node"
@@ -63,6 +127,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func loadAdmin() {
         guard let url = URL(string: kAdminURL) else { return }
         webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+    }
+}
+
+extension AppDelegate: WKScriptMessageHandler {
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "piecemakerShell",
+              let payload = message.body as? [String: Any],
+              let kind = payload["kind"] as? String else { return }
+
+        if kind == "section", let section = payload["value"] as? String,
+           let index = kSections.firstIndex(where: { $0.id == section }) {
+            sectionControl.selectedSegment = index
+            return
+        }
+
+        if kind == "status", let label = payload["label"] as? String {
+            statusLabel.stringValue = label
+            statusLabel.textColor = payload["value"] as? String == "ok" ? .systemGreen : .systemRed
+        }
     }
 }
 

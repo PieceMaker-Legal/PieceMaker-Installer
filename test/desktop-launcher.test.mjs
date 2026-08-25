@@ -19,7 +19,7 @@ test('le raccourci PWA est une étape optionnelle proposée par l’installateur
   assert.deepEqual([...ico.subarray(0, 4)], [0, 0, 1, 0]);
 });
 
-test('le raccourci macOS ouvre PieceMaker et le protocole hors ligne démarre seulement le serveur', (t) => {
+test('l’application macOS place les sections dans la barre de titre et le protocole démarre seulement le serveur', (t) => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-desktop-launcher-'));
   t.after(() => fs.rmSync(homeDir, { recursive: true, force: true }));
   const repoRoot = path.join(homeDir, 'PieceMaker');
@@ -41,18 +41,25 @@ test('le raccourci macOS ouvre PieceMaker et le protocole hors ligne démarre se
     iconPath,
     commandRunner(command, args) {
       calls.push({ command, args });
+      if (command === 'swiftc') {
+        fs.writeFileSync(args[args.indexOf('-o') + 1], 'exécutable factice');
+      }
       return { code: 0, stdout: '', stderr: '' };
     },
   });
 
-  const desktopScript = fs.readFileSync(path.join(result.shortcut, 'Contents', 'MacOS', 'PieceMaker'), 'utf8');
+  const swiftSource = fs.readFileSync(path.resolve('installer/assets/PieceMakerApp.swift'), 'utf8');
   const protocolScript = fs.readFileSync(path.join(result.protocol, 'Contents', 'MacOS', 'PieceMaker'), 'utf8');
   const protocolPlist = fs.readFileSync(path.join(result.protocol, 'Contents', 'Info.plist'), 'utf8');
-  assert.match(desktopScript, /piecemaker\.mjs' open/);
+  assert.equal(result.native, true);
+  assert.match(swiftSource, /NSTitlebarAccessoryViewController/);
+  assert.match(swiftSource, /"Dossiers"[\s\S]*"Configuration"[\s\S]*"Skills et agents"/);
+  assert.match(swiftSource, /dataset\.nativeShell = 'macos'/);
+  assert.match(swiftSource, /piecemakerNavigateTo/);
   assert.match(protocolScript, /piecemaker\.mjs' start/);
   assert.match(protocolPlist, /<string>piecemaker<\/string>/);
-  assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].args, ['-f', result.protocol]);
+  const registration = calls.find(({ command }) => command.endsWith('lsregister'));
+  assert.deepEqual(registration.args, ['-f', result.protocol]);
   assert.deepEqual(desktopLauncherStatus({ platform: 'darwin', homeDir, runtimeDir, desktopDir }), {
     shortcut: result.shortcut,
     protocol: result.protocol,

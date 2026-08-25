@@ -37,6 +37,41 @@ h2 { margin-bottom: 8px; font-size: 1.15rem; }
 .panel { display: none; height: 100%; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .panel.active { display: block; }
 #history.panel { overflow: hidden; }
+
+/* Une PWA Chromium installée peut remplacer la barre de titre par son propre
+   contenu. Les variables système évitent les boutons de fenêtre, placés à
+   gauche sur macOS et à droite sur Windows. La coque WKWebView macOS possède
+   ses propres contrôles natifs et masque donc cette barre web. */
+html[data-window-controls-overlay="visible"] .shell {
+  padding-top: calc(env(titlebar-area-height, 36px) + 12px);
+}
+html[data-window-controls-overlay="visible"] .tabs {
+  position: fixed;
+  z-index: 1000;
+  top: env(titlebar-area-y, 0);
+  left: env(titlebar-area-x, 0);
+  width: env(titlebar-area-width, 100%);
+  height: env(titlebar-area-height, 36px);
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 0 8px;
+  background: var(--paper);
+  app-region: drag;
+  -webkit-app-region: drag;
+}
+html[data-window-controls-overlay="visible"] :is(.app-title, .tab, #serverBadge) {
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+html[data-window-controls-overlay="visible"] .app-title { margin-right: 6px; font-size: .82rem; }
+html[data-window-controls-overlay="visible"] .tab {
+  height: 100%;
+  padding: 0 11px;
+  font-size: .78rem;
+}
+html[data-window-controls-overlay="visible"] #serverBadge { padding: 5px 9px; font-size: .7rem; }
+html[data-native-shell="macos"] .shell { padding-top: 12px; }
+html[data-native-shell="macos"] .tabs { display: none; }
 .card { border: 1px solid var(--line); border-radius: 16px; background: var(--card); box-shadow: 0 6px 24px rgba(21, 43, 39, .04); }
 .hero { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 26px; }
 .hero p:last-child { margin-bottom: 0; color: var(--muted); }

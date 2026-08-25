@@ -7,6 +7,10 @@
   "start_url": "/admin/",
   "scope": "/admin/",
   "display": "standalone",
+  "display_override": [
+    "window-controls-overlay",
+    "standalone"
+  ],
   "background_color": "#ffffff",
   "theme_color": "#006c62",
   "icons": [

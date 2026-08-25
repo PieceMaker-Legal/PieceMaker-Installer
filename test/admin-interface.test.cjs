@@ -10,6 +10,7 @@ test('l’administration expose un manifeste PWA limité à /admin/', () => {
   const html = read('admin/index.html');
   const app = read('admin/app.js');
   const manifest = JSON.parse(read('admin/manifest.webmanifest'));
+  const css = read('admin/styles.css');
   const serviceWorker = read('admin/service-worker.js');
   const offline = read('admin/offline.html');
 
@@ -19,6 +20,7 @@ test('l’administration expose un manifeste PWA limité à /admin/', () => {
   assert.equal(manifest.start_url, '/admin/');
   assert.equal(manifest.scope, '/admin/');
   assert.equal(manifest.display, 'standalone');
+  assert.deepEqual(manifest.display_override, ['window-controls-overlay', 'standalone']);
   assert.deepEqual(manifest.icons.map(({ sizes }) => sizes), ['192x192', '512x512']);
   for (const icon of manifest.icons) {
     const image = fs.readFileSync(path.join(root, 'admin', icon.src));
@@ -28,6 +30,9 @@ test('l’administration expose un manifeste PWA limité à /admin/', () => {
     assert.equal(image.readUInt32BE(20), expectedSize, `${icon.src} doit avoir la hauteur déclarée`);
   }
   assert.match(app, /navigator\.serviceWorker\.register\('service-worker\.js', \{ scope: '\.\/' \}\)/);
+  assert.match(app, /navigator\.windowControlsOverlay\?\.addEventListener\('geometrychange'/);
+  assert.match(css, /env\(titlebar-area-height, 36px\)/);
+  assert.match(css, /app-region: drag/);
   assert.match(serviceWorker, /event\.request\.mode === 'navigate'/);
   assert.match(serviceWorker, /name\.startsWith\(CACHE_PREFIX\)/);
   assert.doesNotMatch(serviceWorker, /\/api\/admin/);
