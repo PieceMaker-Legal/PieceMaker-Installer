@@ -34,17 +34,6 @@ son état dans **Configuration** et propose un lien vers l'interface LiteLLM
 native. Les requêtes LLM vont directement au port local 4000 : elles ne font
 pas un détour par le serveur HTTPS PieceMaker.
 
-## Démarrage manuel minimal
-
-```bash
-./start.sh
-ANTHROPIC_BASE_URL=http://127.0.0.1:4000/anthropic claude
-```
-
-Ce mode ne demande ni base de données ni clé LiteLLM. Il transmet
-l'authentification Anthropic du client, y compris Claude Pro/Max, par le
-pass-through natif `/anthropic`.
-
 Le proxy refuse les routes LLM si `~/.piecemaker/central-mapping.json` est absent
 ou vide. Les routes d'administration LiteLLM restent accessibles pour permettre
 la configuration.
@@ -54,40 +43,12 @@ pass-through exactes `/chatgpt/responses`, `/chatgpt/responses/compact` et
 `/chatgpt/models` vers son backend d'abonnement. Cette forme reste compatible
 avec une éventuelle clé maître LiteLLM.
 
-## Réutiliser une configuration LiteLLM
-
-```bash
-LITELLM_CONFIG_PATH=/chemin/vers/config.yaml ./start.sh
-```
-
-Le fichier PieceMaker par défaut ne déclare aucun modèle. Une configuration
-existante est donc utilisée telle quelle ; le middleware de mapping reste autour
-des routes Anthropic, OpenAI et Gemini usuelles.
-
 ## Admin UI native (optionnelle)
 
 LiteLLM fournit déjà une interface sur `http://127.0.0.1:4000/ui`. Sa
-documentation impose une base PostgreSQL et une clé maître. Quand les deux
-variables suivantes sont présentes, PieceMaker active automatiquement
-`STORE_MODEL_IN_DB=True`, ce qui permet d'ajouter ou modifier les modèles dans
-l'interface sans redémarrer le proxy :
-
-```bash
-DATABASE_URL='postgresql://...' \
-LITELLM_MASTER_KEY='sk-...' \
-UI_USERNAME='admin' \
-UI_PASSWORD='...' \
-./start.sh
-```
-
-Dans ce mode administré, les clients appellent le point d'entrée unifié LiteLLM
-et utilisent une clé LiteLLM. Pour Claude Code :
-
-```bash
-ANTHROPIC_BASE_URL=http://127.0.0.1:4000 \
-ANTHROPIC_AUTH_TOKEN='sk-cle-litellm' \
-claude
-```
+documentation impose une base PostgreSQL et une clé maître. PieceMaker ne
+réimplémente pas cette interface : la carte **Configuration** de l'Admin affiche
+seulement l'état du service et ouvre l'UI native lorsqu'elle est configurée.
 
 Références :
 

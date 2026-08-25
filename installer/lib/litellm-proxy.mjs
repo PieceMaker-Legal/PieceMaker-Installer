@@ -24,7 +24,6 @@ import {
 import { loadConfig } from './state.mjs';
 
 export const LITELLM_LAUNCHD_LABEL = 'com.piecemaker.litellm';
-export const LITELLM_MINIMUM_VERSION = '1.98';
 export const CODEX_PROVIDER_ID = 'piecemaker_litellm';
 
 const CODEX_BLOCK_START = '# >>> PieceMaker LiteLLM (géré automatiquement)';
