@@ -70,7 +70,7 @@ html[data-window-controls-overlay="visible"] .tab {
   font-size: .78rem;
 }
 html[data-window-controls-overlay="visible"] #serverBadge { padding: 5px 9px; font-size: .7rem; }
-html[data-native-shell="macos"] .shell { padding-top: 12px; }
+html[data-native-shell="macos"] .shell { width: 100%; margin: 0; padding: 0; }
 html[data-native-shell="macos"] .tabs { display: none; }
 .card { border: 1px solid var(--line); border-radius: 16px; background: var(--card); box-shadow: 0 6px 24px rgba(21, 43, 39, .04); }
 .hero { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 26px; }
