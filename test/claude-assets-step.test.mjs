@@ -17,6 +17,8 @@ function dependencies(overrides = {}) {
     claudeHooksStatus: () => ({ ok: true }),
     claudeAssetStatus: () => ({ state: 'linked' }),
     depositRootClaudeMd: () => ({ status: 'kept' }),
+    loadConfig: () => ({ caseFolders: [] }),
+    refreshRegisteredCaseRules: () => ({ refreshed: 0, failed: [] }),
     log: { info() {}, detail() {}, warn() {} },
     ...overrides,
   };

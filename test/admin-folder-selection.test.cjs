@@ -94,6 +94,7 @@ test('un dossier extérieur est enregistré et réutilise les composants Claude 
   assert.match(rule, /\| Dossier juridique actif \|/);
   assert.match(rule, /caseFolders/);
   assert.match(rule, /piecemaker chronology --json/);
+  assert.match(rule, /piecemaker graph query/);
   assert.doesNotMatch(rule, /Chaque sous-dossier immédiat/);
   assert.match(fs.readFileSync(path.join(data.selected, 'CLAUDE.md'), 'utf8'), /piecemaker-instructions-start/);
   assert.match(fs.readFileSync(path.join(data.selected, 'AGENTS.md'), 'utf8'), /piecemaker-instructions-start/);
