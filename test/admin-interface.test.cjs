@@ -36,6 +36,8 @@ test('l’administration expose un manifeste PWA limité à /admin/', () => {
   assert.match(css, /env\(titlebar-area-height, 36px\)/);
   assert.match(css, /app-region: drag/);
   assert.match(css, /html\[data-native-shell="macos"\] \.shell \{ width: 100%; margin: 0; padding: 0; \}/);
+  assert.match(css, /html\[data-native-shell="macos"\] #history \.desktop-card \{ border-radius: 0; \}/);
+  assert.match(css, /@media \(display-mode: standalone\), \(display-mode: window-controls-overlay\)[\s\S]*html #history \.desktop-card \{ border-radius: 0; \}/);
   assert.match(serviceWorker, /event\.request\.mode === 'navigate'/);
   assert.match(serviceWorker, /name\.startsWith\(CACHE_PREFIX\)/);
   assert.match(serviceWorker, /new Request\(new URL\(asset, self\.location\.origin\), \{ cache: 'reload' \}\)/);
