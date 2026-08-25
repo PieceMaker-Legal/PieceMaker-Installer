@@ -206,6 +206,63 @@ class TestPIIMiddleware(unittest.TestCase):
         finally:
             os.unlink(mapping_path)
 
+    def test_streaming_ne_simule_pas_une_deconnexion_client(self):
+        async def call():
+            response_sent = asyncio.Event()
+            disconnect_released = asyncio.Event()
+            receive_calls = 0
+            sent = []
+
+            async def app(scope, receive, send):
+                await receive()
+                disconnect_listener = asyncio.create_task(receive())
+                await send({
+                    'type': 'http.response.start',
+                    'status': 200,
+                    'headers': [(b'content-type', b'text/event-stream')],
+                })
+                await asyncio.sleep(0)
+                if disconnect_listener.done():
+                    return
+                await send({
+                    'type': 'http.response.body',
+                    'body': b'data: {"text":"PERSONNE_PHYSIQUE_01"}\n\n',
+                    'more_body': False,
+                })
+                response_sent.set()
+                disconnect_listener.cancel()
+                try:
+                    await disconnect_listener
+                except asyncio.CancelledError:
+                    pass
+
+            async def receive():
+                nonlocal receive_calls
+                receive_calls += 1
+                if receive_calls == 1:
+                    return {'type': 'http.request', 'body': b'{"input":"Bonjour"}', 'more_body': False}
+                await disconnect_released.wait()
+                return {'type': 'http.disconnect'}
+
+            async def send(message):
+                sent.append(message)
+
+            self.middleware.app = app
+            await asyncio.wait_for(self.middleware({
+                'type': 'http',
+                'path': '/v1/responses',
+                'method': 'POST',
+                'headers': [(b'content-type', b'application/json')],
+            }, receive, send), timeout=1)
+            self.assertTrue(response_sent.is_set())
+            self.assertFalse(disconnect_released.is_set())
+            return sent
+
+        sent = _run(call())
+        self.assertEqual(sent[-1]['type'], 'http.response.body')
+        self.assertFalse(sent[-1]['more_body'])
+        self.assertIn('Jean Dupont', sent[-1]['body'].decode('utf-8'))
+
     def test_mapping_absent_bloque_generation_mais_pas_admin(self):
         missing = os.path.join(tempfile.gettempdir(), 'piecemaker-mapping-absent-test.json')
         try:

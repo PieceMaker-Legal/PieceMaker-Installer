@@ -3,6 +3,7 @@
 import os from 'node:os';
 
 import {
+  bypassLlmClients,
   configureLlmClients,
   getLitellmStatus,
   installLitellmDependencies,
@@ -48,19 +49,21 @@ export async function install(ctx) {
     return { status: 'failed', note: error.message };
   }
 
+  let service;
+  try {
+    if (IS_MAC) installLitellmLaunchAgent({ config: ctx.config, userHome: os.homedir() });
+    service = await startLitellmProxy({ config: ctx.config });
+    log.ok(`Proxy LiteLLM ${service.started ? 'démarré' : 'déjà actif'} : ${service.origin}`);
+  } catch (error) {
+    bypassLlmClients({ userHome: os.homedir() });
+    return { status: 'failed', note: error.message };
+  }
+
   const clients = configureLlmClients({ config: ctx.config, userHome: os.homedir() });
   for (const [name, result] of Object.entries(clients)) {
     const label = name === 'claude' ? 'Claude Code' : 'Codex';
     if (result.configured) log.ok(`${label} ${result.changed ? 'routé' : 'déjà routé'} via LiteLLM.`);
     else log.warn(`${label} non modifié : ${result.reason}.`);
-  }
-
-  try {
-    if (IS_MAC) installLitellmLaunchAgent({ config: ctx.config, userHome: os.homedir() });
-    const service = await startLitellmProxy({ config: ctx.config });
-    log.ok(`Proxy LiteLLM ${service.started ? 'démarré' : 'déjà actif'} : ${service.origin}`);
-  } catch (error) {
-    return { status: 'failed', note: error.message };
   }
 
   const issues = clientIssues(clients);

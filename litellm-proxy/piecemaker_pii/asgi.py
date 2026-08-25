@@ -192,7 +192,12 @@ class PIIMiddleware:
             if not body_sent:
                 body_sent = True
                 return {'type': 'http.request', 'body': modified_body, 'more_body': False}
-            return {'type': 'http.disconnect'}
+            # Après avoir rejoué le corps modifié, conserver le vrai canal de
+            # réception. Les réponses streaming (Starlette/LiteLLM) l'écoutent
+            # en parallèle pour détecter la déconnexion du client. Renvoyer un
+            # disconnect synthétique ici annule chaque flux juste après son
+            # démarrage et laisse Uvicorn avec une réponse ASGI incomplète.
+            return await receive()
 
         is_streaming = False
         deanonymizer: Optional[StreamDeanonymizer] = None

@@ -199,6 +199,38 @@ export function configureClaudeCodeProxy({
   return { configured: true, changed: true, conflict: false, file: settingsFile };
 }
 
+export function bypassClaudeCodeProxy({ userHome = os.homedir() } = {}) {
+  const settingsFile = path.join(userHome, '.claude', 'settings.json');
+  if (!fs.existsSync(settingsFile)) {
+    return { bypassed: true, changed: false, conflict: false, file: settingsFile };
+  }
+
+  let settings;
+  try {
+    settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) throw new Error('objet JSON attendu');
+  } catch {
+    return { bypassed: false, changed: false, conflict: true, file: settingsFile, reason: 'settings-invalid' };
+  }
+
+  const env = settings.env;
+  if (env === undefined || (env && typeof env === 'object' && !Array.isArray(env)
+      && !env.ANTHROPIC_BASE_URL)) {
+    return { bypassed: true, changed: false, conflict: false, file: settingsFile };
+  }
+  if (!env || typeof env !== 'object' || Array.isArray(env)) {
+    return { bypassed: false, changed: false, conflict: true, file: settingsFile, reason: 'env-invalid' };
+  }
+  if (!isPieceMakerLoopbackUrl(env.ANTHROPIC_BASE_URL, '/anthropic')) {
+    return { bypassed: true, changed: false, conflict: false, file: settingsFile };
+  }
+
+  delete env.ANTHROPIC_BASE_URL;
+  if (Object.keys(env).length === 0) delete settings.env;
+  atomicWrite(settingsFile, `${JSON.stringify(settings, null, 2)}\n`);
+  return { bypassed: true, changed: true, conflict: false, file: settingsFile };
+}
+
 function tomlString(value) {
   return JSON.stringify(String(value));
 }
@@ -284,6 +316,56 @@ export function configureCodexProxy({
   }
   atomicWrite(configFile, normalized);
   return { configured: true, changed: true, conflict: false, file: configFile };
+}
+
+export function bypassCodexProxy({
+  codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
+} = {}) {
+  const configFile = path.join(codexHome, 'config.toml');
+  if (!fs.existsSync(configFile)) {
+    return { bypassed: true, changed: false, conflict: false, file: configFile };
+  }
+
+  let content;
+  try { content = fs.readFileSync(configFile, 'utf8'); } catch {
+    return { bypassed: false, changed: false, conflict: true, file: configFile, reason: 'config-unreadable' };
+  }
+
+  const lines = content.replace(/^﻿/, '').split(/\r?\n/);
+  const provider = topLevelAssignment(lines, 'model_provider');
+  const providerValue = provider ? parseTomlString(provider.raw) : 'openai';
+  const managedStart = lines.findIndex((line) => line.trim() === CODEX_BLOCK_START);
+  const managedEnd = lines.findIndex((line) => line.trim() === CODEX_BLOCK_END);
+  if ((managedStart < 0) !== (managedEnd < 0) || managedEnd < managedStart) {
+    return { bypassed: false, changed: false, conflict: true, file: configFile, reason: 'provider-block-invalid' };
+  }
+  if (providerValue !== CODEX_PROVIDER_ID && managedStart < 0) {
+    return { bypassed: true, changed: false, conflict: false, file: configFile };
+  }
+  if (managedStart >= 0) lines.splice(managedStart, managedEnd - managedStart + 1);
+
+  if (providerValue === CODEX_PROVIDER_ID) {
+    lines[provider.index] = 'model_provider = "openai"';
+    if (lines[provider.index - 1]?.trim() === '# Fournisseur Responses protégé par PieceMaker.') {
+      lines.splice(provider.index - 1, 1);
+    }
+  }
+
+  const normalized = `${lines.join('\n').replace(/\n+$/, '')}\n`;
+  if (normalized === `${content.replace(/^﻿/, '').replace(/\n*$/, '')}\n`) {
+    return { bypassed: true, changed: false, conflict: false, file: configFile };
+  }
+  atomicWrite(configFile, normalized);
+  return { bypassed: true, changed: true, conflict: false, file: configFile };
+}
+
+export function bypassLlmClients({ userHome = os.homedir() } = {}) {
+  return {
+    claude: bypassClaudeCodeProxy({ userHome }),
+    codex: bypassCodexProxy({
+      codexHome: process.env.CODEX_HOME || path.join(userHome, '.codex'),
+    }),
+  };
 }
 
 export function configureLlmClients({ config = loadConfig(), userHome = os.homedir() } = {}) {

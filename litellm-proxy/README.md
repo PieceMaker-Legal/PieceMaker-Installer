@@ -27,7 +27,13 @@ piecemaker start    # démarre PieceMaker et le proxy installé
 piecemaker stop     # arrête les deux services
 piecemaker status   # affiche leurs deux états
 piecemaker logs     # affiche leurs deux journaux
+piecemaker proxy bypass  # coupe-circuit : rétablit l'accès direct des clients
 ```
+
+Le coupe-circuit ne dépend pas du proxy : il retire uniquement les réglages
+LiteLLM gérés par PieceMaker et conserve les autres paramètres Claude Code et
+Codex. `piecemaker stop` applique aussi ce rétablissement avant d'arrêter le
+proxy. Il faut ensuite rouvrir les sessions clientes déjà actives.
 
 L'Admin PieceMaker permet aussi d'installer la passerelle en un clic, affiche
 son état dans **Configuration** et propose un lien vers l'interface LiteLLM

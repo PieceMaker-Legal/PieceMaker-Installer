@@ -6,6 +6,8 @@ import test from 'node:test';
 
 import {
   CODEX_PROVIDER_ID,
+  bypassClaudeCodeProxy,
+  bypassCodexProxy,
   configureClaudeCodeProxy,
   configureCodexProxy,
   installLitellmDependencies,
@@ -40,6 +42,40 @@ test('Claude Code reçoit ANTHROPIC_BASE_URL sans perdre ses hooks ni ses régla
   assert.equal(settings.env.VARIABLE_TIERCE, 'conservée');
   assert.equal(settings.env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:44000/anthropic');
   assert.equal(settings.hooks.Stop[0].hooks[0].command, 'echo tiers');
+});
+
+test('le bypass Claude retire seulement le routage PieceMaker', (t) => {
+  const userHome = temporaryHome(t);
+  const directory = path.join(userHome, '.claude');
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, 'settings.json'), `${JSON.stringify({
+    hooks: { Stop: [{ hooks: [{ type: 'command', command: 'echo tiers' }] }] },
+    env: {
+      ANTHROPIC_BASE_URL: 'http://127.0.0.1:4000/anthropic',
+      VARIABLE_TIERCE: 'conservée',
+    },
+  }, null, 2)}\n`);
+
+  const first = bypassClaudeCodeProxy({ userHome });
+  const second = bypassClaudeCodeProxy({ userHome });
+  const settings = JSON.parse(fs.readFileSync(path.join(directory, 'settings.json'), 'utf8'));
+
+  assert.equal(first.changed, true);
+  assert.equal(second.changed, false);
+  assert.equal(settings.env.ANTHROPIC_BASE_URL, undefined);
+  assert.equal(settings.env.VARIABLE_TIERCE, 'conservée');
+  assert.equal(settings.hooks.Stop[0].hooks[0].command, 'echo tiers');
+});
+
+test('le bypass Claude conserve un proxy tiers', (t) => {
+  const userHome = temporaryHome(t);
+  const directory = path.join(userHome, '.claude');
+  fs.mkdirSync(directory, { recursive: true });
+  const original = '{"env":{"ANTHROPIC_BASE_URL":"https://gateway.example"}}\n';
+  fs.writeFileSync(path.join(directory, 'settings.json'), original);
+
+  assert.equal(bypassClaudeCodeProxy({ userHome }).changed, false);
+  assert.equal(fs.readFileSync(path.join(directory, 'settings.json'), 'utf8'), original);
 });
 
 test('Claude Code conserve un proxy tiers explicite et signale le conflit', (t) => {
@@ -91,6 +127,44 @@ test('Codex utilise le pass-through ChatGPT HTTP sans WebSocket et préserve le 
   assert.match(content, /supports_websockets = false/);
   assert.match(content, /model = "gpt-test"/);
   assert.match(content, /\[mcp_servers\.tiers\]\ncommand = "serveur-tiers"/);
+});
+
+test('le bypass Codex restaure OpenAI et retire seulement le bloc PieceMaker', (t) => {
+  const userHome = temporaryHome(t);
+  const codexHome = path.join(userHome, '.codex');
+  fs.mkdirSync(codexHome, { recursive: true });
+  fs.writeFileSync(path.join(codexHome, 'config.toml'), [
+    'model = "gpt-test"',
+    '',
+    '[mcp_servers.tiers]',
+    'command = "serveur-tiers"',
+    '',
+  ].join('\n'));
+  configureCodexProxy({ baseUrl: 'http://127.0.0.1:4000/chatgpt', codexHome });
+
+  const first = bypassCodexProxy({ codexHome });
+  const second = bypassCodexProxy({ codexHome });
+  const content = fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8');
+
+  assert.equal(first.changed, true);
+  assert.equal(second.changed, false);
+  assert.match(content, /^model_provider = "openai"$/m);
+  assert.doesNotMatch(content, /PieceMaker LiteLLM|piecemaker_litellm/);
+  assert.match(content, /model = "gpt-test"/);
+  assert.match(content, /\[mcp_servers\.tiers\]\ncommand = "serveur-tiers"/);
+});
+
+test('le bypass Codex ne normalise pas une configuration tierce', (t) => {
+  const userHome = temporaryHome(t);
+  const codexHome = path.join(userHome, '.codex');
+  fs.mkdirSync(codexHome, { recursive: true });
+  const original = 'model_provider = "entreprise"\n\n[model_providers.entreprise]\nbase_url = "https://gateway.example"\n\n';
+  fs.writeFileSync(path.join(codexHome, 'config.toml'), original);
+
+  const result = bypassCodexProxy({ codexHome });
+
+  assert.equal(result.changed, false);
+  assert.equal(fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8'), original);
 });
 
 test('Codex ne remplace jamais un fournisseur tiers déjà sélectionné', (t) => {
