@@ -1,0 +1,21 @@
+# PieceMaker — configuration du proxy LiteLLM
+#
+# Le travail PII est fait par le middleware ASGI (piecemaker_pii/asgi.py).
+# LiteLLM sert de proxy HTTP avec pass-through Anthropic : il transmet les
+# requetes /v1/messages telles quelles a api.anthropic.com, en conservant
+# les headers d'auth du client (OAuth Pro/Max ou x-api-key).
+
+general_settings:
+  pass_through_endpoints:
+    - path: "/v1/messages"
+      target: "https://api.anthropic.com/v1/messages"
+      headers:
+        authorization: "authorization"
+        x-api-key: "x-api-key"
+        anthropic-version: "anthropic-version"
+        anthropic-beta: "anthropic-beta"
+        content-type: "content-type"
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
