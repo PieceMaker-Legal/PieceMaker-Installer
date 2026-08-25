@@ -10,6 +10,8 @@ litellm-proxy/piecemaker_pii/__pycache__/
 # Dependencies
 node_modules/
 package-lock.json
+.venv/
+venv/
 
 # Build outputs
 dist/
