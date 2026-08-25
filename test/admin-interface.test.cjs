@@ -21,6 +21,7 @@ test('l’administration expose un manifeste PWA limité à /admin/', () => {
   assert.equal(manifest.scope, '/admin/');
   assert.equal(manifest.display, 'standalone');
   assert.deepEqual(manifest.display_override, ['window-controls-overlay', 'standalone']);
+  assert.match(css, /@media \(display-mode: standalone\), \(display-mode: window-controls-overlay\) \{\s*\.shell \{ width: 100%; margin: 0; padding: 0; \}/);
   assert.deepEqual(manifest.icons.map(({ sizes }) => sizes), ['192x192', '512x512']);
   for (const icon of manifest.icons) {
     const image = fs.readFileSync(path.join(root, 'admin', icon.src));

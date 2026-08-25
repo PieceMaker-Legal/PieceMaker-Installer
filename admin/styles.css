@@ -42,7 +42,7 @@ h2 { margin-bottom: 8px; font-size: 1.15rem; }
    contenu. Les variables système évitent les boutons de fenêtre, placés à
    gauche sur macOS et à droite sur Windows. La coque WKWebView macOS possède
    ses propres contrôles natifs et masque donc cette barre web. */
-html[data-window-controls-overlay="visible"] .shell {
+html[data-window-controls-overlay="visible"] .shell > main {
   padding-top: calc(env(titlebar-area-height, 36px) + 12px);
 }
 html[data-window-controls-overlay="visible"] .tabs {
@@ -443,6 +443,10 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
   .repository-identity, .branch-identity, .folder-column, .history-column { border-right: 0; border-bottom: 1px solid #d8dee4; }
   .toolbar-actions { align-items: stretch; flex-direction: column; }
   .revision-column { grid-column: auto; }
+}
+
+@media (display-mode: standalone), (display-mode: window-controls-overlay) {
+  .shell { width: 100%; margin: 0; padding: 0; }
 }
 
 /* Tampon et pièces */
