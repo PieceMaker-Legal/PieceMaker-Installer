@@ -33,6 +33,13 @@ import { select, confirm, multiSelect, pause, nonInteractive } from '../lib/prom
 import { REPO_ROOT, commandExists, findPython } from '../lib/platform.mjs';
 import { loadConfig, readEnv, markStep, loadState, CONFIG_FILE } from '../lib/state.mjs';
 import {
+  configureLlmClients,
+  getLitellmStatus,
+  readLitellmLogs,
+  startLitellmProxy,
+  stopLitellmProxy,
+} from '../lib/litellm-proxy.mjs';
+import {
   getServerStatus,
   openAdmin,
   readLogs,
@@ -372,14 +379,38 @@ async function installerMenu(steps, ctx, { allowBack = false } = {}) {
   }
 }
 
-function printServerStatus(status) {
+function printServerStatus(status, proxy = null) {
   title('État local');
-  summary([
+  const rows = [
     ['Serveur HTTPS', status.running ? badge.done : badge.todo, status.running ? `PID ${status.pid || 'externe'}` : 'arrêté'],
     ['Interface web', status.running ? badge.done : badge.todo, status.url],
     ['Journal', badge.todo, status.logFile],
-  ]);
+  ];
+  if (proxy) {
+    const routed = Number(Boolean(proxy.routing?.claude)) + Number(Boolean(proxy.routing?.codex));
+    rows.splice(1, 0,
+      ['Proxy PII LiteLLM', proxy.running ? badge.done : proxy.installed ? badge.todo : badge.failed,
+        proxy.running ? `PID ${proxy.pid || 'externe'} · ${proxy.origin}` : proxy.installed ? 'arrêté' : 'non installé'],
+      ['Routage IA', routed === 2 ? badge.done : badge.todo, `${routed}/2 · Claude Code + Codex`]);
+  }
+  summary(rows);
   blank();
+}
+
+async function startProxyCompanion() {
+  const status = await getLitellmStatus();
+  if (!status.installed) return status;
+  const clients = configureLlmClients({ config: loadConfig(), userHome: os.homedir() });
+  for (const [name, result] of Object.entries(clients)) {
+    if (!result.configured) log.warn(`${name === 'claude' ? 'Claude Code' : 'Codex'} non routé : ${result.reason}.`);
+  }
+  return startLitellmProxy();
+}
+
+async function stopProxyCompanion() {
+  const status = await getLitellmStatus();
+  if (!status.installed || (!status.running && !status.managed)) return status;
+  return stopLitellmProxy();
 }
 
 async function runChronologyCommand(flags) {
@@ -398,35 +429,49 @@ async function runChronologyCommand(flags) {
 async function runOperationalCommand(command, knownUpdate = null, flags = {}) {
   if (command === 'chronology') return runChronologyCommand(flags);
   if (command === 'open') {
+    const proxy = await startProxyCompanion();
+    if (proxy.installed) log.ok(proxy.started ? `Proxy PII démarré : ${proxy.origin}` : `Proxy PII actif : ${proxy.origin}`);
     const status = await openAdmin();
     log.ok(`Interface ouverte : ${status.url}`);
     return 0;
   }
   if (command === 'start') {
+    const proxy = await startProxyCompanion();
     const status = await startServer();
+    if (proxy.installed) log.ok(proxy.started ? `Proxy PII démarré : ${proxy.origin}` : `Proxy PII déjà actif : ${proxy.origin}`);
+    else log.warn('Proxy PII LiteLLM non installé — relancez le composant 16.');
     log.ok(status.started ? `Serveur démarré : ${status.url}` : `Serveur déjà actif : ${status.url}`);
     return 0;
   }
   if (command === 'stop') {
     const status = await stopServer();
+    const proxy = await stopProxyCompanion();
     if (status.alreadyStopped) log.info('Le serveur est déjà arrêté.');
     else log.ok('Serveur arrêté.');
+    if (proxy.stopped) log.ok('Proxy PII LiteLLM arrêté.');
     return 0;
   }
   if (command === 'restart') {
     await stopServer();
+    await stopProxyCompanion();
+    const proxy = await startProxyCompanion();
     const status = await startServer();
     log.ok(`Serveur redémarré : ${status.url}`);
+    if (proxy.installed) log.ok(`Proxy PII redémarré : ${proxy.origin}`);
     return 0;
   }
   if (command === 'status') {
-    printServerStatus(await getServerStatus());
+    const [status, proxy] = await Promise.all([getServerStatus(), getLitellmStatus()]);
+    printServerStatus(status, proxy);
     return 0;
   }
   if (command === 'logs') {
-    title('Journal du serveur');
+    title('Journal du serveur HTTPS');
     const content = readLogs();
     write(content || '  Aucun journal disponible.');
+    blank();
+    title('Journal du proxy PII LiteLLM');
+    write(readLitellmLogs() || '  Aucun journal disponible.');
     blank();
     return 0;
   }
@@ -437,6 +482,8 @@ async function runOperationalCommand(command, knownUpdate = null, flags = {}) {
     if (!pending.available) {
       log.ok(`PieceMaker est déjà à jour (${pending.ref}, ${pending.current.slice(0, 7)}).`);
       reconcileCaseInstructions();
+      const proxy = await getLitellmStatus();
+      if (proxy.installed) configureLlmClients({ config: loadConfig(), userHome: os.homedir() });
       await refreshDesktopApplicationAfterUpdate();
       if (reconcileCentralHook()) {
         log.info('Rouvrez les sessions Claude Code/Codex actives pour charger les hooks et le MCP à jour.');
@@ -454,8 +501,9 @@ async function runOperationalCommand(command, knownUpdate = null, flags = {}) {
     // from the dev clone, so with no PID file it comes back unmanaged. We adopt
     // it: stop whatever holds the port and bring a managed server back below,
     // rather than leaving the user to restart it themselves.
-    const previous = await getServerStatus();
+    const [previous, previousProxy] = await Promise.all([getServerStatus(), getLitellmStatus()]);
     if (previous.running) await stopServer();
+    if (previousProxy.running || previousProxy.managed) await stopLitellmProxy();
     try {
       const result = updateRepository(pending);
       log.ok(`PieceMaker mis à jour (${result.ref}, ${result.target.slice(0, 7)}).`);
@@ -470,7 +518,7 @@ async function runOperationalCommand(command, knownUpdate = null, flags = {}) {
       reconcileCaseInstructions();
 
       if (result.pythonChanged) {
-        log.warn('requirements.txt a changé : relancez « piecemaker install » puis l’étape 03 — Python & GLiNER.');
+        log.warn('Une dépendance Python a changé : relancez « piecemaker install » (étapes 03 et 16 si elles sont installées).');
       }
 
       // Les composants PieceMaker sont découverts directement dans
@@ -491,12 +539,21 @@ async function runOperationalCommand(command, knownUpdate = null, flags = {}) {
       }
 
       reconcileCentralHook();
+      if (previousProxy.installed) configureLlmClients({ config: loadConfig(), userHome: os.homedir() });
       await refreshDesktopApplicationAfterUpdate();
       log.info('Rouvrez les sessions Claude Code/Codex actives pour charger les hooks et le MCP mis à jour.');
     } finally {
       if (previous.running) {
         const restarted = await startServer();
         log.ok(`Serveur redémarré : ${restarted.url}`);
+      }
+      if (previousProxy.running || previousProxy.managed) {
+        try {
+          const restarted = await startLitellmProxy();
+          log.ok(`Proxy PII redémarré : ${restarted.origin}`);
+        } catch (error) {
+          log.warn(`Proxy PII non redémarré : ${error.message}`);
+        }
       }
       const daemon = restartTelegramDaemon();
       if (daemon.restarted) log.ok('Moniteur Telegram redémarré.');
@@ -542,6 +599,11 @@ function checkForUpdateOnOpen() {
  * entry is how the admin pane gets opened.
  */
 async function ensureServerRunning() {
+  try {
+    await startProxyCompanion();
+  } catch (error) {
+    log.warn(`Proxy PII non démarré : ${error.message}`);
+  }
   let status;
   try {
     status = await getServerStatus();
@@ -565,8 +627,8 @@ async function ensureServerRunning() {
 
 async function mainMenu(steps, ctx, knownUpdate = null) {
   for (;;) {
-    const status = await getServerStatus();
-    printServerStatus(status);
+    const [status, proxy] = await Promise.all([getServerStatus(), getLitellmStatus()]);
+    printServerStatus(status, proxy);
     const choice = await select('Que voulez-vous faire ?', [
       { value: 'open', label: 'Ouvrir l’interface graphique', hint: 'paramètres, skills et agents' },
       { value: status.running ? 'stop' : 'start', label: status.running ? 'Arrêter le serveur local' : 'Démarrer le serveur local' },

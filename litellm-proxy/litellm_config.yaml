@@ -3,13 +3,30 @@
 # Le travail PII est fait par le middleware ASGI (piecemaker_pii/asgi.py).
 # PieceMaker n'ajoute aucun modele ni fournisseur. Le pass-through Anthropic
 # natif de LiteLLM reste donc disponible sur /anthropic/v1/messages et conserve
-# l'authentification du client (notamment Claude Pro/Max).
+# l'authentification du client (notamment Claude Pro/Max). Le point d’entrée
+# /chatgpt relaie de la même façon l’abonnement déjà ouvert dans Codex.
 #
 # Pour utiliser une configuration LiteLLM existante, definir simplement :
 #   LITELLM_CONFIG_PATH=/chemin/vers/config.yaml
 
 general_settings:
   forward_client_headers_to_llm_api: true
+  forward_llm_provider_auth_headers: true
+  pass_through_endpoints:
+    # Routes exactes : elles restent compatibles avec une éventuelle clé maître
+    # LiteLLM et évitent le défaut connu d’authentification des sous-chemins.
+    - path: "/chatgpt/responses"
+      target: "https://chatgpt.com/backend-api/codex/responses"
+      forward_headers: true
+      methods: ["POST"]
+    - path: "/chatgpt/responses/compact"
+      target: "https://chatgpt.com/backend-api/codex/responses/compact"
+      forward_headers: true
+      methods: ["POST"]
+    - path: "/chatgpt/models"
+      target: "https://chatgpt.com/backend-api/codex/models"
+      forward_headers: true
+      methods: ["GET"]
 
 litellm_settings:
   drop_params: true

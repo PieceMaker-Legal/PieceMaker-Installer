@@ -106,6 +106,10 @@ class TestWalkers(unittest.TestCase):
     def test_routes_generation_sans_routes_admin(self):
         self.assertTrue(_is_generation_path('/v1/chat/completions'))
         self.assertTrue(_is_generation_path('/anthropic/v1/messages'))
+        self.assertTrue(_is_generation_path('/anthropic/v1/messages/count_tokens'))
+        self.assertTrue(_is_generation_path('/openai/v1/responses'))
+        self.assertTrue(_is_generation_path('/chatgpt/responses'))
+        self.assertTrue(_is_generation_path('/chatgpt/responses/compact'))
         self.assertTrue(_is_generation_path('/gemini/v1beta/models/x:streamGenerateContent'))
         self.assertFalse(_is_generation_path('/ui'))
         self.assertFalse(_is_generation_path('/model/new'))

@@ -309,7 +309,7 @@
           </div>
 
           <!-- Moteurs locaux -->
-          <p class="cfg-band-label engines">Moteurs locaux</p>
+          <p class="cfg-band-label engines">Moteurs et passerelle locale</p>
           <div class="cfg-engines-row">
             <button class="configuration-node compact loading" type="button" data-config-component="gliner" aria-haspopup="dialog" aria-controls="configurationDetail">
               <span class="configuration-node-icon gliner" aria-hidden="true">
@@ -334,6 +334,14 @@
               <span class="configuration-node-copy"><strong>Ollama · LLM</strong><span id="configurationOllamaSummary">Détection…</span></span>
               <span id="configurationOllamaStatus" class="component-state pending"><i></i>Vérification</span>
               <span class="configuration-node-action">Détails <span aria-hidden="true">›</span></span>
+            </button>
+            <button class="configuration-node compact loading" type="button" data-config-component="litellm" aria-haspopup="dialog" aria-controls="configurationDetail">
+              <span class="configuration-node-icon litellm" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M4 7h16v10H4z"></path><path d="M8 12h8M12 8v8"></path><circle cx="4" cy="12" r="2"></circle><circle cx="20" cy="12" r="2"></circle></svg>
+              </span>
+              <span class="configuration-node-copy"><strong>LiteLLM · Proxy PII</strong><span id="configurationLitellmSummary">Détection…</span></span>
+              <span id="configurationLitellmStatus" class="component-state pending"><i></i>Vérification</span>
+              <span class="configuration-node-action">Ouvrir <span aria-hidden="true">›</span></span>
             </button>
           </div>
         </div>
