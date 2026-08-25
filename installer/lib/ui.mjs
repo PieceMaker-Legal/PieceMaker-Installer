@@ -23,6 +23,7 @@ const CODES = {
   blue: '\x1b[34m',
   magenta: '\x1b[35m',
   cyan: '\x1b[36m',
+  white: '\x1b[37m',
   gray: '\x1b[90m',
 };
 
@@ -67,10 +68,10 @@ export function rule(char = '─') {
   write(c.gray(char.repeat(Math.min(columns(), 78))));
 }
 
-/** The PIECEMAKER banner plus a tagline. */
+/** The LITELLM banner plus a tagline. */
 export function banner(subtitle = 'Installateur — anonymisation & assistance juridique') {
   blank();
-  for (const line of renderBanner(columns())) write(c.cyan(line));
+  for (const line of renderBanner(columns())) write(c.white(line));
   blank();
   write(`  ${c.dim(subtitle)}`);
   blank();
