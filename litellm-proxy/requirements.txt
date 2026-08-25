@@ -1,4 +1,1 @@
-litellm[proxy]>=1.40.0
-fastapi>=0.100.0
-uvicorn[standard]>=0.23.0
-httpx[http2]>=0.25.0
+litellm[proxy]>=1.98.0,<2
