@@ -17,7 +17,7 @@ function caseHistoryRepoLabel(folder) {
     const legalCase = resolveCase(path.dirname(folder), path.basename(folder));
     const absolute = historyRepo(path.join(os.homedir(), '.piecemaker'), legalCase);
     const home = os.homedir();
-    return absolute.startsWith(home + path.sep) ? `~${absolute.slice(home.length)}` : absolute;
+    return absolute.startsWith(`${home}${path.sep}`) ? `~${absolute.slice(home.length)}` : absolute;
   } catch {
     return '';
   }
@@ -43,9 +43,23 @@ function caseRuleContent(repoRoot, folder = '') {
 }
 
 function managedImportBlock(rule) {
-  return `${IMPORT_START}\n@${rule}\n${IMPORT_END}`;
+  return `${IMPORT_START}
+## PieceMaker — instructions gérées
+
+Pour une chronologie factuelle, exécuter d'abord
+\`piecemaker chronology --json\`. Pour une question sur les personnes ou leurs
+liens de droit, exécuter \`piecemaker graph query "<question>"\` depuis ce
+dossier. Le graphe riche se construit sans dépendre du MCP. Consulter aussi la
+règle complète suivante :
+
+@${rule}
+${IMPORT_END}`;
 }
 
+/**
+ * Ajoute uniquement un bloc PieceMaker géré. Le reste de CLAUDE.md/AGENTS.md
+ * appartient à l'utilisateur et reste byte-for-byte intact.
+ */
 function ensureInstructionImport(file, rule) {
   const block = managedImportBlock(rule);
   let current = '';

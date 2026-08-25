@@ -193,10 +193,28 @@ piecemaker stop
 piecemaker restart
 piecemaker status
 piecemaker logs
+piecemaker graph query "Montre-moi la chronologie et les liens de droit du dossier"
+piecemaker graph build     # prépare explicitement le graphe juridique riche
+piecemaker graph status    # vérifie s'il doit être actualisé
 piecemaker doctor         # diagnostic sans modification
 piecemaker install        # installation ou réparation
 piecemaker update
 ```
+
+Les commandes `graph` se lancent depuis un dossier juridique enregistré (ou
+avec `--case <chemin>`). La première requête construit le graphe riche avec le
+backend LLM configuré pour Graphify ; les suivantes réutilisent le cache tant
+que les pièces, leur index ou le prompt juridique n'ont pas changé. Chaque
+pièce est reliée aux personnes physiques ou morales détectées, puis aux
+contrats, obligations, inexécutions, demandes, moyens, normes et décisions
+qu'elle matérialise ou rapporte. La sortie conserve les distinctions
+`ALLEGUE`, `CONTESTE`, `JUGE`, `INFERRE` et `A_VERIFIER`.
+
+Ce graphe juridique est distinct du graphe léger de la frise : la frise ne
+contient que les mentions GLiNER et n'appelle aucun LLM. Dans les deux cas, les
+noms de fichiers persistants sont remplacés par des empreintes et les personnes
+par leurs codes pseudonymisés. `piecemaker graph query` fonctionne sans MCP,
+sans serveur PieceMaker et sans Word ouvert.
 
 Le tableau de bord est servi uniquement en local sur
 `https://localhost:43098/admin/`. Il peut être installé comme PWA. L’icône

@@ -31,6 +31,8 @@ function fakeRuntime(overrides = {}) {
     repositoryCodexSkills: () => ['piecemaker-plugin/skills/anonymisation/SKILL.md'],
     codexSkillStatus: () => ({ state: 'linked' }),
     syncCodexSkills: () => ({ registered: 1, conflicts: [] }),
+    loadConfig: () => ({ caseFolders: [] }),
+    refreshRegisteredCaseRules: () => ({ refreshed: 0, failed: [] }),
     ...overrides,
   };
 }

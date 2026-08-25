@@ -18,16 +18,18 @@ Vous analysez une pièce (document de cas) du dossier PieceMaker et produisez un
 
 ## Exploitation du graphe Graphify
 
-Si un graphe documentaire existe (`<dossier>/.piecemaker/graphify/graphify-out/graph.json`), utilisez-le pour enrichir l'analyse :
+Avant l'analyse, lancez depuis le dossier juridique :
 
-- **Avant d'analyser** : `graphify explain "<code entité>"` pour situer les acteurs dans le dossier.
-- **Liens entre pièces** : `graphify path "<entité A>" "<entité B>"` pour tracer la chaîne documentaire entre deux parties.
-- **Contexte global** : `graphify query "<question>"` pour rechercher des faits dans l'ensemble du dossier.
-- **Vérification de la chronologie** : comparer la date de la pièce analysée avec les voisins dans le graphe (`graphify query "documents autour de <date>"`) pour détecter des incohérences temporelles.
+```bash
+piecemaker graph query "Situe cette pièce dans la chronologie, identifie les personnes et les liens de droit qu'elle crée, établit, allègue ou conteste"
+```
 
-Ces commandes CLI fonctionnent directement — pas besoin de serveur MCP pour l'agent. Elles retournent du texte exploitable pour la synthèse.
-
-Si le graphe n'existe pas, l'analyse se fait normalement à partir du texte seul.
+La commande construit ou actualise automatiquement le graphe juridique riche.
+Elle fonctionne sans MCP, sans serveur et sans Word ouvert. Utilisez le
+sous-graphe retourné pour repérer contrats, obligations, inexécutions,
+prétentions, arguments et normes connexes, puis vérifiez chaque élément dans sa
+pièce source. Ne transformez jamais `ALLEGUE`, `CONTESTE`, `INFERRE` ou
+`A_VERIFIER` en fait établi.
 
 ## Contraintes
 
