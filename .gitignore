@@ -1,3 +1,12 @@
+# Forks tiers (sous-projets avec leur propre .git)
+eidolon/
+aegis-gate/
+
+# LiteLLM proxy — venv et cache Python
+litellm-proxy/venv/
+litellm-proxy/__pycache__/
+litellm-proxy/piecemaker_pii/__pycache__/
+
 # Dependencies
 node_modules/
 package-lock.json

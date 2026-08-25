@@ -17,6 +17,7 @@ const MAC_REGISTER = '/System/Library/Frameworks/CoreServices.framework/Framewor
 const DEFAULT_ICNS = path.join(REPO_ROOT, 'installer', 'assets', 'piecemaker.icns');
 const DEFAULT_ICO = path.join(REPO_ROOT, 'installer', 'assets', 'piecemaker.ico');
 const DEFAULT_PNG = path.join(REPO_ROOT, 'admin', 'icons', 'icon-512.png');
+const SWIFT_SOURCE = path.join(REPO_ROOT, 'installer', 'assets', 'PieceMakerApp.swift');
 
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", `'"'"'`)}'`;
@@ -90,7 +91,7 @@ export function desktopLauncherPaths({
   };
 }
 
-function macPlist({ executable, identifier, protocol = false }) {
+function macPlist({ executable, identifier, protocol = false, nativeApp = false }) {
   const protocolBlock = protocol ? `
   <key>CFBundleURLTypes</key>
   <array>
@@ -99,6 +100,7 @@ function macPlist({ executable, identifier, protocol = false }) {
       <key>CFBundleURLSchemes</key><array><string>piecemaker</string></array>
     </dict>
   </array>` : '';
+  const uiElement = nativeApp ? '' : '\n  <key>LSUIElement</key><true/>';
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -110,14 +112,13 @@ function macPlist({ executable, identifier, protocol = false }) {
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
-  <key>CFBundleVersion</key><string>1</string>
-  <key>LSUIElement</key><true/>${protocolBlock}
+  <key>CFBundleVersion</key><string>1</string>${uiElement}${protocolBlock}
 </dict>
 </plist>
 `;
 }
 
-function createMacApplication(target, {
+function createMacShellApplication(target, {
   verb,
   identifier,
   protocol = false,
@@ -137,16 +138,59 @@ function createMacApplication(target, {
   fs.copyFileSync(iconPath, path.join(contents, 'Resources', 'piecemaker.icns'));
 }
 
+function createMacNativeApplication(target, { identifier, nodePath, cliPath, iconPath, commandRunner }) {
+  const executable = 'PieceMaker';
+  const contents = path.join(target, 'Contents');
+  const executablePath = path.join(contents, 'MacOS', executable);
+  fs.mkdirSync(path.dirname(executablePath), { recursive: true });
+  const compile = commandRunner('swiftc', [
+    '-o', executablePath,
+    '-framework', 'Cocoa',
+    '-framework', 'WebKit',
+    '-suppress-warnings',
+    SWIFT_SOURCE,
+  ]);
+  if (!commandSucceeded(compile)) {
+    throw new Error(`Compilation Swift impossible : ${compile.stderr || compile.error?.message || `code ${compile.code}`}`);
+  }
+  fs.chmodSync(executablePath, 0o755);
+  const plist = macPlist({ executable, identifier, nativeApp: true });
+  writeFile(path.join(contents, 'Info.plist'), plist);
+  fs.mkdirSync(path.join(contents, 'Resources'), { recursive: true });
+  fs.copyFileSync(iconPath, path.join(contents, 'Resources', 'piecemaker.icns'));
+  const envPlist = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>PIECEMAKER_NODE</key><string>${nodePath}</string>
+  <key>PIECEMAKER_CLI</key><string>${cliPath}</string>
+</dict>
+</plist>
+`;
+  writeFile(path.join(contents, 'Resources', 'environment.plist'), envPlist);
+}
+
 function installMac({ paths, nodePath, cliPath, runtimeDir, iconPath, commandRunner }) {
-  createMacApplication(paths.shortcut, {
-    verb: 'open',
-    identifier: 'com.piecemaker.desktop',
-    nodePath,
-    cliPath,
-    runtimeDir,
-    iconPath,
-  });
-  createMacApplication(paths.protocol, {
+  const swiftAvailable = commandSucceeded(commandRunner('which', ['swiftc']));
+  if (swiftAvailable) {
+    createMacNativeApplication(paths.shortcut, {
+      identifier: 'com.piecemaker.desktop',
+      nodePath,
+      cliPath,
+      iconPath,
+      commandRunner,
+    });
+  } else {
+    createMacShellApplication(paths.shortcut, {
+      verb: 'open',
+      identifier: 'com.piecemaker.desktop',
+      nodePath,
+      cliPath,
+      runtimeDir,
+      iconPath,
+    });
+  }
+  createMacShellApplication(paths.protocol, {
     verb: 'start',
     identifier: 'com.piecemaker.protocol',
     protocol: true,
@@ -156,7 +200,11 @@ function installMac({ paths, nodePath, cliPath, runtimeDir, iconPath, commandRun
     iconPath,
   });
   const registration = commandRunner(MAC_REGISTER, ['-f', paths.protocol]);
-  return { protocolReady: commandSucceeded(registration), protocolError: registration.stderr || registration.error?.message || '' };
+  return {
+    native: swiftAvailable,
+    protocolReady: commandSucceeded(registration),
+    protocolError: registration.stderr || registration.error?.message || '',
+  };
 }
 
 function installWindows({ paths, nodePath, cliPath, repoRoot, iconPath, commandRunner }) {

@@ -1,5 +1,9 @@
 /**
- * Étape 15 — accès PieceMaker depuis le Bureau et relance depuis la PWA.
+ * Étape 15 — application native PieceMaker sur le Bureau.
+ *
+ * Compile une app Swift (WKWebView) si swiftc est disponible, sinon un
+ * lanceur shell qui ouvre le navigateur. Le gestionnaire de protocole
+ * `piecemaker:` permet à la page hors ligne de relancer le serveur.
  */
 
 import { installDesktopLauncher, desktopLauncherStatus } from '../lib/desktop-launcher.mjs';
@@ -9,33 +13,34 @@ import { log } from '../lib/ui.mjs';
 export const meta = {
   id: '15-pwa-desktop',
   label: 'Application PieceMaker sur le Bureau',
-  description: 'Ajoute une icône qui démarre le serveur local avant d’ouvrir l’administration',
+  description: `Installe une application native (WKWebView) qui démarre le serveur et affiche l'administration`,
   required: false,
 };
 
 export async function install(ctx) {
   if (ctx.dryRun) {
-    log.info('[simulation] proposition d’ajouter PieceMaker au Bureau et d’enregistrer le lanceur local de la PWA');
+    log.info(`[simulation] proposition d'ajouter PieceMaker au Bureau`);
     return { status: 'skipped', note: 'Mode simulation — aucune modification effectuée.' };
   }
 
-  if (!await confirm('Ajouter l’icône PieceMaker sur le Bureau ?', true)) {
-    return { status: 'skipped', note: 'Raccourci Bureau refusé.' };
+  if (!await confirm(`Installer l'application PieceMaker sur le Bureau ?`, true)) {
+    return { status: 'skipped', note: 'Application Bureau refusée.' };
   }
 
   const result = installDesktopLauncher();
+  const mode = result.native ? 'native (WKWebView)' : 'lanceur navigateur';
   if (!result.protocolReady) {
     return {
       status: 'partial',
-      note: `Icône créée (${result.shortcut}), mais le bouton de redémarrage PWA n’a pas pu être enregistré${result.protocolError ? ` : ${result.protocolError}` : '.'}`,
+      note: `Application ${mode} créée (${result.shortcut}), mais le protocole piecemaker: n'a pas pu être enregistré${result.protocolError ? ` : ${result.protocolError}` : '.'}`,
     };
   }
-  return { status: 'done', note: `Icône créée : ${result.shortcut}` };
+  return { status: 'done', note: `Application ${mode} créée : ${result.shortcut}` };
 }
 
 export async function check() {
   const status = desktopLauncherStatus();
   if (status.shortcutReady && status.protocolReady) return { status: 'done', note: status.shortcut };
-  if (status.shortcutReady) return { status: 'partial', note: 'Icône présente, mais lanceur de redémarrage PWA absent.' };
-  return { status: 'partial', note: 'Icône PieceMaker absente du Bureau.' };
+  if (status.shortcutReady) return { status: 'partial', note: 'Application présente, mais protocole piecemaker: absent.' };
+  return { status: 'partial', note: 'Application PieceMaker absente du Bureau.' };
 }
