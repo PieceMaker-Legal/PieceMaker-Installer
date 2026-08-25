@@ -844,7 +844,8 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .cfg-client-row .configuration-node { width: min(560px, 100%); }
 .cfg-band-label { margin: 16px 0 10px; color: var(--muted); font-size: .64rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; text-align: center; }
 .cfg-band-label.engines { margin-top: 22px; }
-.cfg-access-row, .cfg-engines-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.cfg-access-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.cfg-engines-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 
 .configuration-node.compact { min-height: 84px; grid-template-columns: 42px minmax(0, 1fr) auto; grid-template-rows: auto auto; padding: 13px 15px; gap: 4px 12px; }
 .configuration-node.compact .configuration-node-icon { width: 40px; height: 40px; grid-row: 1 / span 2; }
@@ -877,6 +878,7 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .configuration-node-icon.gliner { background: #e7f7f0; color: #0f8a6f; }
 .configuration-node-icon.mineru { background: #fdeede; color: #a5691a; }
 .configuration-node-icon.ollama { background: #efe9fb; color: #5a3aa8; }
+.configuration-node-icon.litellm { background: #e4f3f7; color: #176b7a; }
 .configuration-node-icon.docs { background: #eef1f4; color: #45516a; }
 
 /* Formulaires Paramètres / Telegram hébergés dans la fenêtre de configuration. */
@@ -903,6 +905,10 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .configuration-install-progress.running { color: #173d38; }
 .configuration-install-progress.ok { background: #e7f4ec; color: #1b6b3f; }
 .configuration-install-progress.error { background: #fdecec; color: #b3261e; }
+
+@media (min-width: 721px) and (max-width: 1100px) {
+  .cfg-engines-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 
 @media (max-width: 720px) {
   .cfg-access-row, .cfg-engines-row { grid-template-columns: 1fr; }
@@ -1087,6 +1093,7 @@ html[data-theme="dark"] .cfg-chip.code { background: var(--dark-surface-raised);
 html[data-theme="dark"] :is(.configuration-node-icon, .configuration-node-icon.hooks, .configuration-node-icon.gliner) { background: #123c37; color: #79e2d2; }
 html[data-theme="dark"] :is(.configuration-node-icon.terminal, .configuration-node-icon.telegram) { background: #172f4d; color: #79c0ff; }
 html[data-theme="dark"] :is(.configuration-node-icon.mcp, .configuration-node-icon.ollama) { background: #30264d; color: #d2a8ff; }
+html[data-theme="dark"] .configuration-node-icon.litellm { background: #13343c; color: #79d7e8; }
 html[data-theme="dark"] .configuration-node-icon.mineru { background: #3d3218; color: #e3b341; }
 html[data-theme="dark"] .configuration-node-icon.docs { background: var(--dark-surface-raised); color: #c2ccd6; }
 html[data-theme="dark"] .configuration-install-progress.running { color: var(--brand-dark); }

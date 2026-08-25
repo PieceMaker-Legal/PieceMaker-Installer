@@ -771,6 +771,32 @@ async function configurationOverview({ repoRoot, homeDir, userHome, getRuntimeSt
   // Moteurs Python locaux du venv — détection par présence de paquet, sans import
   // (importer gliner2/mineru chargerait des centaines de Mo à chaque appel).
   const config = readJson(path.join(homeDir, 'config.json'), {});
+  const litellmPort = Number(config.litellmPort) || 4000;
+  const litellmOrigin = `http://127.0.0.1:${litellmPort}`;
+  const litellmVenv = config.litellmVenvPath || path.join(homeDir, 'litellm-venv');
+  const litellmPython = path.join(
+    litellmVenv,
+    process.platform === 'win32' ? 'Scripts' : 'bin',
+    process.platform === 'win32' ? 'python.exe' : 'python',
+  );
+  let litellmRunning = false;
+  try {
+    const response = await fetchWithTimeout(fetchImpl, `${litellmOrigin}/health/liveliness`, {}, 1200);
+    litellmRunning = response.status === 200;
+  } catch { /* service arrêté ou absent */ }
+  let claudeProxyConfigured = false;
+  let codexProxyConfigured = false;
+  try {
+    const settings = readJson(path.join(userHome, '.claude', 'settings.json'), {});
+    claudeProxyConfigured = settings?.env?.ANTHROPIC_BASE_URL === `${litellmOrigin}/anthropic`;
+  } catch { /* configuration absente */ }
+  try {
+    const codexHome = process.env.CODEX_HOME || path.join(userHome, '.codex');
+    const codexConfig = fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8');
+    codexProxyConfigured = /^\s*model_provider\s*=\s*["']piecemaker_litellm["']/m.test(codexConfig)
+      && codexConfig.includes(`base_url = "${litellmOrigin}/chatgpt"`)
+      && codexConfig.includes('supports_websockets = false');
+  } catch { /* configuration absente */ }
   const venvDir = config.venvPath || path.join(homeDir, 'venv');
   const sitePackages = (() => {
     if (process.platform === 'win32') return path.join(venvDir, 'Lib', 'site-packages');
@@ -839,6 +865,22 @@ async function configurationOverview({ repoRoot, homeDir, userHome, getRuntimeSt
         configured: mcpItems.every((item) => item.installed && item.configured),
         summary: `${mcpItems.filter((item) => item.installed).length}/${mcpItems.length} serveurs présents`,
         items: mcpItems,
+      },
+      litellm: {
+        name: 'LiteLLM · Proxy PII',
+        installed: fs.existsSync(litellmPython) || steps['16-litellm-proxy']?.status === 'done',
+        configured: claudeProxyConfigured && codexProxyConfigured && litellmRunning,
+        running: litellmRunning,
+        summary: litellmRunning
+          ? `Actif · Claude Code ${claudeProxyConfigured ? 'routé' : 'à configurer'} · Codex ${codexProxyConfigured ? 'routé' : 'à configurer'}`
+          : fs.existsSync(litellmPython) ? 'Installé · service arrêté' : 'Passerelle PII non installée',
+        origin: litellmOrigin,
+        uiUrl: `${litellmOrigin}/ui`,
+        claudeConfigured: claudeProxyConfigured,
+        codexConfigured: codexProxyConfigured,
+        autoStart: process.platform === 'darwin'
+          && fs.existsSync(path.join(userHome, 'Library', 'LaunchAgents', 'com.piecemaker.litellm.plist')),
+        installerStatus: steps['16-litellm-proxy']?.status || '',
       },
       gliner: {
         name: 'GLiNER · PII',
@@ -1720,11 +1762,15 @@ async function revealLocalFolder(platform, target, absolutePath) {
     : `Le gestionnaire de fichiers n’a pas pu être ouvert (${lastError?.message || 'commande introuvable'}).`);
 }
 
-// Installation à la demande des moteurs locaux depuis le tiroir de la carte de
+// Installation à la demande des moteurs locaux et de la passerelle depuis le tiroir de la carte de
 // configuration : un clic sur « Installer » relance l'étape d'installateur
 // correspondante en arrière-plan (non interactif), au lieu d'obliger l'utilisateur
 // à ouvrir un terminal. Chaque composant est mappé sur son étape.
-const INSTALL_STEP_IDS = { gliner: '03-python-gliner', mineru: '04-conversion-md' };
+const INSTALL_STEP_IDS = {
+  gliner: '03-python-gliner',
+  mineru: '04-conversion-md',
+  litellm: '16-litellm-proxy',
+};
 const installJobs = new Map();
 let activeInstallComponent = null;
 
@@ -2001,7 +2047,7 @@ function createAdminRouter({
     }
   });
 
-  // Installe un moteur local absent (GLiNER, MinerU) en relançant son étape
+  // Installe un composant absent (GLiNER, MinerU, LiteLLM) en relançant son étape
   // d'installateur en arrière-plan ; le tiroir suit ensuite l'avancement en
   // interrogeant GET /configuration/install?id=.
   router.post('/configuration/install', (req, res) => {

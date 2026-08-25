@@ -711,7 +711,7 @@ function renderConfiguration(data) {
     version: models.version,
     count: models.items.length,
   };
-  for (const key of ['client', 'terminal', 'mcp', 'telegram', 'hooks', 'gliner', 'mineru', 'ollama']) {
+  for (const key of ['client', 'terminal', 'mcp', 'telegram', 'hooks', 'gliner', 'mineru', 'ollama', 'litellm']) {
     renderConfigurationComponent(key, data.components[key]);
   }
   renderConfigurationModels(models);
@@ -811,12 +811,14 @@ const CONFIGURATION_DESCRIPTIONS = {
   gliner: 'Détection PII locale (Presidio + GLiNER2). Construit le mapping du dossier. Aucune donnée ne quitte le poste.',
   mineru: 'OCR local pour les PDF scannés et les images. Optionnel : les PDF texte passent par markitdown.',
   ollama: 'Modèles LLM exécutés localement (analyse, embeddings). Aucune requête vers un service distant.',
+  litellm: 'Passerelle locale qui applique le mapping central à chaque requête et réponse avant le fournisseur distant.',
   docs: 'Les pièces restent sur le disque avec leurs vrais noms. Les hooks ne recodent que ce que le modèle lit ; aucun fichier n’est réécrit.',
   hooks: 'La barrière entre le modèle et le dossier. À chaque lecture, les noms deviennent des codes ; à chaque écriture, les codes redeviennent des noms.',
 };
 const CONFIGURATION_TITLES = {
   client: 'Client IA & Paramètres', terminal: 'Terminal', mcp: 'MCP locaux', telegram: 'Telegram',
   gliner: 'GLiNER · détection PII', mineru: 'MinerU · OCR', ollama: 'Ollama · modèles locaux',
+  litellm: 'LiteLLM · Proxy PII',
   docs: 'Dossier & pièces', hooks: 'Hooks — barrière d’anonymisation',
 };
 
@@ -933,6 +935,22 @@ function openConfigurationDetail(kind, reference = '', origin = null) {
         ['Version', component.version ? `v${component.version}` : 'Indéterminée'],
         ['Modèles locaux', String(component.count || 0)],
       ]);
+    } else if (kind === 'litellm') {
+      appendConfigurationDetails(body, [
+        ['Service', component.running ? 'Actif' : component.installed ? 'Arrêté' : 'Non installé'],
+        ['Claude Code', component.claudeConfigured ? 'Routé automatiquement' : 'À configurer'],
+        ['Codex', component.codexConfigured ? 'Routé automatiquement' : 'À configurer'],
+        ['Démarrage de session', component.autoStart ? 'Activé' : 'Non installé'],
+        ['Adresse locale', component.origin],
+      ]);
+      if (!component.installed) {
+        appendInstallAction(body, 'litellm');
+      } else {
+        const openUi = makeElement('button', 'button primary', 'Interface LiteLLM (optionnelle)');
+        openUi.type = 'button';
+        openUi.addEventListener('click', () => window.open(component.uiUrl, '_blank', 'noopener,noreferrer'));
+        byId('configurationDetailActions').append(openUi);
+      }
     } else if (kind === 'telegram') {
       if (Array.isArray(component.bots)) {
         const section = makeElement('section', 'configuration-detail-section');
@@ -982,13 +1000,14 @@ function closeConfigurationDetail() {
   configurationDetailOrigin = null;
 }
 
-// Bloc « Installer » d'un moteur local absent (GLiNER / MinerU) : lance l'étape
+// Bloc « Installer » d'un composant absent (GLiNER / MinerU / LiteLLM) : lance l'étape
 // d'installateur côté serveur puis suit sa progression sans quitter la page.
 let installPollTimer = null;
 
 const INSTALL_HINTS = {
   gliner: 'Le modèle d’anonymisation (~400 Mo) sera téléchargé. L’installation continue même si vous fermez cette fenêtre.',
   mineru: 'MinerU est volumineux (plusieurs centaines de Mo). L’installation continue même si vous fermez cette fenêtre.',
+  litellm: 'LiteLLM sera installé localement puis Claude Code et Codex seront routés automatiquement. Relancez ensuite leurs sessions déjà ouvertes.',
 };
 
 function appendInstallAction(body, kind) {

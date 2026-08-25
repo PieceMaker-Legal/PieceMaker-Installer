@@ -130,5 +130,14 @@ def deanonymize_text(text: str, reverse_mapping: Dict[str, List[str]]) -> str:
         if not canonical:
             continue
         pattern = BOUNDARY_BEFORE + re.escape(str(code)) + BOUNDARY_AFTER
-        output = re.sub(pattern, str(canonical), output, flags=re.UNICODE)
+        # Une chaîne de remplacement passée directement à re.sub interprète les
+        # antislashs (par exemple ``\\n``). Une fonction restitue la valeur
+        # canonique littéralement, ce qui préserve aussi le JSON des flux SSE.
+        replacement = str(canonical)
+        output = re.sub(
+            pattern,
+            lambda _match, value=replacement: value,
+            output,
+            flags=re.UNICODE,
+        )
     return output

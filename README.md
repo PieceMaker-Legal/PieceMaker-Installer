@@ -131,6 +131,7 @@ environnement virtuel Python et modèles GLiNER2 + spaCy.
 | 13-garde-secrets | Garde-fou secrets (Claude Code) | empêche Claude Code de lire le `.env` du serveur |
 | 14-mxc-sandbox | Confinement OS (mxc) | construit microsoft/mxc pour isoler la session Claude Code |
 | 15-pwa-desktop | Application PieceMaker sur le Bureau | propose une icône qui démarre le serveur avant d’ouvrir l’administration |
+| 16-litellm-proxy | Proxy PII LiteLLM — Claude Code & Codex | installe la passerelle locale, applique le mapping central et route automatiquement les deux clients |
 
 Les secrets Telegram vont dans `~/.claude/channels/` en 0600. Sur macOS, le
 daemon est installé comme service utilisateur dans `~/Library/LaunchAgents/`.
@@ -236,6 +237,7 @@ les hooks de garde-fou PII. Voir
 - `admin/` — interface web locale : Telegram, paramètres, éditeur visuel des skills/agents et aperçus de facturation
 - `taskpane/` — volet Office du complément Word
 - `mcp-server/` — serveur MCP exposant les outils document
+- `litellm-proxy/` — application LiteLLM standard entourée du mapping PII réseau PieceMaker
 
 Le `CLAUDE.md` racine est versionné dans ce dépôt et contient les repères
 d'architecture pour contribuer à la code base. La persona destinée à

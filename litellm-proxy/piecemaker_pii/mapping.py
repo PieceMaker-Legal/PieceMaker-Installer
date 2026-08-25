@@ -6,10 +6,9 @@ automatiquement quand le fichier change (verification mtime a chaque requete).
 """
 
 import json
+import logging
 import os
 import time
-import logging
-from pathlib import Path
 from typing import Dict, List, Optional
 
 logger = logging.getLogger('piecemaker_pii.mapping')
@@ -30,6 +29,7 @@ class MappingCache:
         self._load()
 
     def _load(self) -> bool:
+        self._last_check = time.monotonic()
         try:
             with open(self.path, 'r', encoding='utf-8') as f:
                 raw = f.read().lstrip('﻿')
@@ -38,9 +38,13 @@ class MappingCache:
             logger.warning('Mapping introuvable : %s', self.path)
             self.mapping = {}
             self.reverse_mapping = {}
+            self._mtime = 0
             return False
         except (json.JSONDecodeError, OSError) as e:
             logger.error('Erreur lecture mapping : %s — %s', self.path, e)
+            self.mapping = {}
+            self.reverse_mapping = {}
+            self._mtime = 0
             return False
 
         mapping = {}
@@ -78,8 +82,6 @@ class MappingCache:
             self._mtime = os.path.getmtime(self.path)
         except OSError:
             self._mtime = 0
-        self._last_check = time.monotonic()
-
         logger.info('Mapping charge : %d entites, %d codes — %s',
                      len(mapping), len(reverse), self.path)
         return True
@@ -93,6 +95,11 @@ class MappingCache:
         try:
             current_mtime = os.path.getmtime(self.path)
         except OSError:
+            if self.mapping or self.reverse_mapping:
+                logger.warning('Mapping supprime, vidage du cache : %s', self.path)
+                self.mapping = {}
+                self.reverse_mapping = {}
+                self._mtime = 0
             return
         if current_mtime != self._mtime:
             logger.info('Mapping modifie, rechargement...')
