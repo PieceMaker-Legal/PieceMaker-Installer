@@ -93,7 +93,10 @@ test('un dossier extérieur est enregistré et réutilise les composants Claude 
   const rule = fs.readFileSync(path.join(data.selected, '.claude', 'rules', 'piecemaker.md'), 'utf8');
   assert.match(rule, /\| Dossier juridique actif \|/);
   assert.match(rule, /caseFolders/);
+  assert.match(rule, /piecemaker chronology --json/);
   assert.doesNotMatch(rule, /Chaque sous-dossier immédiat/);
+  assert.match(fs.readFileSync(path.join(data.selected, 'CLAUDE.md'), 'utf8'), /piecemaker-instructions-start/);
+  assert.match(fs.readFileSync(path.join(data.selected, 'AGENTS.md'), 'utf8'), /piecemaker-instructions-start/);
 
   const config = readRegistryConfig(path.join(data.home, 'config.json'));
   assert.deepEqual(config.caseFolders, [fs.realpathSync(data.selected)]);

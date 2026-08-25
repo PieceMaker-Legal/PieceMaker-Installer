@@ -11,6 +11,7 @@
  *   piecemaker open            démarre le serveur et ouvre l'interface web
  *   piecemaker start|stop|restart gère le serveur local
  *   piecemaker status|logs     affiche l'état ou les journaux
+ *   piecemaker chronology      affiche la chronologie du dossier courant
  *   piecemaker install         ouvre le menu des composants
  *   piecemaker doctor          diagnostic seul
  *   piecemaker update          met à jour le dépôt et les dépendances
@@ -47,6 +48,8 @@ const require = createRequire(import.meta.url);
 const CLAUDE_ASSETS_MODULE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../websocket-server/claude-assets.cjs');
 const CLAUDE_HOOKS_MODULE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../websocket-server/claude-hooks.cjs');
 const CENTRAL_HOOK_MODULE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../websocket-server/central-hook-install.cjs');
+const ASSISTANT_CHRONOLOGY_MODULE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../websocket-server/assistant-chronology.cjs');
+const CASE_INSTRUCTIONS_MODULE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../websocket-server/case-instructions.cjs');
 
 /**
  * The bootstrap/update command is also distributed as an installer-only
@@ -88,8 +91,25 @@ function reconcileCentralHook() {
   return false;
 }
 
+function reconcileCaseInstructions() {
+  if (!fs.existsSync(CASE_INSTRUCTIONS_MODULE)) return false;
+  try {
+    const { refreshRegisteredCaseRules } = require(CASE_INSTRUCTIONS_MODULE);
+    if (typeof refreshRegisteredCaseRules !== 'function') return false;
+    const result = refreshRegisteredCaseRules(REPO_ROOT, loadConfig());
+    if (result.failed.length) {
+      log.warn(`${result.failed.length} règle(s) de dossier n’ont pas pu être actualisées.`);
+    }
+    if (result.refreshed) log.ok(`${result.refreshed} règle(s) de dossier PieceMaker actualisée(s).`);
+    return result.failed.length === 0;
+  } catch (error) {
+    log.warn(`Règles de dossier non actualisées (${error.message}).`);
+    return false;
+  }
+}
+
 const STEPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'steps');
-const COMMANDS = new Set(['open', 'start', 'stop', 'restart', 'status', 'logs', 'install', 'doctor', 'check', 'update']);
+const COMMANDS = new Set(['open', 'start', 'stop', 'restart', 'status', 'logs', 'chronology', 'install', 'doctor', 'check', 'update']);
 
 const STATUS_BADGE = {
   done: badge.done,
@@ -99,13 +119,26 @@ const STATUS_BADGE = {
 };
 
 function parseArgs(argv) {
-  const flags = { command: null, all: false, check: false, dryRun: false, step: null, yes: false, unknown: [] };
+  const flags = {
+    command: null,
+    all: false,
+    caseTarget: null,
+    check: false,
+    dryRun: false,
+    json: false,
+    step: null,
+    yes: false,
+    unknown: [],
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (!arg.startsWith('-') && !flags.command && COMMANDS.has(arg)) flags.command = arg;
+    else if (!arg.startsWith('-') && flags.command === 'chronology' && !flags.caseTarget) flags.caseTarget = arg;
     else if (arg === '--all') flags.all = true;
+    else if (arg === '--case') flags.caseTarget = argv[++i];
     else if (arg === '--check') flags.check = true;
     else if (arg === '--dry-run') flags.dryRun = true;
+    else if (arg === '--json') flags.json = true;
     else if (arg === '--yes' || arg === '-y') flags.yes = true;
     else if (arg === '--step') flags.step = argv[++i];
     else if (arg === '--help' || arg === '-h') flags.help = true;
@@ -262,11 +295,14 @@ function printHelp() {
   write('  restart         redémarre le serveur local');
   write('  status          affiche l’état du serveur');
   write('  logs            affiche les dernières lignes du journal');
+  write('  chronology      affiche la chronologie pseudonymisée du dossier courant');
   write('  install         ouvre le menu d’installation/réparation');
   write('  doctor, check   diagnostic seul, n’installe rien');
   write('  update          met à jour PieceMaker');
   blank();
   write('  --all           installe tout sans menu');
+  write('  --case <chemin> cible un dossier enregistré (chronology)');
+  write('  --json          produit un JSON sans décor (chronology)');
   write('  --check         diagnostic seul, n\'installe rien');
   write('  --step <id>     rejoue une seule étape');
   write('  --dry-run       montre les actions sans les exécuter');
@@ -324,7 +360,21 @@ function printServerStatus(status) {
   blank();
 }
 
-async function runOperationalCommand(command, knownUpdate = null) {
+async function runChronologyCommand(flags) {
+  if (!fs.existsSync(ASSISTANT_CHRONOLOGY_MODULE)) {
+    throw new Error('Le module de chronologie PieceMaker est introuvable.');
+  }
+  const { chronologyForTarget, formatAssistantChronology } = require(ASSISTANT_CHRONOLOGY_MODULE);
+  const chronology = await chronologyForTarget(loadConfig(), flags.caseTarget || process.cwd());
+  const output = flags.json
+    ? `${JSON.stringify(chronology, null, 2)}\n`
+    : formatAssistantChronology(chronology);
+  process.stdout.write(output);
+  return 0;
+}
+
+async function runOperationalCommand(command, knownUpdate = null, flags = {}) {
+  if (command === 'chronology') return runChronologyCommand(flags);
   if (command === 'open') {
     const status = await openAdmin();
     log.ok(`Interface ouverte : ${status.url}`);
@@ -364,6 +414,7 @@ async function runOperationalCommand(command, knownUpdate = null) {
     const pending = knownUpdate ?? checkForUpdate();
     if (!pending.available) {
       log.ok(`PieceMaker est déjà à jour (${pending.ref}, ${pending.current.slice(0, 7)}).`);
+      reconcileCaseInstructions();
       if (reconcileCentralHook()) {
         log.info('Rouvrez les sessions Claude Code/Codex actives pour charger les hooks et le MCP à jour.');
       }
@@ -393,6 +444,7 @@ async function runOperationalCommand(command, knownUpdate = null) {
       if (depositRootClaudeMd().status === 'deposited') {
         log.ok('CLAUDE.md (persona utilisateur) redéposé depuis le gabarit.');
       }
+      reconcileCaseInstructions();
 
       if (result.pythonChanged) {
         log.warn('requirements.txt a changé : relancez « piecemaker install » puis l’étape 03 — Python & GLiNER.');
@@ -539,6 +591,18 @@ async function main() {
     return 1;
   }
 
+  if (flags.command !== 'chronology' && (flags.caseTarget || flags.json)) {
+    banner();
+    log.error('Les options --case et --json sont réservées à la commande chronology.');
+    return 1;
+  }
+
+  // `--json` est consommé directement par les assistants : aucun bandeau ni
+  // couleur ne doit précéder le document JSON.
+  if (flags.command === 'chronology' && flags.json) {
+    return runOperationalCommand(flags.command, null, flags);
+  }
+
   banner();
 
   const opensInteractiveInstaller =
@@ -550,7 +614,7 @@ async function main() {
   const knownUpdate = opensInteractiveInstaller ? checkForUpdateOnOpen() : null;
 
   if (flags.command && !['install', 'doctor', 'check'].includes(flags.command)) {
-    return runOperationalCommand(flags.command);
+    return runOperationalCommand(flags.command, null, flags);
   }
 
   const steps = await loadSteps();

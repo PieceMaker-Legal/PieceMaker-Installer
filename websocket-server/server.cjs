@@ -13,6 +13,7 @@ const {
 const { Ollama } = require('ollama');
 const { z } = require('zod');
 const { createAdminRouter, isLocalOrigin } = require('./admin-routes.cjs');
+const { refreshRegisteredCaseRules } = require('./case-instructions.cjs');
 const { syncClaudeAssets } = require('./claude-assets.cjs');
 const { installClaudeHooks } = require('./claude-hooks.cjs');
 const { convertToPdf, findSoffice } = require('./lib/office-to-pdf.cjs');
@@ -50,6 +51,14 @@ function readUserConfig() {
 
 const userConfig = readUserConfig();
 if (!process.env.PYTHON_PATH && userConfig.pythonPath) process.env.PYTHON_PATH = userConfig.pythonPath;
+
+// Les règles sont des fichiers PieceMaker gérés : un démarrage après mise à
+// jour doit propager le template courant à tous les dossiers déjà enregistrés,
+// sans attendre que l'utilisateur les ré-enregistre un par un.
+const refreshedCaseRules = refreshRegisteredCaseRules(REPO_ROOT, userConfig);
+if (refreshedCaseRules.failed.length) {
+  console.warn(`⚠️ ${refreshedCaseRules.failed.length} règle(s) de dossier n’ont pas pu être actualisées.`);
+}
 
 // Import anonymization module
 const { createAnonymizationRoutes, anonymizationMappings } = require('../taskpane/modules/anonymization-server.cjs');

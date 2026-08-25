@@ -21,64 +21,39 @@ Les hooks `Stop` et `TaskCompleted` (`billing-track.mjs`) alimentent
 automatique du temps par dossier ; consultable en lecture seule depuis
 l'administration.
 
-## Graphe documentaire (Graphify)
+## Chronologie et liens documentaires
 
-Chaque dossier de cas possède un graphe de connaissances Graphify qui relie
-les pièces, les entités et les relations sémantiques extraites. Ce graphe
-est interrogeable en langage naturel.
+### Règle prioritaire
 
-### Construire le graphe d'un dossier
-
-Le graphe léger (entités GLiNER uniquement, sans LLM) est construit
-automatiquement depuis l'administration (frise chronologique).
-
-Pour un **graphe riche** avec extraction sémantique LLM — relations entre
-entités, faits saillants, liens chronologiques — lancer depuis le dossier
-de cas :
+Pour toute demande portant sur la chronologie, une date, les acteurs ou les
+liens entre pièces, commencer obligatoirement par :
 
 ```bash
-graphify extract <dossier>/pieces-md/ \
-  --entity-map <dossier>/.piecemaker/mapping_default.json \
-  --entity-map-labels original \
-  --out <dossier>/.piecemaker/graphify
+piecemaker chronology --json
 ```
 
-### Interroger le graphe
+La commande fonctionne sans Word, sans MCP et sans serveur. Elle renvoie :
 
-Trois méthodes, de la plus simple à la plus puissante :
+- les pièces déjà triées chronologiquement ;
+- leurs dates, natures et juridictions indexées ;
+- les corrections structurées apportées par le cabinet ;
+- les codes d'entités et les pièces qu'ils relient ;
+- les dates manquantes et les métadonnées restant à vérifier.
 
-1. **CLI directe** (pas besoin de serveur) :
-   ```bash
-   graphify query "quelle est la chronologie du litige" --graph <graphify-out>/graph.json
-   graphify path "PERSON_01" "COMPANY_02" --graph <graphify-out>/graph.json
-   graphify explain "PERSON_01" --graph <graphify-out>/graph.json
-   ```
+Ne pas annoncer « je vais examiner le contenu du dossier » avant cet appel.
+Ne lire ensuite que les Markdown convertis nécessaires pour vérifier un point
+incertain ou compléter une date absente.
 
-2. **Skill `/graphify`** (si installé dans la session) :
-   ```
-   /graphify query "quels documents lient PERSON_01 à COMPANY_02"
-   ```
+### Rôle de Graphify
 
-3. **Serveur MCP** (pour les agents et l'analyse approfondie) :
-   ```bash
-   python3 -m graphify.serve <graphify-out>/graph.json
-   ```
-   Expose les outils MCP : `query_graph`, `get_node`, `get_neighbors`,
-   `get_community`, `god_nodes`, `shortest_path`, `graph_stats`.
+Le graphe léger Graphify utilisé par la frise est un cache interne construit
+automatiquement, sans LLM. L'assistant n'a pas à connaître son chemin :
+`piecemaker chronology` fournit l'interface stable vers la chronologie et les
+liens pièces↔entités.
 
-### Ce que le graphe permet à l'analyse
-
-| Outil MCP | Usage juridique |
-| --- | --- |
-| `god_nodes` | Identifier les acteurs centraux du dossier |
-| `query_graph` | Rechercher des faits, des liens chronologiques |
-| `shortest_path` | Tracer la chaîne probatoire entre deux entités |
-| `get_neighbors` | Lister tous les documents qui mentionnent une entité |
-| `get_community` | Groupes de pièces/entités liés entre eux |
-
-Les entités du graphe portent les codes pseudonymisés du mapping PieceMaker.
-Le graphe ne contient jamais de texte source ni de noms en clair —
-l'anonymisation est préservée.
+Un graphe sémantique riche est une analyse facultative distincte. Ne pas le
+construire ni l'interroger pour une simple demande de chronologie, sauf demande
+expresse de l'avocat.
 
 ## Repères
 
@@ -87,7 +62,7 @@ l'anonymisation est préservée.
 | Racine des dossiers | ce répertoire (`workspacePath` de `~/.piecemaker/config.json`) |
 | Administration | `https://localhost:43098/admin/` |
 | Serveur | `piecemaker start` / `stop` / `restart` / `status` / `logs` |
-| Graphe documentaire | `<dossier>/.piecemaker/graphify/graphify-out/graph.json` |
+| Chronologie assistant | `piecemaker chronology --json` depuis le dossier |
 | Historique des dossiers | `~/.piecemaker/case-history/` |
 | Facturation | `~/.piecemaker/billing/` |
 | Configuration | `~/.piecemaker/config.json` |
