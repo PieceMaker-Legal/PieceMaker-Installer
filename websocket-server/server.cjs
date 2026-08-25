@@ -16,6 +16,7 @@ const { createAdminRouter, isLocalOrigin } = require('./admin-routes.cjs');
 const { refreshRegisteredCaseRules } = require('./case-instructions.cjs');
 const { syncClaudeAssets } = require('./claude-assets.cjs');
 const { installClaudeHooks } = require('./claude-hooks.cjs');
+const { syncCentralMapping } = require('../piecemaker-plugin/scripts/lib/central-mapping.cjs');
 const { convertToPdf, findSoffice } = require('./lib/office-to-pdf.cjs');
 const {
   detectStampImage,
@@ -67,12 +68,10 @@ const { createAnonymizationRoutes, anonymizationMappings } = require('../taskpan
 const { detectCompanySigle } = require('./legal-forms.cjs');
 
 // ─── Anonymisation de la voie MCP Word (read_doc / edit_doc) ───────────────
-// Les hooks Claude Code ne couvrent que Read/Grep/Glob/Bash et Write/Edit ; la
-// voie du volet Word passe par CE serveur, hors de leur portée. On y applique
-// donc le même mapping, via la brique partagée mapping.cjs, pour qu'aucun nom
-// réel ne parte vers l'API (lecture) et que les écritures rétablissent les vrais
-// noms dans Word (écriture) — exactement ce que font anonymize-read.mjs et
-// deanonymize-write.mjs pour les outils natifs.
+// Le volet Word passe par ce serveur. Il conserve son mapping applicatif pour
+// que les résultats documentaires soient déjà codés et que les écritures dans
+// Word rétablissent les vrais noms. Les appels LLM, eux, sont tous couverts par
+// le proxy PII LiteLLM.
 const {
   resolveConfiguredCaseMapping,
   resolveMappedPath,
@@ -306,20 +305,22 @@ try {
     + (sync.conflicts.length ? `, ${sync.conflicts.length} conflit(s) de nom dans ~/.claude` : ''));
   const hooks = installClaudeHooks(REPO_ROOT, os.homedir());
   if (!hooks.ok) console.warn('Enregistrement des hooks auprès de Claude Code impossible :', hooks.reason);
+  else if (hooks.cleanup?.removed || hooks.cleanup?.deletedFile) {
+    console.log(`Anciens hooks de mapping retirés : ${hooks.cleanup.removed} branchement(s)`
+      + (hooks.cleanup.deletedFile ? ', script global supprimé' : ''));
+  }
 } catch (error) {
   console.warn('Enregistrement des composants auprès de Claude Code impossible :', error.message);
 }
 
-// Hook central global : installé dans ~/.claude et câblé dans settings.json, il
-// applique le mapping central (fusion dé-conflictée de tous les dossiers) à toute
-// lecture/écriture de toute session Claude. Reconstruit le central au passage.
+// Mapping central du proxy : fusion dé-conflictée de tous les dossiers. Le proxy
+// le recharge à chaud ; aucun hook Claude Code n'est nécessaire.
 try {
-  const { installCentralHook } = require('./central-hook-install.cjs');
-  const central = installCentralHook();
-  const entities = central.central && typeof central.central.entities === 'number' ? central.central.entities : 0;
-  console.log(`Hook central : mapping central reconstruit (${entities} entité(s)), hook ${central.hook ? 'installé' : 'non installé'}`);
+  const central = syncCentralMapping(userConfig);
+  const entities = central && typeof central.entities === 'number' ? central.entities : 0;
+  console.log(`Proxy PII : mapping central reconstruit (${entities} entité(s))`);
 } catch (error) {
-  console.warn('Installation du hook central impossible :', error.message);
+  console.warn('Reconstruction du mapping central impossible :', error.message);
 }
 
 // LibreOffice sert à convertir les pièces Excel/Word en PDF avant tamponnage.
@@ -918,7 +919,7 @@ app.post('/api/word/read-doc', async (req, res) => {
             client.off('message', messageHandler);
             // Anonymisation à la lecture : le modèle ne doit jamais voir de nom
             // réel. On code le résultat via le mapping du dossier du document
-            // actif — équivalent MCP du hook anonymize-read.mjs (Read/Bash).
+            // actif — le résultat Word est codé avant de rejoindre la conversation.
             const legalCase = caseMappingForDocument(docPath);
             const result = legalCase
               ? anonymizeShape(response.result, legalCase.mapping)
@@ -984,7 +985,7 @@ app.post('/api/word/edit-doc', async (req, res) => {
 
       // Dé-anonymisation à l'écriture : le modèle a lu des codes, on rétablit les
       // vrais noms AVANT d'écrire dans Word — équivalent MCP de
-      // deanonymize-write.mjs. Sans cela, un code serait écrit tel quel dans le
+      // la voie inverse du mapping Word. Sans cela, un code serait écrit tel quel dans le
       // document.
       const legalCaseOut = caseMappingForDocument(docPath);
       const outboundParams = legalCaseOut

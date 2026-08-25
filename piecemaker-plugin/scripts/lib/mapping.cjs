@@ -1,12 +1,9 @@
 /**
  * Mapping d'anonymisation d'un dossier juridique — implémentation unique.
  *
- * Trois appelants la partagent, et c'est volontaire : les hooks
- * (`anonymize-read.mjs`, `deanonymize-write.mjs`), le pipeline admin
- * (`websocket-server/originals-pipeline.cjs`) et le routeur du task pane
- * (`taskpane/modules/anonymization-server.cjs`). Le module vit dans le plugin
- * parce que c'est le seul des trois qui soit distribué seul : un hook ne peut
- * require ni `websocket-server/` ni `taskpane/`.
+ * Le pipeline admin (`websocket-server/originals-pipeline.cjs`), le serveur
+ * Word, l'historique et les vues juridiques la partagent. Le proxy PII lit le
+ * mapping central produit à partir de ces mappings de dossier.
  *
  * Deux sens, jamais symétriques dans leur usage :
  *  - `applyMapping`  entité → code, sur tout ce que l'IA s'apprête à lire ;
@@ -14,8 +11,7 @@
  *    atterrit chez un humain (fichier, message Telegram, libellé de commit).
  *
  * Les deux sont idempotents : réappliquer un mapping à un texte déjà codé ne
- * change rien, ce qui permet aux hooks de s'exécuter sans savoir ce qui a déjà
- * été traité.
+ * change rien, ce qui permet aux appelants de retraiter un texte sans risque.
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -267,12 +263,12 @@ function readCaseMapping(caseRoot) {
 
 /**
  * Un mapping d'anonymisation exploitable existe-t-il pour ce dossier ? C'est la
- * condition de la garantie « anonymisé à la lecture » : sans lui, `anonymize-read`
- * n'a rien à coder et une surface lisible partirait en clair. `protect-originals`
+ * condition de la garantie « anonymisé avant envoi » : sans lui, le proxy n'a
+ * rien à coder et une surface lisible partirait en clair. `protect-originals`
  * s'en sert pour refuser la lecture d'un dossier PieceMaker pas encore anonymisé.
  * On s'appuie sur `readCaseMapping` (et non sur la seule présence du fichier) pour
  * qu'un `mapping_default.json` illisible compte comme absent — c'est exactement ce
- * que voit `anonymize-read`, qui ne pourrait de toute façon rien en tirer.
+ * que voit la reconstruction du mapping central.
  */
 function caseHasMapping(caseRoot) {
   return readCaseMapping(caseRoot).exists;

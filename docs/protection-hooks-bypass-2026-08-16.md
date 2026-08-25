@@ -1,5 +1,8 @@
 # Test des hooks de protection / anonymisation — dossier « REAL TEST »
 
+> Document historique : le hook de mapping mentionné ici a été retiré le
+> 25 août 2026 au profit du proxy PII LiteLLM. Le hook de protection demeure.
+
 **Branche :** `test/protection-hooks-mxc`
 **Source des fichiers :** `github.com/microsoft/mxc` (61 `.md` ; le dépôt ne contient **aucun** PDF → 5 PDF générés)
 **Fixtures :** `REAL TEST/_mxc_hooktest/md/` (61 `.md` + bloc PII injecté) et `REAL TEST/_mxc_hooktest/pdf/` (5 PDF)

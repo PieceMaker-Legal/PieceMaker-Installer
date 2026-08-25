@@ -13,8 +13,8 @@
  * protégée sans action de sa part ; l'inverse (une liste de ce qu'il faut
  * protéger) laisserait fuiter tout nouveau document.
  *
- * `.md` et `.json` ne sont jamais protégés : ce sont les surfaces que les hooks
- * anonymisent à la volée (`anonymize-read.mjs`).
+ * `.md` et `.json` ne sont jamais protégés : ce sont les surfaces que le proxy
+ * anonymise avant chaque appel LLM.
  *
  * Une exception, portée par `isMappingFile` : le mapping du dossier et les scans
  * PII sont interdits à l'IA en toute circonstance. Ils ne passent pas par

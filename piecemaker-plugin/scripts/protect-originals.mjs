@@ -9,8 +9,8 @@
  * ne protégeait rien.
  *
  * Un refus renvoie systématiquement vers le Markdown converti, qui est la
- * surface que l'IA a le droit de lire — anonymisée à la volée par
- * `anonymize-read.mjs`.
+ * surface que l'IA a le droit de lire — anonymisée par le proxy PII avant
+ * l'appel au fournisseur.
  *
  * Bash est traité comme les outils de lecture. C'est indispensable depuis que
  * le skill `docx` est disponible : il travaille par `pandoc`, `unzip` et
@@ -73,8 +73,8 @@ function mappingReason(absolute) {
 }
 
 /**
- * Refus « dossier non anonymisé ». Sans `mapping_default.json`, `anonymize-read`
- * n'a rien à coder : lire une pièce livrerait des données personnelles en clair.
+ * Refus « dossier non anonymisé ». Sans `mapping_default.json`, le proxy n'a
+ * rien à coder : lire une pièce livrerait des données personnelles en clair.
  * On l'explique synthétiquement au modèle, avec l'action qui débloque la lecture.
  */
 function missingMappingReason(caseName) {

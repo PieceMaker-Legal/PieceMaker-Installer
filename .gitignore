@@ -7,6 +7,12 @@ litellm-proxy/venv/
 litellm-proxy/__pycache__/
 litellm-proxy/piecemaker_pii/__pycache__/
 
+# Anciens hooks de mapping — remplacés par le proxy PII LiteLLM
+/piecemaker-plugin/scripts/anonymize-read.mjs
+/piecemaker-plugin/scripts/deanonymize-write.mjs
+/websocket-server/central-hook-install.cjs
+/websocket-server/global-hooks/piecemaker-central-anonymize.mjs
+
 # Dependencies
 node_modules/
 package-lock.json

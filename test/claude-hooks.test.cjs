@@ -78,6 +78,39 @@ test('un lien direct provenant d’un autre clone est mis à jour sans doublon',
   assert.equal(serialized.match(/protect-originals\.mjs/g)?.length, 1);
 });
 
+test('les anciens hooks de mapping et leur script global sont retirés', (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));
+  const target = settingsPath(data.home);
+  const globalHook = path.join(data.home, '.claude', 'hooks', 'piecemaker-central-anonymize.mjs');
+  fs.mkdirSync(path.dirname(globalHook), { recursive: true });
+  fs.writeFileSync(globalHook, 'ancien hook\n');
+  fs.writeFileSync(target, `${JSON.stringify({
+    hooks: {
+      PreToolUse: [
+        { matcher: 'Write', hooks: [{ type: 'command', command: 'node personnel.mjs' }] },
+        { matcher: 'Write', hooks: [{ type: 'command', command: 'node /ancien/deanonymize-write.mjs' }] },
+        { matcher: 'Read', hooks: [{ type: 'command', command: 'node ~/.claude/hooks/piecemaker-central-anonymize.mjs' }] },
+      ],
+      PostToolUse: [
+        { matcher: 'Read', hooks: [{ type: 'command', command: 'node /ancien/anonymize-read.mjs' }] },
+      ],
+    },
+  }, null, 2)}\n`);
+
+  assert.equal(claudeHooksStatus(data.repo, data.home).ok, false);
+  const result = installClaudeHooks(data.repo, data.home);
+  assert.equal(result.ok, true);
+  assert.equal(result.cleanup.removed, 3);
+  assert.equal(result.cleanup.deletedFile, true);
+
+  const serialized = fs.readFileSync(target, 'utf8');
+  assert.doesNotMatch(serialized, /anonymize-read|deanonymize-write|piecemaker-central-anonymize/);
+  assert.match(serialized, /personnel\.mjs/);
+  assert.equal(fs.existsSync(globalHook), false);
+  assert.equal(claudeHooksStatus(data.repo, data.home).ok, true);
+});
+
 test('un settings.json invalide n’est jamais écrasé', (t) => {
   const data = fixture();
   t.after(() => fs.rmSync(data.root, { recursive: true, force: true }));

@@ -6,10 +6,9 @@
  * frontières de mots, des variantes Unicode et du tri longest-entity-first,
  * sinon deux moteurs de substitution divergent silencieusement.
  *
- * Le hook central global (`~/.claude/hooks/piecemaker-central-anonymize.mjs`)
- * en a besoin et est distribué hors du plugin ; il en require une copie posée à
- * un emplacement stable (`~/.piecemaker/lib/substitution.cjs`). Garder ce module
- * autonome permet de le copier tel quel sans traîner de chaîne de dépendances.
+ * Ce moteur CommonJS est partagé par le serveur Word, le graphe juridique,
+ * l'historique et les autres surfaces locales. Le proxy PII possède son
+ * implémentation Python équivalente.
  *
  * Deux sens, jamais symétriques dans leur usage :
  *  - `applyMapping`  entité → code, sur tout ce que l'IA s'apprête à lire ;
@@ -17,8 +16,7 @@
  *    atterrit chez un humain (fichier, message Telegram, libellé de commit).
  *
  * Les deux sont idempotents : réappliquer un mapping à un texte déjà codé ne
- * change rien, ce qui permet aux hooks de s'exécuter sans savoir ce qui a déjà
- * été traité.
+ * change rien, ce qui permet aux appelants de retraiter un texte sans risque.
  */
 
 const fs = require('node:fs');

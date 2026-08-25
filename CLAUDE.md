@@ -35,7 +35,7 @@ Markdown, rédaction et tamponnage de pièces. Node ≥ 18, Python ≥ 3.10.
 | Dossier | Rôle |
 | --- | --- |
 | `installer/` | Installateur terminal, sans dépendance. `bin/piecemaker.mjs` = commande + orchestrateur ; `steps/00..16-*.mjs` = étapes idempotentes (`{ meta, install, check }`), jouées dans l'ordre du nom ; `lib/` = UI, prompts, plateforme, état ; `templates/` = templates déposés chez l'utilisateur. |
-| `websocket-server/` | `server.cjs` (Express + HTTPS + WS). `admin-routes.cjs` = API d'administration ; `case-registry.cjs`, `document-index.cjs`, `originals-pipeline.cjs` = dossiers/pièces ; `central-hook-install.cjs` + `global-hooks/` = hook global d'anonymisation ; `mxc-sandbox.cjs` = bac à sable OS ; `scripts/` = Python (GLiNER/Presidio, conversion). |
+| `websocket-server/` | `server.cjs` (Express + HTTPS + WS). `admin-routes.cjs` = API d'administration ; `case-registry.cjs`, `document-index.cjs`, `originals-pipeline.cjs` = dossiers/pièces ; `mxc-sandbox.cjs` = bac à sable OS ; `scripts/` = Python (GLiNER/Presidio, conversion). |
 | `admin/` | Interface web locale servie sur `/admin/` (`app.js`, `index.html`, éditeur Markdown des skills/agents, aperçus facturation). |
 | `taskpane/` | Complément Office (volet Word). `taskpane.js` reçoit les ordres MCP par WebSocket et agit sur le document ; `modules/anonymization-server.cjs` = mapping côté volet. |
 | `mcp-server/` | `mcp-server-local.js` : serveur MCP (stdio) qui **relaie** les outils document vers le serveur HTTPS local. |
@@ -70,14 +70,13 @@ travail ciblé par `paneId`.
 fichiers restent en clair sur le disque ; ce sont les entrées/sorties d'outil
 qui sont réécrites au passage.
 
-- Voie **Claude Code** : hooks du plugin — `anonymize-read.mjs` (PostToolUse
-  sur Read/Grep/Glob/Bash) code la sortie ; `deanonymize-write.mjs` (PreToolUse
-  sur Write/Edit et l'outil `reply` Telegram) rétablit les vrais noms.
+- Voies **Claude Code et Codex** : le proxy PII LiteLLM code les requêtes avant
+  leur transmission au fournisseur et ré-identifie les réponses avant leur
+  restitution locale. Aucun hook Claude Code n'applique le mapping.
 - Voie **Word** : hors de portée des hooks ; `server.cjs` applique le même
   mapping via `piecemaker-plugin/scripts/lib/mapping.cjs`.
-- Un **hook global** unique (`~/.claude`, installé par `central-hook-install.cjs`)
-  applique le mapping central dé-conflicté `~/.piecemaker/central-mapping.json`
-  à toute session, remplaçant les hooks par-dossier.
+- Le mapping central dé-conflicté `~/.piecemaker/central-mapping.json` est
+  reconstruit par le serveur et rechargé à chaud par le proxy.
 - Le **scan** GLiNER/Presidio n'est lancé que depuis l'administration
   (« Anonymiser & mapper ») — jamais par les hooks. **Un seul processus de scan
   à la fois** : le parallèle rend la machine inutilisable.

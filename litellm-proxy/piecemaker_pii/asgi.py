@@ -9,6 +9,7 @@ import codecs
 import json
 import logging
 import os
+import time
 from typing import Any, Callable, List, Optional
 
 from .mapping import MappingCache
@@ -151,11 +152,15 @@ class PIIMiddleware:
             await self.app(scope, receive, send)
             return
 
+        request_started_at = time.perf_counter()
+        refresh_started_at = time.perf_counter()
         self.cache.refresh_if_needed()
+        refresh_ms = (time.perf_counter() - refresh_started_at) * 1000
         if self.cache.entity_count == 0:
             await self._reject_missing_mapping(send)
             return
 
+        read_started_at = time.perf_counter()
         body_parts: List[bytes] = []
         while True:
             message = await receive()
@@ -164,13 +169,45 @@ class PIIMiddleware:
                 break
 
         raw_body = b''.join(body_parts)
+        read_ms = (time.perf_counter() - read_started_at) * 1000
+        json_load_ms = 0.0
+        anonymize_ms = 0.0
+        json_dump_ms = 0.0
+        request_json = False
         try:
+            operation_started_at = time.perf_counter()
             body_dict = json.loads(raw_body)
+            json_load_ms = (time.perf_counter() - operation_started_at) * 1000
+
+            operation_started_at = time.perf_counter()
             anonymized = _walk_anonymize(body_dict, self.cache.mapping)
+            anonymize_ms = (time.perf_counter() - operation_started_at) * 1000
+
+            operation_started_at = time.perf_counter()
             modified_body = json.dumps(anonymized, ensure_ascii=False).encode('utf-8')
-            logger.info('pii_request_anonymized entities=%d', self.cache.entity_count)
+            json_dump_ms = (time.perf_counter() - operation_started_at) * 1000
+            request_json = True
         except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
             modified_body = raw_body
+
+        request_ready_at = time.perf_counter()
+        request_prepare_ms = (request_ready_at - request_started_at) * 1000
+        logger.info(
+            'pii_request_metrics path=%s request_bytes=%d modified_bytes=%d '
+            'entities=%d json=%s refresh_ms=%.3f read_ms=%.3f json_load_ms=%.3f '
+            'anonymize_ms=%.3f json_dump_ms=%.3f prepare_ms=%.3f',
+            path,
+            len(raw_body),
+            len(modified_body),
+            self.cache.entity_count,
+            str(request_json).lower(),
+            refresh_ms,
+            read_ms,
+            json_load_ms,
+            anonymize_ms,
+            json_dump_ms,
+            request_prepare_ms,
+        )
 
         new_headers = []
         for key, value in scope.get('headers', []):
@@ -203,11 +240,55 @@ class PIIMiddleware:
         deanonymizer: Optional[StreamDeanonymizer] = None
         stream_decoder = None
         response_parts: List[bytes] = []
+        response_started_at: Optional[float] = None
+        first_body_at: Optional[float] = None
+        response_transform_ms = 0.0
+        response_chunks = 0
+        response_bytes = 0
+        modified_response_bytes = 0
+        response_status = 0
+        metrics_logged = False
+
+        def log_response_metrics(outcome: str) -> None:
+            nonlocal metrics_logged
+            if metrics_logged:
+                return
+            metrics_logged = True
+            now = time.perf_counter()
+            headers_ms = (
+                (response_started_at - request_ready_at) * 1000
+                if response_started_at is not None else -1.0
+            )
+            first_body_ms = (
+                (first_body_at - request_ready_at) * 1000
+                if first_body_at is not None else -1.0
+            )
+            logger.info(
+                'pii_response_metrics path=%s status=%d streaming=%s outcome=%s '
+                'headers_ms=%.3f first_body_ms=%.3f transform_ms=%.3f total_ms=%.3f '
+                'chunks=%d response_bytes=%d modified_bytes=%d',
+                path,
+                response_status,
+                str(is_streaming).lower(),
+                outcome,
+                headers_ms,
+                first_body_ms,
+                response_transform_ms,
+                (now - request_started_at) * 1000,
+                response_chunks,
+                response_bytes,
+                modified_response_bytes,
+            )
 
         async def deanonymized_send(message: dict):
             nonlocal is_streaming, deanonymizer, stream_decoder
+            nonlocal response_started_at, first_body_at, response_transform_ms
+            nonlocal response_chunks, response_bytes, modified_response_bytes
+            nonlocal response_status
 
             if message['type'] == 'http.response.start':
+                response_started_at = time.perf_counter()
+                response_status = int(message.get('status', 0))
                 headers = message.get('headers', [])
                 content_type = ''
                 filtered_headers = []
@@ -243,27 +324,46 @@ class PIIMiddleware:
 
             body = message.get('body', b'')
             more_body = message.get('more_body', False)
+            response_chunks += 1
+            response_bytes += len(body)
+            if body and first_body_at is None:
+                first_body_at = time.perf_counter()
             if is_streaming and deanonymizer and stream_decoder:
+                operation_started_at = time.perf_counter()
                 decoded = stream_decoder.decode(body, final=not more_body)
                 modified = deanonymizer.feed(decoded)
                 if not more_body:
                     modified += deanonymizer.flush()
+                encoded_modified = modified.encode('utf-8')
+                response_transform_ms += (time.perf_counter() - operation_started_at) * 1000
+                modified_response_bytes += len(encoded_modified)
                 await send({
                     'type': 'http.response.body',
-                    'body': modified.encode('utf-8'),
+                    'body': encoded_modified,
                     'more_body': more_body,
                 })
+                if not more_body:
+                    log_response_metrics('complete')
                 return
 
             response_parts.append(body)
             if not more_body:
+                operation_started_at = time.perf_counter()
+                modified = self._deanonymize_json(b''.join(response_parts))
+                response_transform_ms += (time.perf_counter() - operation_started_at) * 1000
+                modified_response_bytes += len(modified)
                 await send({
                     'type': 'http.response.body',
-                    'body': self._deanonymize_json(b''.join(response_parts)),
+                    'body': modified,
                     'more_body': False,
                 })
+                log_response_metrics('complete')
 
-        await self.app(downstream_scope, anonymized_receive, deanonymized_send)
+        try:
+            await self.app(downstream_scope, anonymized_receive, deanonymized_send)
+        finally:
+            if not metrics_logged:
+                log_response_metrics('incomplete')
 
     async def _reject_missing_mapping(self, send: Callable) -> None:
         payload = json.dumps({

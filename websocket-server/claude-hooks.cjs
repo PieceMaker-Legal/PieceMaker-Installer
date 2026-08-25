@@ -10,6 +10,12 @@
 const fs = require('fs');
 const path = require('path');
 
+const DEPRECATED_MAPPING_HOOKS = new Set([
+  'anonymize-read.mjs',
+  'deanonymize-write.mjs',
+  'piecemaker-central-anonymize.mjs',
+]);
+
 function settingsPath(userHome) {
   return path.join(userHome, '.claude', 'settings.json');
 }
@@ -30,6 +36,72 @@ function readJson(file, fallback = null) {
 function commandScriptName(command) {
   const match = String(command || '').match(/[\\/]piecemaker-plugin[\\/]scripts[\\/]([^\\/"']+\.mjs)/);
   return match?.[1] || '';
+}
+
+function deprecatedMappingHookName(command) {
+  const text = String(command || '');
+  return [...DEPRECATED_MAPPING_HOOKS].find((name) => text.includes(name)) || '';
+}
+
+function deprecatedMappingHooks(settings) {
+  if (!settings?.hooks || typeof settings.hooks !== 'object') return [];
+  return Object.entries(settings.hooks).flatMap(([event, groups]) =>
+    (Array.isArray(groups) ? groups : []).flatMap((group) =>
+      (Array.isArray(group?.hooks) ? group.hooks : [])
+        .map((hook) => ({ event, command: hook?.command, script: deprecatedMappingHookName(hook?.command) }))
+        .filter((entry) => entry.script),
+    ),
+  );
+}
+
+/** Retire les anciens hooks de substitution, remplacés par le proxy PII. */
+function removeDeprecatedMappingHooks(userHome) {
+  const target = settingsPath(userHome);
+  let changed = false;
+  let removed = 0;
+
+  if (fs.existsSync(target)) {
+    const settings = readJson(target);
+    if (!settings) return { ok: false, changed: false, removed: 0, reason: 'invalid-settings' };
+    if (settings.hooks && typeof settings.hooks === 'object') {
+      for (const [event, groups] of Object.entries(settings.hooks)) {
+        if (!Array.isArray(groups)) continue;
+        const cleanedGroups = [];
+        let eventChanged = false;
+        for (const group of groups) {
+          if (!Array.isArray(group?.hooks)) {
+            cleanedGroups.push(group);
+            continue;
+          }
+          const hooks = group.hooks;
+          const kept = hooks.filter((hook) => !deprecatedMappingHookName(hook?.command));
+          const removedFromGroup = hooks.length - kept.length;
+          removed += removedFromGroup;
+          eventChanged ||= removedFromGroup > 0;
+          if (kept.length) cleanedGroups.push({ ...group, hooks: kept });
+        }
+        if (eventChanged) settings.hooks[event] = cleanedGroups;
+      }
+    }
+    if (removed) {
+      fs.writeFileSync(target, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
+      changed = true;
+    }
+  }
+
+  const staleFile = path.join(userHome, '.claude', 'hooks', 'piecemaker-central-anonymize.mjs');
+  let deletedFile = false;
+  try {
+    if (fs.existsSync(staleFile)) {
+      fs.unlinkSync(staleFile);
+      deletedFile = true;
+      changed = true;
+    }
+  } catch {
+    return { ok: false, changed, removed, deletedFile: false, reason: 'delete-failed' };
+  }
+
+  return { ok: true, changed, removed, deletedFile, settings: target };
 }
 
 function directHookGroups(repoRoot) {
@@ -74,16 +146,21 @@ function claudeHooksStatus(repoRoot, userHome) {
   const expected = expectedCommands(repoRoot);
   if (!expected) return { ok: false, reason: 'source-hooks-absent', missing: [] };
   const settings = readJson(settingsPath(userHome), {});
+  const deprecated = deprecatedMappingHooks(settings);
   const missing = expected.filter((entry) => {
     const current = findHook(settings, entry.event, entry.script);
     return current?.hook.command !== entry.command
       || current?.hook.type !== 'command'
       || current?.group.matcher !== entry.matcher;
   });
-  return { ok: missing.length === 0, expected: expected.length, missing };
+  return { ok: missing.length === 0 && deprecated.length === 0, expected: expected.length, missing, deprecated };
 }
 
 function installClaudeHooks(repoRoot, userHome) {
+  const cleanup = removeDeprecatedMappingHooks(userHome);
+  if (!cleanup.ok) {
+    return { ok: false, changed: cleanup.changed, reason: `Nettoyage des anciens hooks de mapping impossible : ${cleanup.reason}` };
+  }
   const expected = expectedCommands(repoRoot);
   if (!expected) {
     return { ok: false, changed: false, reason: `Configuration de hooks introuvable : ${sourcePath(repoRoot)}` };
@@ -132,12 +209,13 @@ function installClaudeHooks(repoRoot, userHome) {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
   }
-  return { ok: true, changed, registered, settings: target };
+  return { ok: true, changed: changed || cleanup.changed, registered, settings: target, cleanup };
 }
 
 module.exports = {
   claudeHooksStatus,
   directHookGroups,
   installClaudeHooks,
+  removeDeprecatedMappingHooks,
   settingsPath,
 };

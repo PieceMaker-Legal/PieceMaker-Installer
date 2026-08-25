@@ -1,5 +1,9 @@
 # Audit complet du projet PieceMaker-Installer
 
+> Note du 25 août 2026 : les hooks de mapping cités dans cet audit ont depuis
+> été retirés au profit du proxy PII LiteLLM. Les constats ci-dessous décrivent
+> l'état historique audité.
+
 - Date de l'audit : 19–20 août 2026
 - Branche de restitution : `AUDIT-Project`
 - Révision auditée : `c682c2d` (`main`), avec les modifications locales préexistantes décrites ci-dessous

@@ -737,8 +737,6 @@ async function configurationOverview({ repoRoot, homeDir, userHome, getRuntimeSt
   ].filter(Boolean);
   const hookFiles = [
     'protect-originals.mjs',
-    'anonymize-read.mjs',
-    'deanonymize-write.mjs',
     'commit-track.mjs',
     'billing-track.mjs',
   ].map((name) => path.join(repoRoot, 'piecemaker-plugin', 'scripts', name));

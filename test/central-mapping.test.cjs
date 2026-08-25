@@ -107,12 +107,11 @@ test('plusieurs orthographes d’une même personne partagent le code global', (
   assert.equal(doc.reverse_mapping[doc.mapping['Bernard Gilly']][0], 'Bernard Gilly');
 });
 
-test('syncCentralMapping écrit un fichier 0600 avec le moteur copié', () => {
+test('syncCentralMapping écrit le mapping du proxy en 0600', () => {
   const root = fixtureRoot();
   const a = makeCase(root, 'Dossier A', { 'Jean Dupont': 'PERSONNE_PHYSIQUE_01' }, { PERSONNE_PHYSIQUE_01: ['Jean Dupont'] });
   const saved = syncCentralMapping({ caseFolders: [a] });
   assert.ok(saved);
   const stat = fs.statSync(centralMappingFile());
   assert.equal(stat.mode & 0o777, 0o600);
-  assert.ok(fs.existsSync(path.join(CENTRAL_HOME, 'lib', 'substitution.cjs')));
 });

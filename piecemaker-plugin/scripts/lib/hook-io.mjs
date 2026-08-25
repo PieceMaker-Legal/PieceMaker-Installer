@@ -150,9 +150,8 @@ export function noop() {
  * The write is awaited before exiting. On a pipe — which is exactly how Claude
  * Code runs a hook — stdout is asynchronous, and `process.exit()` drops
  * whatever is still in flight past the 64 KB pipe buffer. A truncated JSON is
- * unparseable, so the harness falls back to the *original* tool result: for
- * `anonymize-read.mjs` that means a document over 64 KB reaching the model in
- * clear. The privacy boundary must not depend on payload size.
+ * unparseable, so the harness can fall back to the original hook result. A
+ * security guard must not depend on payload size.
  */
 export function emit(output) {
   let payload;

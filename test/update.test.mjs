@@ -35,7 +35,7 @@ function sandbox() {
 
   fs.cpSync(path.join(root, 'installer'), path.join(work, 'installer'), { recursive: true });
   // Intégrations factices suffisantes pour prouver que `piecemaker update`
-  // réinstalle le hook central et rejoue l'étape 15, sans toucher au Bureau de
+  // reconstruit le mapping central et rejoue l'étape 15, sans toucher au Bureau de
   // la machine qui exécute les tests.
   fs.writeFileSync(path.join(work, 'installer', 'steps', '15-pwa-desktop.mjs'), `
 import fs from 'node:fs';
@@ -49,14 +49,14 @@ export function refreshInstalledDesktopApplication() {
   return { status: 'done', note: 'PWA factice actualisée.' };
 }
 `);
-  fs.mkdirSync(path.join(work, 'websocket-server'), { recursive: true });
-  fs.writeFileSync(path.join(work, 'websocket-server', 'central-hook-install.cjs'), `
+  fs.mkdirSync(path.join(work, 'piecemaker-plugin', 'scripts', 'lib'), { recursive: true });
+  fs.writeFileSync(path.join(work, 'piecemaker-plugin', 'scripts', 'lib', 'central-mapping.cjs'), `
 const fs = require('node:fs');
 const path = require('node:path');
-module.exports.installCentralHook = () => {
+module.exports.syncCentralMapping = () => {
   fs.mkdirSync(process.env.PIECEMAKER_HOME, { recursive: true });
-  fs.writeFileSync(path.join(process.env.PIECEMAKER_HOME, 'central-hook-update-test'), 'installed\\n');
-  return { hook: 'test-hook', settings: { wired: true } };
+  fs.writeFileSync(path.join(process.env.PIECEMAKER_HOME, 'central-mapping-update-test'), 'rebuilt\\n');
+  return { entities: 1 };
 };
 `);
   fs.writeFileSync(path.join(work, '.gitignore'), 'package-lock.json\nnode_modules/\noutput/*\n');
@@ -139,8 +139,8 @@ test('la mise à jour supprime les fichiers obsolètes et télécharge les nouve
   const upToDate = update(client, home);
   assert.equal(upToDate.status, 0, upToDate.stderr);
   assert.match(upToDate.stdout, /déjà à jour/);
-  assert.match(upToDate.stdout, /Hook central d’anonymisation mis à jour/);
-  assert.equal(fs.readFileSync(path.join(home, 'central-hook-update-test'), 'utf8'), 'installed\n');
+  assert.match(upToDate.stdout, /Mapping central du proxy reconstruit/);
+  assert.equal(fs.readFileSync(path.join(home, 'central-mapping-update-test'), 'utf8'), 'rebuilt\n');
   assert.equal(fs.readFileSync(path.join(home, 'pwa-update-test'), 'utf8'), 'refreshed\n');
 
   git(work, ['rm', '-q', '-r', 'deprecated.txt', 'oldir']);
@@ -154,8 +154,8 @@ test('la mise à jour supprime les fichiers obsolètes et télécharge les nouve
   const applied = update(client, home);
   assert.equal(applied.status, 0, applied.stderr);
   assert.match(applied.stdout, /mis à jour/);
-  assert.match(applied.stdout, /Hook central d’anonymisation mis à jour/);
-  assert.equal(fs.readFileSync(path.join(home, 'central-hook-update-test'), 'utf8'), 'installed\n');
+  assert.match(applied.stdout, /Mapping central du proxy reconstruit/);
+  assert.equal(fs.readFileSync(path.join(home, 'central-mapping-update-test'), 'utf8'), 'rebuilt\n');
   assert.equal(fs.readFileSync(path.join(home, 'pwa-update-test'), 'utf8'), 'refreshed\n');
 
   assert.equal(fs.existsSync(path.join(client, 'deprecated.txt')), false, 'fichier obsolète non supprimé');

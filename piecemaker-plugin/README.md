@@ -21,10 +21,10 @@ distribué par un manifest ou un marketplace PieceMaker.
   - `verificateur-anonymisation` — audit lecture seule avant sortie de
     cabinet, confirme l'absence de PII résiduelle.
   - `analyste-piece` — synthèse structurée d'une pièce du dossier.
-- **Hooks** (`hooks/hooks.json`) — interdiction de lire les dossiers
-  `pièces originales`, avertissement PII avant lecture d'un document
-  (`PreToolUse`), scan GLiNER et commit Git complet après écriture (`PostToolUse`),
-  puis suivi de session local (`Stop`/`TaskCompleted`). Tous
+- **Hooks** (`hooks/hooks.json`) — protection des pièces et mappings
+  (`PreToolUse`), suivi Légifrance et commit Git après écriture (`PostToolUse`),
+  compilation des recherches et suivi de session local (`Stop`/`TaskCompleted`).
+  Le mapping PII est appliqué par le proxy LiteLLM, pas par ces hooks. Tous
   les hooks échouent "ouverts" (fail-open) : aucune erreur, timeout ou
   absence de configuration ne bloque jamais une session.
 

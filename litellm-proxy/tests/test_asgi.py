@@ -181,6 +181,70 @@ class TestPIIMiddleware(unittest.TestCase):
         payload = json.loads(output.removeprefix('data: ').strip())
         self.assertEqual(payload['choices'][0]['delta']['content'], 'début Jean Dupont fin')
 
+    def test_logs_separent_preparation_attente_et_transformation_sans_pii(self):
+        event = (
+            'data: '
+            + json.dumps({'delta': {'content': 'PERSONNE_PHYSIQUE_01'}})
+            + '\n\n'
+        ).encode('utf-8')
+
+        with self.assertLogs('piecemaker_pii.asgi', level='INFO') as captured_logs:
+            _run(_call_middleware(
+                self.middleware,
+                '/v1/responses',
+                {'input': 'Bonjour Jean Dupont'},
+                [event[:20], event[20:]],
+                'text/event-stream',
+            ))
+
+        logs = '\n'.join(captured_logs.output)
+        self.assertRegex(
+            logs,
+            r'pii_request_metrics path=/v1/responses request_bytes=\d+ modified_bytes=\d+ '
+            r'entities=2 json=true refresh_ms=\d+\.\d{3} read_ms=\d+\.\d{3} '
+            r'json_load_ms=\d+\.\d{3} anonymize_ms=\d+\.\d{3} '
+            r'json_dump_ms=\d+\.\d{3} prepare_ms=\d+\.\d{3}',
+        )
+        self.assertRegex(
+            logs,
+            r'pii_response_metrics path=/v1/responses status=200 streaming=true outcome=complete '
+            r'headers_ms=\d+\.\d{3} first_body_ms=\d+\.\d{3} '
+            r'transform_ms=\d+\.\d{3} total_ms=\d+\.\d{3} chunks=2 '
+            r'response_bytes=\d+ modified_bytes=\d+',
+        )
+        self.assertNotIn('Jean Dupont', logs)
+        self.assertNotIn('PERSONNE_PHYSIQUE_01', logs)
+
+    def test_log_signale_une_reponse_incomplete(self):
+        async def app(scope, receive, send):
+            await receive()
+            await send({
+                'type': 'http.response.start',
+                'status': 200,
+                'headers': [(b'content-type', b'text/event-stream')],
+            })
+
+        self.middleware.app = app
+
+        async def call():
+            async def receive():
+                return {'type': 'http.request', 'body': b'{"input":"Bonjour"}', 'more_body': False}
+
+            async def send(_message):
+                return None
+
+            await self.middleware({
+                'type': 'http',
+                'path': '/v1/responses',
+                'method': 'POST',
+                'headers': [(b'content-type', b'application/json')],
+            }, receive, send)
+
+        with self.assertLogs('piecemaker_pii.asgi', level='INFO') as captured_logs:
+            _run(call())
+
+        self.assertIn('streaming=true outcome=incomplete', '\n'.join(captured_logs.output))
+
     def test_streaming_echappe_un_nom_canonique_json(self):
         mapping_path = _make_mapping_file(
             {'Jean "JD" Dupont': 'PERSONNE_PHYSIQUE_01'},

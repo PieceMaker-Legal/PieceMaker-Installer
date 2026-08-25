@@ -119,7 +119,7 @@ environnement virtuel Python et modèles GLiNER2 + spaCy.
 | 03-python-gliner | Python, GLiNER & anonymisation | venv Python, dépendances et modèles GLiNER |
 | 04-conversion-md | Conversion de documents en Markdown | vérifie markitdown/pypdf et propose MinerU pour les PDF scannés |
 | 05-certificats | Certificats HTTPS | génère le certificat local requis par Word |
-| 06-hooks | Hooks Claude Code (anonymisation, commits & facturation) | configure les garde-fous, les commits PostToolUse et le suivi de facturation |
+| 06-hooks | Hooks Claude Code (protection, commits & facturation) | configure les garde-fous, les commits PostToolUse et le suivi de facturation ; le mapping relève du proxy PII |
 | 07-legifrance | Serveur MCP Légifrance (clés PISTE) | configure et valide l’accès à l’API Légifrance via PISTE |
 | 08-telegram | Telegram — Assistant Bot et daemon | configure le bot conversationnel PieceMaker et son daemon de surveillance séparé |
 | 09-claude-assets | Composants Claude Code PieceMaker | enregistre les skills, agents et hooks PieceMaker lorsque Claude Code est présent |
@@ -128,7 +128,7 @@ environnement virtuel Python et modèles GLiNER2 + spaCy.
 | 10-pandoc | Génération PDF/DOCX (pandoc + typst) | installe pandoc et typst, utilisés pour l’export de la chronologie et de l’historique |
 | 11-document-skills | Skill docx (documents Word) | installe et active le plugin officiel document-skills |
 | 12-word-taskpane | Ouverture automatique du volet Word | permet à PieceMaker d’ouvrir Word avec le volet déjà affiché |
-| 13-garde-secrets | Garde-fou secrets (Claude Code) | empêche Claude Code de lire le `.env` du serveur |
+| 13-garde-secrets | Garde-fou secrets (Claude Code) | empêche Claude Code de lire le `.env` du serveur et le mapping central |
 | 14-mxc-sandbox | Confinement OS (mxc) | construit microsoft/mxc pour isoler la session Claude Code |
 | 15-pwa-desktop | Application PieceMaker sur le Bureau | propose une icône qui démarre le serveur avant d’ouvrir l’administration |
 | 16-litellm-proxy | Proxy PII LiteLLM — Claude Code & Codex | installe la passerelle locale, applique le mapping central et route automatiquement les deux clients |

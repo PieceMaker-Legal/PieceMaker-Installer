@@ -1,16 +1,15 @@
 /**
- * Étape 06 — hooks Claude Code (protection, mapping, commits, facturation).
+ * Étape 06 — hooks Claude Code (protection, commits, facturation).
  *
  * Écrit la configuration d'exécution des hooks dans ~/.piecemaker/config.json,
  * puis prouve que chaque script tourne proprement en lui envoyant une charge
  * utile synthétique sur stdin — le contrat exact qu'utilise Claude Code (voir
  * piecemaker-plugin/scripts/lib/hook-io.mjs).
  *
- * Les hooks ne scannent plus les données personnelles : ni GLiNER, ni
- * heuristiques. Ils appliquent le mapping du dossier à ce que l'IA lit et le
- * rétablissent sur ce qu'elle produit. Le scan reste dans le pipeline de
- * l'administration, seul endroit où les modèles NER sont chargés — les charger
- * à chaque lecture rendrait la session inutilisable.
+ * Le mapping PII n'est plus appliqué par des hooks Claude Code : le proxy
+ * LiteLLM couvre Claude Code et Codex au même point de passage. Le scan reste
+ * dans le pipeline de l'administration, seul endroit où les modèles NER sont
+ * chargés.
  */
 
 import fs from 'node:fs';
@@ -26,7 +25,7 @@ const { claudeHooksStatus, installClaudeHooks } = require('../../websocket-serve
 
 export const meta = {
   id: '06-hooks',
-  label: 'Hooks Claude Code (anonymisation, commits & facturation)',
+  label: 'Hooks Claude Code (protection, commits & facturation)',
   description: 'Configure les garde-fous, les commits PostToolUse et le suivi de facturation',
 };
 
@@ -38,8 +37,6 @@ const SYNTHESE_DIR = path.join(BILLING_DIR, 'synthese');
 
 const HOOK_SCRIPTS = {
   protect: path.join(SCRIPTS_DIR, 'protect-originals.mjs'),
-  anonymize: path.join(SCRIPTS_DIR, 'anonymize-read.mjs'),
-  deanonymize: path.join(SCRIPTS_DIR, 'deanonymize-write.mjs'),
   commit: path.join(SCRIPTS_DIR, 'commit-track.mjs'),
   billing: path.join(SCRIPTS_DIR, 'billing-track.mjs'),
 };
@@ -80,24 +77,15 @@ export async function install(ctx) {
   }
   log.ok(`${BILLING_DIR}`);
 
-  // `enabled: false` est la seule sortie de secours : les hooks se taisent
-  // alors complètement, et l'IA voit les documents en clair. Les dossiers
-  // surveillés sont les dossiers juridiques explicitement enregistrés.
-  const anonymizationConfig = {
-    enabled: true,
-    watchPaths: [...new Set(Array.isArray(ctx.config?.caseFolders) ? ctx.config.caseFolders : [])],
-  };
-
   if (ctx.dryRun) {
-    log.info('[simulation] configuration anonymisation/facturation non écrite');
+    log.info('[simulation] configuration commits/facturation non écrite');
     log.info('[simulation] hooks PieceMaker fusionnés directement dans ~/.claude/settings.json');
   } else {
     updateConfig({
-      anonymization: anonymizationConfig,
       commits: { enabled: true, timeoutMs: 8000 },
       billing: { enabled: true },
     });
-    log.ok('Configuration écrite dans ~/.piecemaker/config.json (anonymization, commits, billing)');
+    log.ok('Configuration écrite dans ~/.piecemaker/config.json (commits, billing)');
   }
 
   if (ctx.dryRun) {
@@ -134,37 +122,7 @@ export async function install(ctx) {
     });
     testResults.push(protectedResult);
 
-    // 2. anonymize-read.mjs — hors dossier juridique : prouve le chemin rapide
-    //    (aucun mapping à résoudre, donc aucune réécriture) sans dépendre d'un
-    //    dossier réel du cabinet.
-    const readResult = runHookSelfTest('anonymize-read.mjs', HOOK_SCRIPTS.anonymize, {
-      hook_event_name: 'PostToolUse',
-      session_id: 'installer-selftest',
-      cwd: REPO_ROOT,
-      transcript_path: '',
-      permission_mode: 'default',
-      tool_name: 'Read',
-      tool_input: { file_path: path.join(REPO_ROOT, 'README.md') },
-      tool_response: { file: { content: 'Vérification d\'installation PieceMaker.' } },
-      tool_use_id: 'toolu_installer_read_selftest',
-    });
-    testResults.push(readResult);
-
-    // 3. deanonymize-write.mjs — même logique dans l'autre sens : un Write hors
-    //    dossier ne doit produire aucune réécriture.
-    const writeResult = runHookSelfTest('deanonymize-write.mjs', HOOK_SCRIPTS.deanonymize, {
-      hook_event_name: 'PreToolUse',
-      session_id: 'installer-selftest',
-      cwd: REPO_ROOT,
-      transcript_path: '',
-      permission_mode: 'default',
-      tool_name: 'Write',
-      tool_input: { file_path: path.join(testDir, 'note-selftest.md'), content: 'PERSONNE_PHYSIQUE_01' },
-      tool_use_id: 'toolu_installer_write_selftest',
-    });
-    testResults.push(writeResult);
-
-    // 4. commit-track.mjs — réponse d'outil en échec : exerce le contrat
+    // 2. commit-track.mjs — réponse d'outil en échec : exerce le contrat
     //    d'entrée/sortie sans créer de vrai commit pendant l'installation.
     const commitResult = runHookSelfTest('commit-track.mjs', HOOK_SCRIPTS.commit, {
       hook_event_name: 'PostToolUse',
@@ -179,7 +137,7 @@ export async function install(ctx) {
     });
     testResults.push(commitResult);
 
-    // 5. billing-track.mjs — une vraie charge utile Stop : ajoute une ligne
+    // 3. billing-track.mjs — une vraie charge utile Stop : ajoute une ligne
     //    (clairement identifiée) au registre du mois et écrit une synthèse,
     //    ce qui prouve le chemin d'écriture de bout en bout.
     const billingResult = runHookSelfTest('billing-track.mjs', HOOK_SCRIPTS.billing, {
@@ -200,7 +158,7 @@ export async function install(ctx) {
   }
 
   const allOk = testResults.every((r) => r.ok);
-  if (allOk) spin.succeed('Hooks vérifiés — les cinq scripts répondent au contrat stdin/stdout');
+  if (allOk) spin.succeed('Hooks vérifiés — les trois scripts répondent au contrat stdin/stdout');
 
   else spin.fail('Échec de vérification d\'au moins un hook');
 
@@ -221,6 +179,10 @@ export async function install(ctx) {
   if (!registration.ok) {
     return { status: 'failed', note: registration.reason };
   }
+  if (registration.cleanup?.removed || registration.cleanup?.deletedFile) {
+    log.ok(`${registration.cleanup.removed} ancien(s) branchement(s) de mapping retiré(s)`
+      + (registration.cleanup.deletedFile ? ', script global supprimé.' : '.'));
+  }
   log.ok(`${registration.registered} hook(s) PieceMaker ${registration.changed ? 'enregistré(s)' : 'déjà enregistré(s)'} directement dans ~/.claude/settings.json.`);
   return { status: 'done', note: '' };
 }
@@ -230,7 +192,7 @@ export async function check(ctx) {
   const hooksJsonExists = fs.existsSync(HOOKS_JSON);
   const dirsExist = fs.existsSync(BILLING_DIR) && fs.existsSync(SYNTHESE_DIR);
   const cfg = ctx.config || {};
-  const configOk = Boolean(cfg.anonymization && cfg.commits && cfg.billing);
+  const configOk = Boolean(cfg.commits && cfg.billing);
   const hooksRegistered = claudeHooksStatus(REPO_ROOT, os.homedir()).ok;
 
   if (!scriptsExist || !hooksJsonExists) {

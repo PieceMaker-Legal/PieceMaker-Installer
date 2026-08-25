@@ -45,11 +45,11 @@ test('install() installe le hook, seed la liste noire et câble settings.json �
     );
 
     const blocklist = JSON.parse(fs.readFileSync(blocklistTargetPath(tmp), 'utf8'));
-    assert.ok(Array.isArray(blocklist) && blocklist.length >= 1, 'la liste noire est seedée');
+    assert.ok(Array.isArray(blocklist) && blocklist.length >= 2, 'le .env et le mapping central sont dans la liste noire');
 
     const settings = JSON.parse(fs.readFileSync(settingsPath(tmp), 'utf8'));
     assert.equal(settings.hooks.PreToolUse.length, 1);
-    assert.equal(settings.permissions.deny.length, 1);
+    assert.equal(settings.permissions.deny.length, 2);
 
     const status = await check({});
     assert.equal(status.status, 'done');
@@ -66,7 +66,7 @@ test('une seconde exécution est idempotente — aucun doublon dans settings.jso
 
     const settings = JSON.parse(after);
     assert.equal(settings.hooks.PreToolUse.length, 1, 'pas de second groupe PreToolUse');
-    assert.equal(settings.permissions.deny.length, 1, 'pas de règle deny dupliquée');
+    assert.equal(settings.permissions.deny.length, 2, 'pas de règle deny dupliquée');
 
     const blocklist = JSON.parse(fs.readFileSync(blocklistTargetPath(tmp), 'utf8'));
     const resolved = blocklist.map((entry) => path.resolve(entry));

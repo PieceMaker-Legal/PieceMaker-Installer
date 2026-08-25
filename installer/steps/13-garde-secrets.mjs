@@ -4,7 +4,7 @@
  * Reproduces, via the installer, a guard that previously only existed by
  * hand under ~/.claude/ and would vanish on a fresh machine or a wiped
  * ~/.claude: a `PreToolUse` hook that denies the *agent* any read of the
- * server's `.env` (Read/Grep/Glob/Edit/Write/NotebookEdit and Bash
+ * server's `.env` et le mapping central du proxy (Read/Grep/Glob/Edit/Write/NotebookEdit and Bash
  * workarounds — cat/grep/head/`python -c "open(...)"`…), because that file
  * holds Légifrance credentials. See `installer/lib/secrets-guard.mjs` for
  * the merge logic and `installer/assets/claude-hooks/
@@ -31,7 +31,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { log } from '../lib/ui.mjs';
-import { REPO_ROOT } from '../lib/platform.mjs';
+import { REPO_ROOT, HOME_DIR } from '../lib/platform.mjs';
 import { ENV_FILE } from '../lib/state.mjs';
 import {
   HOOK_SCRIPT_BASENAME,
@@ -48,16 +48,18 @@ import {
 export const meta = {
   id: '13-garde-secrets',
   label: 'Garde-fou secrets (Claude Code)',
-  description: "Empêche l'agent Claude Code de lire le .env du serveur (identifiants Légifrance)",
+  description: "Empêche Claude Code de lire le .env et le mapping central du proxy",
 };
+
+const CENTRAL_MAPPING_FILE = path.join(HOME_DIR, 'central-mapping.json');
 
 export async function install(ctx) {
   const userHome = os.homedir();
-  const envPaths = [ENV_FILE];
+  const protectedPaths = [ENV_FILE, CENTRAL_MAPPING_FILE];
 
   if (ctx.dryRun) {
     log.info(`[simulation] hook installé/rafraîchi : ${hookTargetPath(userHome)} <- ${hookAssetPath(REPO_ROOT)}`);
-    log.info(`[simulation] liste noire créée/complétée : ${blocklistTargetPath(userHome)} (+${ENV_FILE})`);
+    log.info(`[simulation] liste noire créée/complétée : ${blocklistTargetPath(userHome)} (+${protectedPaths.join(', ')})`);
     log.info(`[simulation] ${settingsPath(userHome)} : hook PreToolUse + permissions.deny fusionnés`);
     return { status: 'skipped', note: 'Mode simulation — aucune modification effectuée.' };
   }
@@ -70,12 +72,12 @@ export async function install(ctx) {
   if (hook.changed) log.ok(`Hook ${hook.created ? 'installé' : 'mis à jour'} : ${hook.path}`);
   else log.ok(`Hook déjà à jour : ${hook.path}`);
 
-  const blocklist = seedBlocklist({ repoRoot: REPO_ROOT, userHome, envPaths });
+  const blocklist = seedBlocklist({ repoRoot: REPO_ROOT, userHome, envPaths: protectedPaths });
   if (blocklist.created) log.ok(`Liste noire créée : ${blocklist.path} (${blocklist.entries.length} chemin(s))`);
   else if (blocklist.added.length) log.ok(`Liste noire complétée (+${blocklist.added.length}) : ${blocklist.path}`);
   else log.ok(`Liste noire déjà à jour : ${blocklist.path}`);
 
-  const settings = mergeSettings({ userHome, envPaths });
+  const settings = mergeSettings({ userHome, envPaths: protectedPaths });
   if (settings.hookAdded) log.ok(`Hook PreToolUse enregistré dans ${settings.path}`);
   else log.ok('Hook PreToolUse déjà enregistré.');
   if (settings.denyAdded.length) log.ok(`Règle(s) permissions.deny ajoutée(s) : ${settings.denyAdded.join(', ')}`);
@@ -94,7 +96,10 @@ export async function check(ctx) {
   let blocklistOk = false;
   try {
     const list = JSON.parse(fs.readFileSync(blocklistTargetPath(userHome), 'utf8'));
-    blocklistOk = Array.isArray(list) && list.some((entry) => typeof entry === 'string' && path.resolve(entry) === path.resolve(ENV_FILE));
+    const normalized = new Set(Array.isArray(list)
+      ? list.filter((entry) => typeof entry === 'string').map((entry) => path.resolve(entry))
+      : []);
+    blocklistOk = [ENV_FILE, CENTRAL_MAPPING_FILE].every((entry) => normalized.has(path.resolve(entry)));
   } catch {
     // absent or malformed -> not ok
   }
@@ -112,7 +117,8 @@ export async function check(ctx) {
           group.hooks.some((h) => typeof h?.command === 'string' && h.command.includes(HOOK_SCRIPT_BASENAME))
       );
     const deny = settings?.permissions?.deny;
-    denyOk = Array.isArray(deny) && deny.includes(denyRuleFor(ENV_FILE));
+    denyOk = Array.isArray(deny)
+      && [ENV_FILE, CENTRAL_MAPPING_FILE].every((entry) => deny.includes(denyRuleFor(entry)));
   } catch {
     // absent or malformed -> not ok
   }

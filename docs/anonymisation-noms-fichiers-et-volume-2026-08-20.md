@@ -1,5 +1,8 @@
 # Anonymisation en lecture — 3 défauts observés (noms de fichiers & volume)
 
+> Document historique : depuis le 25 août 2026, les hooks de mapping analysés
+> ici sont supprimés et remplacés par le proxy PII LiteLLM.
+
 **Date :** 2026-08-20
 **Dossier de test :** `Documents/07 - PieceMaker/REAL TEST` (dossier juridique PieceMaker, 30 pièces converties)
 **Mapping actif :** `URGOT → URGOT SA`, `CAITLYN → CAITLYN SA`, plus les personnes physiques (`Laurent Dumas`, `Claire Reynaud`). Ici `URGOT` / `CAITLYN` sont les **vraies** entités « côté cabinet » (fixtures fictives) ; `URGOT SA` / `CAITLYN SA` sont les **codes** que le modèle doit seul voir.
