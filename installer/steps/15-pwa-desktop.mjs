@@ -17,6 +17,32 @@ export const meta = {
   required: false,
 };
 
+function launcherResult(result, action = 'créée') {
+  const mode = result.native ? 'native (WKWebView)' : 'lanceur navigateur';
+  if (!result.protocolReady) {
+    return {
+      status: 'partial',
+      note: `Application ${mode} ${action} (${result.shortcut}), mais le protocole piecemaker: n'a pas pu être enregistré${result.protocolError ? ` : ${result.protocolError}` : '.'}`,
+    };
+  }
+  return { status: 'done', note: `Application ${mode} ${action} : ${result.shortcut}` };
+}
+
+/**
+ * Réinstalle l'application seulement si l'utilisateur l'avait déjà installée.
+ * `piecemaker update` peut ainsi rejouer l'étape 15 sans créer un raccourci
+ * qui avait été refusé lors de l'installation initiale.
+ */
+export function refreshInstalledDesktopApplication({
+  status = desktopLauncherStatus(),
+  installLauncher = installDesktopLauncher,
+} = {}) {
+  if (!status.shortcutReady && !status.protocolReady) {
+    return { status: 'skipped', note: 'Application PieceMaker absente du Bureau.' };
+  }
+  return launcherResult(installLauncher(), 'mise à jour');
+}
+
 export async function install(ctx) {
   if (ctx.dryRun) {
     log.info(`[simulation] proposition d'ajouter PieceMaker au Bureau`);
@@ -27,15 +53,7 @@ export async function install(ctx) {
     return { status: 'skipped', note: 'Application Bureau refusée.' };
   }
 
-  const result = installDesktopLauncher();
-  const mode = result.native ? 'native (WKWebView)' : 'lanceur navigateur';
-  if (!result.protocolReady) {
-    return {
-      status: 'partial',
-      note: `Application ${mode} créée (${result.shortcut}), mais le protocole piecemaker: n'a pas pu être enregistré${result.protocolError ? ` : ${result.protocolError}` : '.'}`,
-    };
-  }
-  return { status: 'done', note: `Application ${mode} créée : ${result.shortcut}` };
+  return launcherResult(installDesktopLauncher());
 }
 
 export async function check() {

@@ -8,7 +8,10 @@ import {
   desktopLauncherStatus,
   installDesktopLauncher,
 } from '../installer/lib/desktop-launcher.mjs';
-import { meta } from '../installer/steps/15-pwa-desktop.mjs';
+import {
+  meta,
+  refreshInstalledDesktopApplication,
+} from '../installer/steps/15-pwa-desktop.mjs';
 
 test('le raccourci PWA est une étape optionnelle proposée par l’installateur', () => {
   assert.equal(meta.id, '15-pwa-desktop');
@@ -17,6 +20,27 @@ test('le raccourci PWA est une étape optionnelle proposée par l’installateur
   const ico = fs.readFileSync(path.resolve('installer/assets/piecemaker.ico'));
   assert.equal(icns.subarray(0, 4).toString(), 'icns');
   assert.deepEqual([...ico.subarray(0, 4)], [0, 0, 1, 0]);
+});
+
+test('la mise à jour rejoue l’étape 15 seulement pour une application déjà installée', () => {
+  let installs = 0;
+  const absent = refreshInstalledDesktopApplication({
+    status: { shortcutReady: false, protocolReady: false },
+    installLauncher: () => { installs += 1; },
+  });
+  assert.equal(absent.status, 'skipped');
+  assert.equal(installs, 0);
+
+  const present = refreshInstalledDesktopApplication({
+    status: { shortcutReady: true, protocolReady: true },
+    installLauncher: () => {
+      installs += 1;
+      return { native: true, protocolReady: true, shortcut: '/Desktop/PieceMaker.app' };
+    },
+  });
+  assert.equal(present.status, 'done');
+  assert.match(present.note, /mise à jour/);
+  assert.equal(installs, 1);
 });
 
 test('l’application macOS place les sections dans la barre de titre et le protocole démarre seulement le serveur', (t) => {

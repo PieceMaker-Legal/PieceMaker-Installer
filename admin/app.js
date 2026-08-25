@@ -4625,6 +4625,8 @@ navigator.windowControlsOverlay?.addEventListener('geometrychange', syncWindowCo
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('service-worker.js', { scope: './' })
+    .then(() => navigator.serviceWorker.ready)
+    .then((registration) => registration.active?.postMessage({ type: 'refresh-offline-cache' }))
     .catch((error) => dwarn('pwa', `Service worker non enregistré : ${error.message}`));
 }
 

@@ -108,6 +108,28 @@ function reconcileCaseInstructions() {
   }
 }
 
+/** Rejoue la partie non interactive de l'étape 15 après une mise à jour, mais
+ * seulement pour une application Bureau déjà installée. Le chargement reste
+ * dynamique : il intervient après le reset Git et utilise donc la nouvelle
+ * version de l'étape qui vient d'être téléchargée. */
+async function refreshDesktopApplicationAfterUpdate() {
+  const stepPath = path.join(STEPS_DIR, '15-pwa-desktop.mjs');
+  if (!fs.existsSync(stepPath)) return false;
+  try {
+    const step = await import(`${pathToFileURL(stepPath).href}?update=${Date.now()}`);
+    if (typeof step.refreshInstalledDesktopApplication !== 'function') return false;
+    const result = await step.refreshInstalledDesktopApplication();
+    if (result.status !== 'skipped') markStep('15-pwa-desktop', result.status, result.note || '');
+    if (result.status === 'done') log.ok('Application PieceMaker sur le Bureau mise à jour.');
+    else if (result.status === 'partial') log.warn(`Application Bureau partiellement mise à jour : ${result.note}`);
+    else if (result.status === 'failed') log.warn(`Application Bureau non mise à jour : ${result.note}`);
+    return result.status === 'done';
+  } catch (error) {
+    log.warn(`Application Bureau non mise à jour (${error.message}).`);
+    return false;
+  }
+}
+
 const STEPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'steps');
 const COMMANDS = new Set(['open', 'start', 'stop', 'restart', 'status', 'logs', 'chronology', 'install', 'doctor', 'check', 'update']);
 
@@ -415,6 +437,7 @@ async function runOperationalCommand(command, knownUpdate = null, flags = {}) {
     if (!pending.available) {
       log.ok(`PieceMaker est déjà à jour (${pending.ref}, ${pending.current.slice(0, 7)}).`);
       reconcileCaseInstructions();
+      await refreshDesktopApplicationAfterUpdate();
       if (reconcileCentralHook()) {
         log.info('Rouvrez les sessions Claude Code/Codex actives pour charger les hooks et le MCP à jour.');
       }
@@ -468,6 +491,7 @@ async function runOperationalCommand(command, knownUpdate = null, flags = {}) {
       }
 
       reconcileCentralHook();
+      await refreshDesktopApplicationAfterUpdate();
       log.info('Rouvrez les sessions Claude Code/Codex actives pour charger les hooks et le MCP mis à jour.');
     } finally {
       if (previous.running) {

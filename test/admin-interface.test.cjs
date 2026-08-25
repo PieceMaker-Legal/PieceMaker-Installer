@@ -31,11 +31,14 @@ test('l’administration expose un manifeste PWA limité à /admin/', () => {
     assert.equal(image.readUInt32BE(20), expectedSize, `${icon.src} doit avoir la hauteur déclarée`);
   }
   assert.match(app, /navigator\.serviceWorker\.register\('service-worker\.js', \{ scope: '\.\/' \}\)/);
+  assert.match(app, /postMessage\(\{ type: 'refresh-offline-cache' \}\)/);
   assert.match(app, /navigator\.windowControlsOverlay\?\.addEventListener\('geometrychange'/);
   assert.match(css, /env\(titlebar-area-height, 36px\)/);
   assert.match(css, /app-region: drag/);
   assert.match(serviceWorker, /event\.request\.mode === 'navigate'/);
   assert.match(serviceWorker, /name\.startsWith\(CACHE_PREFIX\)/);
+  assert.match(serviceWorker, /new Request\(new URL\(asset, self\.location\.origin\), \{ cache: 'reload' \}\)/);
+  assert.match(serviceWorker, /event\.data\?\.type !== 'refresh-offline-cache'/);
   assert.doesNotMatch(serviceWorker, /\/api\/admin/);
   assert.match(offline, /href="piecemaker:\/\/start"/);
   assert.match(offline, /piecemaker start/);

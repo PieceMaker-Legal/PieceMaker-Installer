@@ -7,8 +7,20 @@ const OFFLINE_ASSETS = [
   '/admin/icons/icon-512.png',
 ];
 
+function refreshOfflineCache() {
+  return caches.open(CACHE_NAME).then((cache) => Promise.all(
+    OFFLINE_ASSETS.map((asset) => {
+      const request = new Request(new URL(asset, self.location.origin), { cache: 'reload' });
+      return fetch(request).then((response) => {
+        if (!response.ok) throw new Error(`Ressource hors ligne indisponible : ${asset}`);
+        return cache.put(request, response);
+      });
+    })
+  ));
+}
+
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(OFFLINE_ASSETS)));
+  event.waitUntil(refreshOfflineCache());
   self.skipWaiting();
 });
 
@@ -22,6 +34,11 @@ self.addEventListener('activate', (event) => {
       ))
       .then(() => self.clients.claim())
   );
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data?.type !== 'refresh-offline-cache') return;
+  event.waitUntil(refreshOfflineCache());
 });
 
 // Aucune donnée de dossier ni réponse API n’est mise en cache. Seule la page

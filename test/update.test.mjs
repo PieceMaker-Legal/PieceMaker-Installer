@@ -34,8 +34,21 @@ function sandbox() {
   git(work, ['config', 'user.name', 'test']);
 
   fs.cpSync(path.join(root, 'installer'), path.join(work, 'installer'), { recursive: true });
-  // Intégration factice suffisante pour prouver que `piecemaker update`
-  // réinstalle le hook central même quand aucun serveur n'était actif.
+  // Intégrations factices suffisantes pour prouver que `piecemaker update`
+  // réinstalle le hook central et rejoue l'étape 15, sans toucher au Bureau de
+  // la machine qui exécute les tests.
+  fs.writeFileSync(path.join(work, 'installer', 'steps', '15-pwa-desktop.mjs'), `
+import fs from 'node:fs';
+import path from 'node:path';
+export const meta = { id: '15-pwa-desktop', label: 'PWA factice', required: false };
+export async function install() { return { status: 'done' }; }
+export async function check() { return { status: 'done' }; }
+export function refreshInstalledDesktopApplication() {
+  fs.mkdirSync(process.env.PIECEMAKER_HOME, { recursive: true });
+  fs.writeFileSync(path.join(process.env.PIECEMAKER_HOME, 'pwa-update-test'), 'refreshed\\n');
+  return { status: 'done', note: 'PWA factice actualisée.' };
+}
+`);
   fs.mkdirSync(path.join(work, 'websocket-server'), { recursive: true });
   fs.writeFileSync(path.join(work, 'websocket-server', 'central-hook-install.cjs'), `
 const fs = require('node:fs');
@@ -128,6 +141,7 @@ test('la mise à jour supprime les fichiers obsolètes et télécharge les nouve
   assert.match(upToDate.stdout, /déjà à jour/);
   assert.match(upToDate.stdout, /Hook central d’anonymisation mis à jour/);
   assert.equal(fs.readFileSync(path.join(home, 'central-hook-update-test'), 'utf8'), 'installed\n');
+  assert.equal(fs.readFileSync(path.join(home, 'pwa-update-test'), 'utf8'), 'refreshed\n');
 
   git(work, ['rm', '-q', '-r', 'deprecated.txt', 'oldir']);
   fs.mkdirSync(path.join(work, 'newdir'));
@@ -135,12 +149,14 @@ test('la mise à jour supprime les fichiers obsolètes et télécharge les nouve
   git(work, ['add', '-A']);
   git(work, ['commit', '-qm', 'v2']);
   git(work, ['push', '-q', 'origin', 'main']);
+  fs.rmSync(path.join(home, 'pwa-update-test'));
 
   const applied = update(client, home);
   assert.equal(applied.status, 0, applied.stderr);
   assert.match(applied.stdout, /mis à jour/);
   assert.match(applied.stdout, /Hook central d’anonymisation mis à jour/);
   assert.equal(fs.readFileSync(path.join(home, 'central-hook-update-test'), 'utf8'), 'installed\n');
+  assert.equal(fs.readFileSync(path.join(home, 'pwa-update-test'), 'utf8'), 'refreshed\n');
 
   assert.equal(fs.existsSync(path.join(client, 'deprecated.txt')), false, 'fichier obsolète non supprimé');
   assert.equal(fs.existsSync(path.join(client, 'oldir')), false, 'dossier obsolète non supprimé');
