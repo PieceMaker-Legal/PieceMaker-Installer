@@ -16,14 +16,22 @@ const path = require('node:path');
 const { buildChronology } = require('./document-index.cjs');
 const {
   graphifyCommand,
+  graphifyEnvironment,
+  localizeGraphifyViewer,
   runGraphifyProcess,
 } = require('./graphify-document-graph.cjs');
 const { stateKey } = require('../piecemaker-plugin/scripts/lib/anonymization-state.cjs');
 const {
   applyMapping,
   readCaseMapping,
+  revertMapping,
 } = require('../piecemaker-plugin/scripts/lib/mapping.cjs');
 const { markdownCounterpart } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
+const {
+  buildLegalPartyRegistry,
+  partyRelationForPosition,
+  serializeSafePartyRegistry,
+} = require('./legal-party-registry.cjs');
 
 const LEGAL_GRAPH_RELATIVE = '.piecemaker/graphify/legal';
 const LEGAL_PROMPT_FILE = path.join(__dirname, 'legal-graph-prompt.txt');
@@ -33,6 +41,7 @@ const LEGAL_GRAPH_TIMEOUT_MS = 30 * 60 * 1000;
 const LEGAL_QUERY_TIMEOUT_MS = 2 * 60 * 1000;
 const LEGAL_FRAMEWORK_FILE = 'cadre_juridique_francais.md';
 const LEGAL_FRAMEWORK_VERIFIED_AT = '2026-08-25';
+const LEGAL_GRAPH_VIEWER_MAX_BYTES = 16 * 1024 * 1024;
 const generations = new Map();
 const NON_GRAPHIFY_SECRET_KEYS = [
   'LEGIFRANCE_CLIENT_ID', 'LEGIFRANCE_CLIENT_SECRET', 'MCP_API_KEY',
@@ -173,10 +182,21 @@ function safeLabel(document) {
  * Prépare les documents sans jamais conserver le nom original. Seules les
  * pièces déjà scannées sont envoyées au modèle ; les autres restent dans la
  * topologie déterministe et sont signalées pour révision.
+ *
+ * Le graphe juridique est désormais recentré sur les parties sélectionnées
+ * (`docs/PLAN-Legal-Graphify.md` § 6) : le registre autoritatif détermine
+ * quelles pièces entrent dans le corpus Graphify, une pièce ne mentionnant
+ * aucune partie sélectionnée restant disponible dans la chronologie mais
+ * écartée du graphe juridique.
  */
 function legalTopology(caseRoot, chronology, mappingDocument) {
+  const registry = buildLegalPartyRegistry(mappingDocument);
+  if (registry.status !== 'ready') {
+    return { documents: [], codes: [], registry, partyCodes: [], excludedDocuments: [] };
+  }
+  const partyCodeSet = new Set(registry.parties.map((party) => party.code));
   const documents = [];
-  const codes = new Set();
+  const excludedDocuments = [];
   for (const doc of chronology.documents || []) {
     if (doc.resource) continue;
     const key = stateKey(doc.path || doc.id);
@@ -184,7 +204,11 @@ function legalTopology(caseRoot, chronology, mappingDocument) {
       .filter((entry) => ['personne', 'societe'].includes(entry.category))
       .map((entry) => String(entry.code || ''))
       .filter(Boolean))].sort();
-    for (const code of entityCodes) codes.add(code);
+    const partyCodes = entityCodes.filter((code) => partyCodeSet.has(code));
+    if (!partyCodes.length) {
+      excludedDocuments.push({ key, reason: 'aucune_partie_selectionnee' });
+      continue;
+    }
     const counterpart = markdownCounterpart(path.join(caseRoot, doc.path), caseRoot);
     let content = '';
     let analyzable = false;
@@ -204,14 +228,26 @@ function legalTopology(caseRoot, chronology, mappingDocument) {
       label: safeLabel({ key, nature: doc.nature, dateIso: doc.dateIso }),
       nature: doc.nature || null,
       dateIso: doc.dateIso || null,
+      // Conservé pour compatibilité descendante : tous les codes GLiNER
+      // personne/société de la pièce, parties sélectionnées ou non.
       codes: entityCodes,
+      // Sous-ensemble de `codes` restreint aux parties du registre : c'est
+      // lui qui pilote désormais le corpus, les nœuds et les arêtes.
+      partyCodes,
       scanned: Boolean(doc.scanned),
       analyzable,
       content,
       contentHash: sha256(content),
     });
   }
-  return { documents, codes: [...codes].sort() };
+  const sortedPartyCodes = [...partyCodeSet].sort();
+  return {
+    documents,
+    codes: sortedPartyCodes,
+    registry,
+    partyCodes: sortedPartyCodes,
+    excludedDocuments,
+  };
 }
 
 function topologySignature(topology) {
@@ -220,20 +256,37 @@ function topologySignature(topology) {
     promptVersion: LEGAL_PROMPT_VERSION,
     promptHash,
     framework: sha256(LEGAL_FRAMEWORK),
+    // Le registre des parties pilote désormais la topologie : le modifier
+    // (partie ajoutée, retirée ou position changée) invalide le cache même
+    // si le texte des pièces n'a pas bougé (§ 6.4 du plan).
+    registryVersion: 1,
+    parties: (topology.registry?.parties || []).map((party) => ({
+      code: party.code,
+      entityType: party.entityType,
+      side: party.side,
+      position: party.position,
+    })),
     documents: topology.documents.map((document) => ({
       key: document.key,
       dateIso: document.dateIso,
       nature: document.nature,
-      codes: document.codes,
+      partyCodes: document.partyCodes,
       scanned: document.scanned,
       analyzable: document.analyzable,
       contentHash: document.contentHash,
     })),
+    excludedDocuments: topology.excludedDocuments || [],
   }));
 }
 
-function corpusDocument(document) {
-  const explicit = document.codes.length ? document.codes.join(', ') : 'aucune entité explicitement indexée';
+function corpusDocument(document, parties) {
+  const partyByCode = new Map((parties || []).map((party) => [party.code, party]));
+  const explicit = document.partyCodes.length
+    ? document.partyCodes.map((code) => {
+      const party = partyByCode.get(code);
+      return party ? `${code} (${party.position}/${party.side})` : code;
+    }).join(', ')
+    : 'aucune partie sélectionnée explicitement indexée';
   const body = document.analyzable
     ? document.content
     : '[Contenu non transmis : la pièce doit être convertie et anonymisée avant analyse sémantique.]';
@@ -242,7 +295,7 @@ function corpusDocument(document) {
 - document_id: PIECE_${document.key.slice(0, 12).toUpperCase()}
 - date_indexee: ${document.dateIso || 'inconnue'}
 - nature_indexee: ${document.nature || 'inconnue'}
-- entites_explicites: ${explicit}
+- parties_explicites: ${explicit}
 - contenu_anonymise_disponible: ${document.analyzable ? 'oui' : 'non'}
 
 ## Contenu pseudonymisé
@@ -261,14 +314,16 @@ function writeLegalInputs(temporary, topology) {
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   }
   for (const document of topology.documents.filter((entry) => entry.analyzable)) {
-    fs.writeFileSync(path.join(corpus, document.file), corpusDocument(document), {
+    fs.writeFileSync(path.join(corpus, document.file), corpusDocument(document, topology.registry.parties), {
       encoding: 'utf8', mode: 0o600,
     });
   }
   fs.writeFileSync(path.join(corpus, LEGAL_FRAMEWORK_FILE), LEGAL_FRAMEWORK, { encoding: 'utf8', mode: 0o600 });
-  fs.writeFileSync(entityMap, `${JSON.stringify({
-    mapping: Object.fromEntries(topology.codes.map((code) => [code, code])),
-  }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  // Le registre sûr ne porte que des codes et des métadonnées procédurales
+  // (§ 6.3 du plan) : jamais le mapping complet ni `extracted_data`.
+  fs.writeFileSync(entityMap, `${JSON.stringify(
+    serializeSafePartyRegistry(topology.registry), null, 2,
+  )}\n`, { encoding: 'utf8', mode: 0o600 });
   fs.copyFileSync(LEGAL_SITECUSTOMIZE_FILE, path.join(bootstrap, 'sitecustomize.py'));
   return { corpus, output, bootstrap, entityMap, promptMarker };
 }
@@ -348,13 +403,59 @@ function indexNode(id, label, legalKind) {
   };
 }
 
+/**
+ * Élague les nœuds non atteignables depuis les parties sélectionnées et
+ * `procedure_dossier`, sur la vue non dirigée du graphe (§ 7.3 du plan). Un
+ * fragment de cadre général ou une notion sémantique sans lien avec l'affaire
+ * disparaît ; les pièces et les index restent toujours présents, atteignables
+ * ou non, car ce sont des repères structurels du dossier.
+ */
+function pruneToPartyConnectivity(nodes, edges, hyperedges, seedIds) {
+  const adjacency = new Map(nodes.map((node) => [node.id, new Set()]));
+  for (const edge of edges) {
+    if (!adjacency.has(edge.source) || !adjacency.has(edge.target)) continue;
+    adjacency.get(edge.source).add(edge.target);
+    adjacency.get(edge.target).add(edge.source);
+  }
+  const reachable = new Set();
+  const queue = [...seedIds].filter((id) => adjacency.has(id));
+  for (const id of queue) reachable.add(id);
+  while (queue.length) {
+    const current = queue.shift();
+    for (const neighbor of adjacency.get(current) || []) {
+      if (!reachable.has(neighbor)) {
+        reachable.add(neighbor);
+        queue.push(neighbor);
+      }
+    }
+  }
+  const alwaysKept = new Set(nodes
+    .filter((node) => node.file_type === 'document' || node.id.startsWith('index_'))
+    .map((node) => node.id));
+  const keep = new Set([...reachable, ...alwaysKept, ...seedIds]);
+  const keptNodes = nodes.filter((node) => keep.has(node.id));
+  const keptIds = new Set(keptNodes.map((node) => node.id));
+  const keptEdges = edges.filter((edge) => keptIds.has(edge.source) && keptIds.has(edge.target));
+  const keptHyperedges = hyperedges.filter((entry) => entry.nodes.every((id) => keptIds.has(id)));
+  return {
+    nodes: keptNodes,
+    edges: keptEdges,
+    hyperedges: keptHyperedges,
+    prunedCount: nodes.length - keptNodes.length,
+  };
+}
+
 /** Normalise, complète et contrôle le fragment produit par Graphify. */
 function finalizeLegalGraph(raw, topology, mappingDocument) {
   if (!raw || typeof raw !== 'object' || !Array.isArray(raw.nodes)) {
     throw new Error('Graphify a produit un graphe juridique invalide.');
   }
   const allowedFiles = new Set([LEGAL_FRAMEWORK_FILE, ...topology.documents.map((document) => document.file)]);
-  const knownCodes = new Set(topology.codes);
+  const parties = topology.registry?.parties || [];
+  // Seules les parties du registre autoritatif peuvent devenir des nœuds
+  // `legal_kind="personne"` : un code non partie ne peut pas en devenir un
+  // par reformulation du modèle (§ 7.1 et 7.4 du plan).
+  const partyCodeSet = new Set(parties.map((party) => party.code));
   const nodes = [];
   const nodeIds = new Set();
   const addNode = (node) => {
@@ -363,9 +464,9 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
     const sourceFile = normalizeSourceFile(node.source_file);
     if (sourceFile && !allowedFiles.has(sourceFile)) return;
     const label = String(node.label || id).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 500);
-    if (node.legal_kind === 'personne' && !knownCodes.has(label)) return;
+    if (node.legal_kind === 'personne' && !partyCodeSet.has(label)) return;
     if (/^(?:PERSONNE|SOCIETE|SA|SAS|SARL|SCI|EURL|ASSOCIATION|DIRIGEANT)[_\s-]/i.test(label)
-        && !knownCodes.has(label)) return;
+        && !partyCodeSet.has(label)) return;
     nodeIds.add(id);
     const fileType = GRAPHIFY_FILE_TYPES.has(node.file_type) ? node.file_type : 'concept';
     const legalKind = LEGAL_KINDS.has(node.legal_kind) ? node.legal_kind : null;
@@ -389,11 +490,23 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
 
   for (const node of raw.nodes) {
     const sourceFile = normalizeSourceFile(node?.source_file);
-    if (!sourceFile && !knownCodes.has(String(node?.label || ''))) continue;
+    if (!sourceFile && !partyCodeSet.has(String(node?.label || ''))) continue;
     addNode(node);
   }
   for (const definition of FRAMEWORK_NODES) addNode(legalNode(...definition));
   for (const definition of INDEX_NODES) addNode(indexNode(...definition));
+  // Nœud stable de la procédure : jamais de nom de dossier ni autre PII
+  // (§ 7.1 du plan). Sert d'ancre déterministe pour rattacher les parties.
+  addNode({
+    id: 'procedure_dossier',
+    label: 'Procédure du dossier',
+    file_type: 'concept',
+    legal_kind: 'procedure',
+    source_file: '',
+    source_location: null,
+    assertion_status: 'CONSTATE_DANS_PIECE',
+    extraction_method: 'index_piecemaker',
+  });
 
   const documentNodes = new Map();
   for (const document of topology.documents) {
@@ -429,8 +542,12 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
     documentNodes.set(document.file, node.id);
   }
 
+  // Exactement un nœud canonique par partie sélectionnée du registre — pas un
+  // par code GLiNER (§ 7.1 du plan). Le registre écrase toute métadonnée
+  // produite par le modèle sur ces nœuds.
   const entityNodes = new Map();
-  for (const code of topology.codes) {
+  for (const party of parties) {
+    const code = party.code;
     let node = nodes.find((entry) => entry.label === code);
     if (!node) {
       const id = `entite_${code.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
@@ -448,7 +565,26 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
       node.legal_kind = 'personne';
       node.assertion_status = 'CONSTATE_DANS_PIECE';
     }
+    node.entity_type = party.entityType;
+    node.procedural_role = party.position;
+    node.side = party.side;
+    node.is_key_party = true;
     entityNodes.set(code, node.id);
+  }
+
+  // Une partie sélectionnée qui n'est mentionnée dans aucune pièce reste dans
+  // le registre et son nœud est créé, mais signalé pour révision (§ 6.1 du
+  // plan) : l'absence de mention est une information utile au cabinet, pas
+  // une erreur qui doit faire disparaître la partie du graphe.
+  const mentionedPartyCodes = new Set(
+    topology.documents.flatMap((document) => document.partyCodes),
+  );
+  for (const party of parties) {
+    if (mentionedPartyCodes.has(party.code)) continue;
+    const node = nodes.find((entry) => entry.id === entityNodes.get(party.code));
+    if (!node) continue;
+    node.review_required = true;
+    node.review_reasons = [...(node.review_reasons || []), 'partie_absente_des_pieces'];
   }
 
   const edges = [];
@@ -528,7 +664,22 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
       extraction_method: 'chronologie_indexee',
     });
   }
-  for (const entityId of entityNodes.values()) {
+  // Relations procédurales déterministes, jamais laissées au LLM (§ 7.2) :
+  // la position de chaque partie fixe sans ambiguïté sa relation à la
+  // procédure, et l'index des personnes couvre toutes les parties
+  // sélectionnées, mentionnées ou non dans les pièces retenues.
+  for (const party of parties) {
+    const entityId = entityNodes.get(party.code);
+    if (!entityId) continue;
+    addEdge({
+      source: 'procedure_dossier',
+      target: entityId,
+      relation: partyRelationForPosition(party.position),
+      confidence: 'EXTRACTED',
+      assertion_status: 'CONSTATE_DANS_PIECE',
+      source_file: '',
+      extraction_method: 'index_piecemaker',
+    });
     addEdge({
       source: 'index_personnes_dossier',
       target: entityId,
@@ -540,10 +691,11 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
     });
   }
 
-  // Garantie déterministe : chaque mention document↔personne indexée existe,
-  // même si le modèle sémantique omet ou reformule cette arête.
+  // Garantie déterministe : chaque mention document↔partie indexée existe,
+  // même si le modèle sémantique omet ou reformule cette arête. Un code non
+  // partie ne crée jamais d'arête « mentionne » (§ 7.2 du plan).
   for (const document of topology.documents) {
-    for (const code of document.codes) {
+    for (const code of document.partyCodes) {
       addEdge({
         source: documentNodes.get(document.file),
         target: entityNodes.get(code),
@@ -601,19 +753,31 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
     });
   }
 
-  const hyperedges = (Array.isArray(raw.hyperedges) ? raw.hyperedges : [])
+  const rawHyperedges = (Array.isArray(raw.hyperedges) ? raw.hyperedges : [])
     .filter((entry) => entry && Array.isArray(entry.nodes) && entry.nodes.length >= 3)
     .filter((entry) => entry.nodes.every((id) => nodeIds.has(id)))
     .map((entry) => ({ ...entry, source_file: normalizeSourceFile(entry.source_file) }))
     .filter((entry) => !entry.source_file || allowedFiles.has(entry.source_file));
 
+  // Invariant de connexité (§ 7.3 du plan) : seuls les nœuds atteignables
+  // depuis les parties sélectionnées et `procedure_dossier` — ou les pièces
+  // et index, toujours conservés — survivent. Un fragment du cadre général ou
+  // une notion sémantique sans chemin vers une partie est élagué.
+  const partyEntityIds = [...entityNodes.values()];
+  const pruned = pruneToPartyConnectivity(nodes, edges, rawHyperedges, [
+    ...partyEntityIds, 'procedure_dossier',
+  ]);
+  const keptNodes = pruned.nodes;
+  const keptEdges = pruned.edges;
+  const hyperedges = pruned.hyperedges;
+
   const missingParticipants = [];
   const entityIds = new Set(entityNodes.values());
-  for (const node of nodes) {
+  for (const node of keptNodes) {
     if (node.legal_kind && !node.assertion_status) node.assertion_status = 'A_VERIFIER';
     if (!node.legal_kind || ['document', 'personne', 'norme'].includes(node.legal_kind)) continue;
     if (node.id.startsWith('index_') || node.source_file === LEGAL_FRAMEWORK_FILE) continue;
-    const linked = edges.some((edge) =>
+    const linked = keptEdges.some((edge) =>
       (edge.source === node.id && entityIds.has(edge.target))
       || (edge.target === node.id && entityIds.has(edge.source)));
     if (!linked) {
@@ -634,8 +798,8 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
       edgeDirection: 'source_to_target',
       legalPromptVersion: LEGAL_PROMPT_VERSION,
     },
-    nodes,
-    edges,
+    nodes: keptNodes,
+    edges: keptEdges,
     hyperedges,
     input_tokens: Number(raw.input_tokens || 0),
     output_tokens: Number(raw.output_tokens || 0),
@@ -643,11 +807,18 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
       confidentiality: 'pseudonymisee',
       documents: topology.documents.length,
       analyzableDocuments: topology.documents.filter((document) => document.analyzable).length,
-      entities: topology.codes.length,
-      legalRelations: edges.filter((edge) =>
+      entities: parties.length,
+      selectedParties: parties.length,
+      mentionedParties: parties.filter((party) => mentionedPartyCodes.has(party.code)).length,
+      selectedPartiesWithoutMention: parties
+        .filter((party) => !mentionedPartyCodes.has(party.code))
+        .map((party) => party.code),
+      excludedDocuments: (topology.excludedDocuments || []).map((entry) => entry.key),
+      prunedDisconnectedNodes: pruned.prunedCount,
+      legalRelations: keptEdges.filter((edge) =>
         !['index_piecemaker', 'chronologie_indexee'].includes(edge.extraction_method)
         && !['mentionne', 'documente'].includes(edge.relation)).length,
-      semanticLegalNodes: nodes.filter((node) =>
+      semanticLegalNodes: keptNodes.filter((node) =>
         node.source_file && node.source_file !== LEGAL_FRAMEWORK_FILE
         && !['document', 'personne'].includes(node.legal_kind)).length,
       reviewRequired: missingParticipants,
@@ -729,14 +900,28 @@ async function buildLegalGraph(caseRoot, options = {}) {
   }
   const chronology = await buildChronology(caseRoot, { deanonymize: false });
   const topology = legalTopology(caseRoot, chronology, mappingDocument);
-  if (!topology.documents.length) throw new Error('Aucune pièce exploitable dans ce dossier.');
+  // Le registre des parties prime sur les anciens contrôles de topologie
+  // (§ 6 et 7.4 du plan) : sans sélection cohérente, aucun graphe recentré
+  // n'est construit.
+  if (topology.registry.status === 'mapping_missing') {
+    throw new Error('Le dossier doit être anonymisé avant de construire son graphe juridique.');
+  }
+  if (topology.registry.status === 'parties_required') {
+    throw new Error('Aucune partie du dossier n’est sélectionnée ; le graphe juridique ne peut pas être recentré.');
+  }
+  if (topology.registry.status === 'party_selection_invalid') {
+    throw new Error(`La sélection des parties du dossier est invalide : ${topology.registry.errors.join(' ; ')}`);
+  }
+  if (!topology.documents.length) {
+    throw new Error('no_party_documents : aucune pièce analysable ne mentionne une partie sélectionnée.');
+  }
   if (!topology.documents.some((document) => document.analyzable)) {
     throw new Error('Aucune pièce convertie et anonymisée n’est disponible pour l’analyse juridique.');
   }
   const signature = topologySignature(topology);
   if (!options.force && !options.backend && !options.model) {
     const cached = readCachedLegalGraph(caseRoot, signature);
-    if (cached) return cached;
+    if (cached) return { ...cached, registry: topology.registry };
   }
 
   const generationKey = [path.resolve(caseRoot), signature, options.backend || '', options.model || ''].join('\u0000');
@@ -785,7 +970,7 @@ async function generateLegalGraph(caseRoot, signature, topology, mappingDocument
     const rawFile = path.join(inputs.output, 'graphify-out', 'graph.json');
     const raw = readJson(rawFile);
     const graph = finalizeLegalGraph(raw, topology, mappingDocument);
-    return persistLegalGraph(caseRoot, signature, graph);
+    return { ...persistLegalGraph(caseRoot, signature, graph), registry: topology.registry };
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
   }
@@ -855,7 +1040,10 @@ function enrichLegalQueryOutput(output, graph) {
       + ` citation=${JSON.stringify(value(node.citation))} url=${JSON.stringify(value(node.source_url))}`
       + ` source_verifiee_le=${value(node.source_verified_at)}`
       + ` piece=${JSON.stringify(sourceLabel(node.source_file))}`
-      + `${node.review_required ? ' revision=REQUISE' : ''}`,
+      + `${node.review_required ? ' revision=REQUISE' : ''}`
+      // Une partie sélectionnée du registre (§ 8 du plan) porte son rôle et
+      // son côté : indispensable pour ne pas confondre demandeur et défendeur.
+      + `${node.is_key_party ? ` role=${value(node.procedural_role)} cote=${value(node.side)} partie_cle=oui` : ''}`,
     );
   }
   for (const edge of graph.edges) {
@@ -869,13 +1057,73 @@ function enrichLegalQueryOutput(output, graph) {
   return `${base}\n${lines.join('\n')}`;
 }
 
+/**
+ * Vue cabinet du graphe juridique persisté : les libellés de nœuds et le
+ * contexte des arêtes, tous deux en codes sur disque, sont réidentifiés comme
+ * dans l'éditeur de mapping. Ne modifie jamais le graphe d'origine et n'est
+ * jamais réécrite sur disque — vue en mémoire seulement, le temps de répondre
+ * à l'administration.
+ */
+function deanonymizeLegalGraphForAdmin(graph, mappingDocument) {
+  const reverse = mappingDocument?.reverse_mapping || {};
+  return {
+    ...graph,
+    nodes: (graph.nodes || []).map((node) => {
+      const variants = reverse[node.label];
+      const label = Array.isArray(variants) && variants.length ? variants[0] : node.label;
+      return { ...node, label };
+    }),
+    edges: (graph.edges || []).map((edge) => ({
+      ...edge,
+      context: revertMapping(edge.context, reverse),
+    })),
+  };
+}
+
+/**
+ * Rend le graphe juridique (déjà au format Graphify, déjà réidentifié pour le
+ * cabinet par `deanonymizeLegalGraphForAdmin`) via le renderer officiel
+ * Graphify (`cluster-only --no-label`). Même schéma jetable que
+ * `renderGraphifyViewer` : le fichier temporaire ne contient que ce qui doit
+ * être affiché et est détruit dès le HTML lu, jamais persisté.
+ */
+async function renderLegalGraphViewer(graph, { command, runner } = {}) {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-legal-graph-viewer-'));
+  try {
+    const output = path.join(temporary, 'graphify-out');
+    const graphFile = path.join(output, 'graph.json');
+    fs.mkdirSync(output, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(graphFile, `${JSON.stringify(graph, null, 2)}\n`, {
+      encoding: 'utf8', mode: 0o600,
+    });
+    await (runner || runGraphifyProcess)(command || graphifyCommand(), [
+      'cluster-only', temporary,
+      '--graph', graphFile,
+      '--no-label',
+    ], { cwd: temporary, env: graphifyEnvironment() });
+    const viewerFile = path.join(output, 'graph.html');
+    const size = fs.statSync(viewerFile).size;
+    if (!size || size > LEGAL_GRAPH_VIEWER_MAX_BYTES) {
+      throw new Error('Le visualiseur du graphe juridique dépasse la taille autorisée.');
+    }
+    return localizeGraphifyViewer(fs.readFileSync(viewerFile, 'utf8'));
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+}
+
 async function legalGraphStatus(caseRoot) {
   const files = legalGraphPaths(caseRoot);
   const manifest = readJson(files.manifest);
-  if (!manifest || !fs.existsSync(files.graph)) {
-    return { exists: false, stale: true, graphFile: files.graph };
-  }
   const mappingDocument = readCaseMapping(caseRoot);
+  if (!manifest || !fs.existsSync(files.graph)) {
+    return {
+      exists: false,
+      stale: true,
+      graphFile: files.graph,
+      registry: buildLegalPartyRegistry(mappingDocument),
+    };
+  }
   const chronology = await buildChronology(caseRoot, { deanonymize: false });
   const topology = legalTopology(caseRoot, chronology, mappingDocument);
   return {
@@ -884,6 +1132,7 @@ async function legalGraphStatus(caseRoot) {
     graphFile: files.graph,
     generatedAt: manifest.generatedAt,
     stats: manifest.stats || null,
+    registry: topology.registry,
   };
 }
 
@@ -894,7 +1143,9 @@ module.exports = {
   LEGAL_PROMPT_VERSION,
   LEGAL_RELATIONS,
   buildLegalGraph,
+  buildLegalPartyRegistry,
   corpusDocument,
+  deanonymizeLegalGraphForAdmin,
   enrichLegalQueryOutput,
   finalizeLegalGraph,
   legalGraphEnvironment,
@@ -902,6 +1153,7 @@ module.exports = {
   legalGraphStatus,
   legalTopology,
   queryLegalGraph,
+  renderLegalGraphViewer,
   topologySignature,
   writeLegalInputs,
 };

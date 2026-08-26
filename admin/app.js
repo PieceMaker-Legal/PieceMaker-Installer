@@ -3828,7 +3828,9 @@ function renderChronologyGraph(data) {
   wrapper.className = 'graphify-viewer-wrap';
   const meta = document.createElement('p');
   meta.className = 'chronology-graph-meta';
-  meta.textContent = 'Visualiseur officiel Graphify · résultats GLiNER locaux · sans LLM (0 token)';
+  meta.textContent = graphData.llm
+    ? 'Graphe juridique Graphify · recentré sur les parties sélectionnées'
+    : 'Graphe documentaire Graphify · résultats GLiNER locaux · sans LLM';
   const frame = document.createElement('iframe');
   frame.className = 'graphify-viewer-frame';
   frame.title = 'Graphe interactif Graphify';

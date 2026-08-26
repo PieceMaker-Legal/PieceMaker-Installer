@@ -51,6 +51,11 @@ const {
   buildGraphifyDocumentGraph,
   graphifyErrorGraph,
 } = require('./graphify-document-graph.cjs');
+const {
+  deanonymizeLegalGraphForAdmin,
+  legalGraphPaths,
+  renderLegalGraphViewer,
+} = require('./legal-graph.cjs');
 const { renderChronologyHtml, renderHistoryHtml } = require('./lib/export-render.cjs');
 const { outputExtension } = require('./lib/office-to-pdf.cjs');
 const { generateDocument } = require('./lib/doc-generate.cjs');
@@ -2407,7 +2412,29 @@ function createAdminRouter({
       const deanonymize = req.query.deanonymize !== '0' && req.query.deanonymize !== 'false';
       const chronology = await buildChronology(legalCase.root, { deanonymize });
       try {
-        chronology.graph = await buildGraphifyDocumentGraph(legalCase.root, chronology);
+        // Le graphe juridique (LLM, recentré sur les parties) prime dès qu'il a
+        // été construit au moins une fois ; il n'est jamais reconstruit ici,
+        // seulement lu et réidentifié pour l'affichage cabinet. Tant qu'il
+        // n'existe pas encore, la frise retombe sur le graphe documentaire
+        // GLiNER, sans LLM, qui reste toujours disponible.
+        const legalFiles = legalGraphPaths(legalCase.root);
+        const legalGraph = readJson(legalFiles.graph, null);
+        if (legalGraph) {
+          const mappingDocument = readCaseMapping(legalCase.root);
+          const deanonymized = deanonymizeLegalGraphForAdmin(legalGraph, mappingDocument);
+          const viewerHtml = await renderLegalGraphViewer(deanonymized);
+          chronology.graph = {
+            engine: 'graphify',
+            source: 'piecemaker-legal',
+            llm: true,
+            status: 'ready',
+            nodes: deanonymized.nodes,
+            edges: deanonymized.edges,
+            viewerHtml,
+          };
+        } else {
+          chronology.graph = await buildGraphifyDocumentGraph(legalCase.root, chronology);
+        }
       } catch (graphifyError) {
         // Le graphe est un enrichissement : une installation Graphify absente ou
         // une sortie invalide ne doit jamais rendre la frise inaccessible.

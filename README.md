@@ -117,6 +117,7 @@ environnement virtuel Python et modèles GLiNER2 + spaCy.
 | 01-prerequis | Prérequis système | vérifie Node.js, npm, git et Python avant toute installation |
 | 02-dependances-node | Dépendances Node.js | installe les modules npm de la racine et du serveur MCP |
 | 03-python-gliner | Python, GLiNER & anonymisation | venv Python, dépendances et modèles GLiNER |
+| 03b-python-graphify | Graphify (graphe juridique) | venv Python séparé, installe le fork Graphify PieceMaker-Legal à un tag figé |
 | 04-conversion-md | Conversion de documents en Markdown | vérifie markitdown/pypdf et propose MinerU pour les PDF scannés |
 | 05-certificats | Certificats HTTPS | génère le certificat local requis par Word |
 | 06-hooks | Hooks Claude Code (protection, commits & facturation) | configure les garde-fous, les commits PostToolUse et le suivi de facturation ; le mapping relève du proxy PII |
