@@ -1,3 +1,5 @@
+# Documentation locale (audits, notes, recherches)
+docs/
 # Forks tiers (sous-projets avec leur propre .git)
 eidolon/
 aegis-gate/
