@@ -75,6 +75,16 @@ web-bundles/
 # CLAUDE.md racine = repères d'architecture versionnés dans le dépôt
 CLAUDE.local.md
 __pycache__/
+
+# Sources de tests locales — non versionnées
+test/
+tests/
+*.test.*
+*.spec.*
+test_*.py
+*_test.py
+_mxc_hooktest/
+
 # output/ contient les mappings d'anonymisation : des données client réelles.
 # Rien n'y est versionné hormis les modèles de documents.
 output/*
