@@ -100,7 +100,7 @@ test('Claude Code ne remplace pas une section env invalide', (t) => {
   assert.equal(fs.readFileSync(path.join(directory, 'settings.json'), 'utf8'), '{"env":"géré ailleurs"}\n');
 });
 
-test('Codex utilise le pass-through ChatGPT HTTP sans WebSocket et préserve le TOML', (t) => {
+test('Codex utilise le pass-through ChatGPT avec WebSocket et préserve le TOML', (t) => {
   const userHome = temporaryHome(t);
   const codexHome = path.join(userHome, '.codex');
   fs.mkdirSync(codexHome, { recursive: true });
@@ -124,7 +124,7 @@ test('Codex utilise le pass-through ChatGPT HTTP sans WebSocket et préserve le 
   assert.match(content, /name = "PieceMaker · LiteLLM"/);
   assert.match(content, /base_url = "http:\/\/127\.0\.0\.1:44000\/chatgpt"/);
   assert.match(content, /requires_openai_auth = true/);
-  assert.match(content, /supports_websockets = false/);
+  assert.match(content, /supports_websockets = true/);
   assert.match(content, /model = "gpt-test"/);
   assert.match(content, /\[mcp_servers\.tiers\]\ncommand = "serveur-tiers"/);
 });

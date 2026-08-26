@@ -13,7 +13,7 @@ import time
 from typing import Any, Callable, List, Optional
 
 from .mapping import MappingCache
-from .substitution import anonymize_text, deanonymize_text
+from .substitution import anonymize_text, anonymize_text_with_matches, deanonymize_text
 
 logger = logging.getLogger('piecemaker_pii.asgi')
 
@@ -51,25 +51,47 @@ PATHS_TO_PROCESS = {
 }
 
 
-def _walk_all_strings(obj: Any, mapping: dict) -> Any:
+def _walk_all_strings(
+    obj: Any,
+    mapping: dict,
+    observed_reverse: Optional[dict] = None,
+) -> Any:
     if isinstance(obj, str):
+        if observed_reverse is not None:
+            transformed, observed = anonymize_text_with_matches(obj, mapping)
+            for code, entity in observed.items():
+                observed_reverse.setdefault(code, [entity])
+            return transformed
         return anonymize_text(obj, mapping)
     if isinstance(obj, list):
-        return [_walk_all_strings(item, mapping) for item in obj]
+        return [_walk_all_strings(item, mapping, observed_reverse) for item in obj]
     if isinstance(obj, dict):
-        return {key: _walk_all_strings(value, mapping) for key, value in obj.items()}
+        return {
+            key: _walk_all_strings(value, mapping, observed_reverse)
+            for key, value in obj.items()
+        }
     return obj
 
 
-def _walk_anonymize(obj: Any, mapping: dict) -> Any:
+def _walk_anonymize(
+    obj: Any,
+    mapping: dict,
+    observed_reverse: Optional[dict] = None,
+) -> Any:
     """Code uniquement les sous-arbres textuels connus d'une requête LLM."""
     if isinstance(obj, str):
+        if observed_reverse is not None:
+            transformed, observed = anonymize_text_with_matches(obj, mapping)
+            for code, entity in observed.items():
+                observed_reverse.setdefault(code, [entity])
+            return transformed
         return anonymize_text(obj, mapping)
     if isinstance(obj, list):
-        return [_walk_anonymize(item, mapping) for item in obj]
+        return [_walk_anonymize(item, mapping, observed_reverse) for item in obj]
     if isinstance(obj, dict):
         return {
-            key: _walk_all_strings(value, mapping) if key in ANONYMIZE_KEYS else value
+            key: _walk_all_strings(value, mapping, observed_reverse)
+            if key in ANONYMIZE_KEYS else value
             for key, value in obj.items()
         }
     return obj
@@ -143,11 +165,18 @@ class PIIMiddleware:
         logger.info('PIIMiddleware initialise — %d entites', self.cache.entity_count)
 
     async def __call__(self, scope: dict, receive: Callable, send: Callable):
+        path = scope.get('path', '')
+        if scope['type'] == 'websocket':
+            if _is_generation_path(path):
+                await self._handle_websocket(path, receive, send, scope)
+            else:
+                await self.app(scope, receive, send)
+            return
+
         if scope['type'] != 'http':
             await self.app(scope, receive, send)
             return
 
-        path = scope.get('path', '')
         if scope.get('method', 'GET') != 'POST' or not _is_generation_path(path):
             await self.app(scope, receive, send)
             return
@@ -364,6 +393,122 @@ class PIIMiddleware:
         finally:
             if not metrics_logged:
                 log_response_metrics('incomplete')
+
+    async def _handle_websocket(
+        self,
+        path: str,
+        receive: Callable,
+        send: Callable,
+        scope: dict,
+    ) -> None:
+        """Code les trames client et ré-identifie les trames serveur."""
+        self.cache.refresh_if_needed()
+        if self.cache.entity_count == 0:
+            await send({
+                'type': 'websocket.close',
+                'code': 1011,
+                'reason': 'Mapping central PieceMaker absent ou vide.',
+            })
+            return
+
+        client_frames = 0
+        server_frames = 0
+        client_json_frames = 0
+        server_json_frames = 0
+        client_bytes = 0
+        server_bytes = 0
+        transform_ms = 0.0
+        contextual_reverse = dict(self.cache.reverse_mapping)
+        started_at = time.perf_counter()
+        logger.info(
+            'pii_websocket_open path=%s entities=%d',
+            path,
+            self.cache.entity_count,
+        )
+
+        def transform_frame(message: dict, transform: Callable) -> tuple[dict, int, bool]:
+            text_payload = message.get('text')
+            bytes_payload = message.get('bytes')
+            if text_payload is None and bytes_payload is None:
+                return message, 0, False
+
+            is_bytes = bytes_payload is not None
+            raw = bytes_payload if is_bytes else str(text_payload).encode('utf-8')
+            try:
+                parsed = json.loads(raw)
+                transformed = transform(parsed)
+                encoded = json.dumps(transformed, ensure_ascii=False).encode('utf-8')
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError, TypeError):
+                return message, len(raw), False
+
+            modified = dict(message)
+            if is_bytes:
+                modified['bytes'] = encoded
+            else:
+                modified['text'] = encoded.decode('utf-8')
+            return modified, len(raw), True
+
+        async def anonymized_receive():
+            nonlocal client_frames, client_json_frames, client_bytes, transform_ms
+            nonlocal contextual_reverse
+            message = await receive()
+            if message.get('type') != 'websocket.receive':
+                return message
+
+            self.cache.refresh_if_needed()
+            operation_started_at = time.perf_counter()
+            observed_reverse = {}
+            modified, size, request_json = transform_frame(
+                message,
+                lambda value: _walk_anonymize(
+                    value,
+                    self.cache.mapping,
+                    observed_reverse,
+                ),
+            )
+            contextual_reverse = dict(self.cache.reverse_mapping)
+            contextual_reverse.update(observed_reverse)
+            transform_ms += (time.perf_counter() - operation_started_at) * 1000
+            client_frames += 1
+            client_json_frames += int(request_json)
+            client_bytes += size
+            return modified
+
+        async def deanonymized_send(message: dict):
+            nonlocal server_frames, server_json_frames, server_bytes, transform_ms
+            if message.get('type') != 'websocket.send':
+                await send(message)
+                return
+
+            operation_started_at = time.perf_counter()
+            modified, size, response_json = transform_frame(
+                message,
+                lambda value: _walk_deanonymize(value, contextual_reverse),
+            )
+            transform_ms += (time.perf_counter() - operation_started_at) * 1000
+            server_frames += 1
+            server_json_frames += int(response_json)
+            server_bytes += size
+            await send(modified)
+
+        try:
+            await self.app(scope, anonymized_receive, deanonymized_send)
+        finally:
+            logger.info(
+                'pii_websocket_metrics path=%s entities=%d client_frames=%d '
+                'client_json_frames=%d server_frames=%d server_json_frames=%d '
+                'client_bytes=%d server_bytes=%d transform_ms=%.3f total_ms=%.3f',
+                path,
+                self.cache.entity_count,
+                client_frames,
+                client_json_frames,
+                server_frames,
+                server_json_frames,
+                client_bytes,
+                server_bytes,
+                transform_ms,
+                (time.perf_counter() - started_at) * 1000,
+            )
 
     async def _reject_missing_mapping(self, send: Callable) -> None:
         payload = json.dumps({

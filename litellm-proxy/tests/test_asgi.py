@@ -82,6 +82,41 @@ async def _call_middleware(middleware, path, body, response_chunks, content_type
     return captured_request, sent
 
 
+async def _call_websocket_middleware(middleware, path, request, response):
+    received = []
+
+    async def app(scope, receive, send):
+        received.append(await receive())
+        received.append(await receive())
+        await send({'type': 'websocket.accept'})
+        await send({
+            'type': 'websocket.send',
+            'text': json.dumps(response, ensure_ascii=False),
+        })
+        await send({'type': 'websocket.close', 'code': 1000})
+
+    middleware.app = app
+    scope = {'type': 'websocket', 'path': path, 'headers': []}
+    incoming = [
+        {'type': 'websocket.connect'},
+        {
+            'type': 'websocket.receive',
+            'text': json.dumps(request, ensure_ascii=False),
+        },
+    ]
+
+    async def receive():
+        return incoming.pop(0)
+
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    await middleware(scope, receive, send)
+    return received, sent
+
+
 class TestWalkers(unittest.TestCase):
     def test_anonymise_messages_et_input_sans_toucher_au_modele(self):
         request = {
@@ -158,6 +193,78 @@ class TestPIIMiddleware(unittest.TestCase):
         self.assertEqual(request['messages'][0]['content'], 'PERSONNE_PHYSIQUE_01')
         self.assertEqual(result['choices'][0]['message']['content'], 'Cher Jean Dupont')
         self.assertNotIn(b'content-length', dict(sent[0]['headers']))
+
+    def test_websocket_anonymise_et_deanonymise_les_trames_json(self):
+        with self.assertLogs('piecemaker_pii.asgi', level='INFO') as captured_logs:
+            received, sent = _run(_call_websocket_middleware(
+                self.middleware,
+                '/chatgpt/responses',
+                {
+                    'type': 'response.create',
+                    'input': 'Bonjour Jean Dupont de SCI Riviera',
+                },
+                {
+                    'type': 'response.output_text.delta',
+                    'delta': 'Bonjour PERSONNE_PHYSIQUE_01',
+                },
+            ))
+
+        coded_request = json.loads(received[1]['text'])
+        clear_response = json.loads(sent[1]['text'])
+        self.assertEqual(
+            coded_request['input'],
+            'Bonjour PERSONNE_PHYSIQUE_01 de PERSONNE_MORALE_01',
+        )
+        self.assertEqual(clear_response['delta'], 'Bonjour Jean Dupont')
+        logs = '\n'.join(captured_logs.output)
+        self.assertIn('pii_websocket_open path=/chatgpt/responses entities=2', logs)
+        self.assertRegex(
+            logs,
+            r'pii_websocket_metrics path=/chatgpt/responses entities=2 '
+            r'client_frames=1 client_json_frames=1 server_frames=1 '
+            r'server_json_frames=1 client_bytes=\d+ server_bytes=\d+ '
+            r'transform_ms=\d+\.\d{3} total_ms=\d+\.\d{3}',
+        )
+        self.assertNotIn('Jean Dupont', logs)
+        self.assertNotIn('PERSONNE_PHYSIQUE_01', logs)
+
+    def test_websocket_preserve_la_variante_utilisee_dans_un_chemin(self):
+        mapping_path = _make_mapping_file(
+            {
+                'SCI Riviera': 'PERSONNE_MORALE_01',
+                'SCI': 'PERSONNE_MORALE_01',
+            },
+            {'PERSONNE_MORALE_01': ['SCI Riviera', 'SCI']},
+        )
+        try:
+            middleware = PIIMiddleware(self.middleware.app, mapping_path=mapping_path)
+            received, sent = _run(_call_websocket_middleware(
+                middleware,
+                '/chatgpt/responses',
+                {
+                    'type': 'response.create',
+                    'input': 'Lis /tmp/03_declaration_SCI.md',
+                },
+                {
+                    'type': 'response.output_item.done',
+                    'arguments': {
+                        'cmd': 'head /tmp/03_declaration_PERSONNE_MORALE_01.md',
+                    },
+                },
+            ))
+
+            coded_request = json.loads(received[1]['text'])
+            clear_response = json.loads(sent[1]['text'])
+            self.assertEqual(
+                coded_request['input'],
+                'Lis /tmp/03_declaration_PERSONNE_MORALE_01.md',
+            )
+            self.assertEqual(
+                clear_response['arguments']['cmd'],
+                'head /tmp/03_declaration_SCI.md',
+            )
+        finally:
+            os.unlink(mapping_path)
 
     def test_sse_openai_preserve_utf8_et_code_coupe(self):
         event = (

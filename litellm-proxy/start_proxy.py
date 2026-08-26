@@ -12,6 +12,8 @@ logging.basicConfig(
 logger = logging.getLogger('piecemaker_pii')
 
 DEFAULT_CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'litellm_config.yaml')
+CHATGPT_WEBSOCKET_PATH = '/chatgpt/responses'
+CHATGPT_WEBSOCKET_TARGET = 'wss://chatgpt.com/backend-api/codex/responses'
 
 
 def _config_file() -> str:
@@ -37,6 +39,17 @@ def main() -> int:
     # réimplémente ni son CLI ni son initialisation interne.
     os.environ['CONFIG_FILE_PATH'] = config_file
 
+    # Le Python framework de macOS n'expose pas toujours ses certificats
+    # système à `websockets`. LiteLLM dépend déjà de certifi : utiliser son
+    # bundle pour les connexions TLS sortantes, sauf choix explicite existant.
+    if not os.environ.get('SSL_CERT_FILE'):
+        try:
+            import certifi
+
+            os.environ['SSL_CERT_FILE'] = certifi.where()
+        except ImportError:
+            logger.warning('Bundle CA certifi indisponible pour WebSocket TLS')
+
     database_url = os.environ.get('DATABASE_URL')
     master_key = os.environ.get('LITELLM_MASTER_KEY')
     if database_url and master_key:
@@ -55,6 +68,36 @@ def main() -> int:
 
     from piecemaker_pii.asgi import PIIMiddleware
 
+    # Les pass-through déclarés dans le YAML couvrent HTTP. LiteLLM fournit
+    # aussi son relais WebSocket générique ; enregistrer la même route permet à
+    # Codex d'utiliser Responses WebSocket tout en restant enveloppé par le
+    # middleware PII PieceMaker ci-dessous.
+    from fastapi import WebSocket
+    from litellm.proxy._types import UserAPIKeyAuth
+    from litellm.proxy.pass_through_endpoints.pass_through_endpoints import (
+        websocket_passthrough_request,
+    )
+
+    websocket_target = os.environ.get(
+        'PIECEMAKER_CHATGPT_WEBSOCKET_TARGET',
+        CHATGPT_WEBSOCKET_TARGET,
+    )
+    async def websocket_handler(websocket: WebSocket):
+        # Le jeton reçu est le jeton OAuth ChatGPT à relayer, pas une clé
+        # maître LiteLLM. Comme le pass-through HTTP sans clé maître, fournir
+        # une identité interne minimale et laisser LiteLLM transporter la
+        # connexion ainsi que l'en-tête Authorization.
+        return await websocket_passthrough_request(
+            websocket=websocket,
+            target=websocket_target,
+            custom_headers={},
+            user_api_key_dict=UserAPIKeyAuth(),
+            forward_headers=True,
+            endpoint=CHATGPT_WEBSOCKET_PATH,
+        )
+
+    app.websocket(CHATGPT_WEBSOCKET_PATH)(websocket_handler)
+
     # Starlette injecte `app` dans le constructeur. Ajouté ici, le middleware
     # entoure aussi les routes créées dynamiquement par LiteLLM au démarrage.
     app.add_middleware(
@@ -64,6 +107,7 @@ def main() -> int:
 
     logger.info('Demarrage LiteLLM + PII Proxy sur %s:%d', host, port)
     logger.info('Config LiteLLM : %s', config_file)
+    logger.info('WebSocket Responses : %s -> %s', CHATGPT_WEBSOCKET_PATH, websocket_target)
     if database_url and master_key:
         logger.info('Admin UI LiteLLM : http://%s:%d/ui', host, port)
 

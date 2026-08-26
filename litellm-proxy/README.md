@@ -17,8 +17,12 @@ sessions Claude Code et Codex. Elle préserve leurs réglages existants et ne
 copie aucun jeton : chaque client conserve son authentification OAuth et la
 transmet au fournisseur à travers le proxy.
 
-Codex utilise l'API Responses HTTP et ses WebSockets sont désactivés afin que le
-transport ne puisse pas contourner le mapping PII. Après la première
+Codex utilise l'API Responses et autorise son transport WebSocket afin de ne pas
+réexpédier tout le contexte après chaque résultat d'outil. LiteLLM assure le
+relais du protocole ; le middleware PieceMaker se limite à anonymiser les
+trames client et à ré-identifier les trames serveur. La ré-identification
+conserve la variante reçue dans la requête, notamment pour restituer exactement
+les chemins locaux contenant une forme abrégée. Après la première
 installation, il suffit de relancer les sessions déjà ouvertes puis d'utiliser
 normalement `claude` ou `codex`.
 

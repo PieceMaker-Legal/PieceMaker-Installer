@@ -299,9 +299,9 @@ export function configureCodexProxy({
     `base_url = ${tomlString(target)}`,
     'requires_openai_auth = true',
     'wire_api = "responses"',
-    // Le middleware PII traite le JSON/SSE HTTP. Interdire explicitement le
-    // WebSocket évite qu'un transport alternatif contourne le mapping.
-    'supports_websockets = false',
+    // LiteLLM relaie Responses WebSocket ; PieceMaker se limite à coder et
+    // ré-identifier les trames dans son middleware PII.
+    'supports_websockets = true',
     CODEX_BLOCK_END,
   ];
   if (managedStart >= 0 && managedEnd >= managedStart) {
@@ -398,7 +398,7 @@ export function llmClientProxyStatus({ config = loadConfig(), userHome = os.home
     const managed = start >= 0 && end > start ? lines.slice(start, end + 1).join('\n') : '';
     codex = provider === CODEX_PROVIDER_ID
       && managed.includes(`base_url = ${tomlString(urls.codex)}`)
-      && managed.includes('supports_websockets = false')
+      && managed.includes('supports_websockets = true')
       && managed.includes('requires_openai_auth = true');
   } catch { /* absent ou illisible */ }
   return { claude, codex, claudeFile, codexFile };

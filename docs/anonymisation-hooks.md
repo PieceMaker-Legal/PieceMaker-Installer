@@ -66,6 +66,18 @@ node --test test/central-mapping.test.cjs test/claude-hooks.test.cjs
 ```
 
 Dans le journal `~/.piecemaker/litellm.log`, chaque requête de génération doit
-porter `pii_request_anonymized`. Cette ligne confirme le passage dans le
-middleware ; les tests de transformation prouvent séparément l'aller codé et le
-retour ré-identifié sans journaliser de données client.
+porter `pii_request_metrics`, avec notamment la route, le nombre d'entités
+chargées et les temps de préparation/anonymisation. La fin de la réponse porte
+`pii_response_metrics`, avec le statut, le mode streaming et les temps de
+ré-identification. Ces lignes confirment le passage dans le middleware ; les
+tests de transformation prouvent séparément l'aller codé et le retour
+ré-identifié sans journaliser de données client.
+
+Pour Responses WebSocket, le même contrôle apparaît sous
+`pii_websocket_open`, puis `pii_websocket_metrics`, qui agrège le nombre et la
+taille des trames ainsi que le temps de transformation sans journaliser chaque
+delta. LiteLLM conserve la responsabilité du transport ; PieceMaker ne
+transforme que le JSON des trames. La variante effectivement reçue dans chaque
+requête sert à la ré-identification de sa réponse : un chemin contenant une
+forme courte reste donc strictement identique après l'aller-retour, même si le
+mapping regroupe cette forme avec une dénomination canonique plus longue.

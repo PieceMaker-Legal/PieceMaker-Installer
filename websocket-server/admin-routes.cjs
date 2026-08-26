@@ -793,7 +793,7 @@ async function configurationOverview({ repoRoot, homeDir, userHome, getRuntimeSt
     const codexConfig = fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8');
     codexProxyConfigured = /^\s*model_provider\s*=\s*["']piecemaker_litellm["']/m.test(codexConfig)
       && codexConfig.includes(`base_url = "${litellmOrigin}/chatgpt"`)
-      && codexConfig.includes('supports_websockets = false');
+      && codexConfig.includes('supports_websockets = true');
   } catch { /* configuration absente */ }
   const venvDir = config.venvPath || path.join(homeDir, 'venv');
   const sitePackages = (() => {

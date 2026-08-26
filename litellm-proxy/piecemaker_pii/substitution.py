@@ -81,13 +81,16 @@ def build_entity_regex(entity: str) -> Optional[re.Pattern]:
     return None
 
 
-def anonymize_text(text: str, mapping: Dict[str, str]) -> str:
-    """Entite -> code. Les entrees passent de la plus longue a la plus courte."""
+def anonymize_text_with_matches(
+    text: str,
+    mapping: Dict[str, str],
+) -> Tuple[str, Dict[str, str]]:
+    """Entite -> code, avec la variante exacte observee pour chaque code."""
     if not isinstance(text, str) or not text:
-        return text
+        return text, {}
     entries = [(entity, code) for entity, code in mapping.items() if entity and code]
     if not entries:
-        return text
+        return text, {}
 
     # Masquage des codes deja presents (zone privee Unicode) pour ne jamais
     # corrompre un code existant — garantit aussi l'idempotence.
@@ -103,16 +106,30 @@ def anonymize_text(text: str, mapping: Dict[str, str]) -> str:
 
     # Substitution longest-first
     output = masked
+    observed: Dict[str, str] = {}
     for entity, code in sorted(entries, key=lambda e: len(e[0]), reverse=True):
         regex = build_entity_regex(entity)
         if regex is None:
             continue
-        output = regex.sub(code, output)
+
+        def replace(match, replacement=code):
+            # La premiere variante rencontree fait foi pour cette requete. Elle
+            # permet de restituer exactement un nom de fichier ou un argument
+            # d'outil, meme si plusieurs variantes partagent le meme code.
+            observed.setdefault(replacement, match.group(0))
+            return replacement
+
+        output = regex.sub(replace, output)
 
     # Restauration des codes masques
     for token, code in restore:
         output = output.replace(token, code)
-    return output
+    return output, observed
+
+
+def anonymize_text(text: str, mapping: Dict[str, str]) -> str:
+    """Entite -> code. Les entrees passent de la plus longue a la plus courte."""
+    return anonymize_text_with_matches(text, mapping)[0]
 
 
 def deanonymize_text(text: str, reverse_mapping: Dict[str, List[str]]) -> str:

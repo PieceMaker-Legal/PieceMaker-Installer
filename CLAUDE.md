@@ -43,6 +43,15 @@ Markdown, rédaction et tamponnage de pièces. Node ≥ 18, Python ≥ 3.10.
 | `piecemaker-plugin/` | Plugin Claude Code : `skills/`, `agents/`, `hooks/hooks.json`, `mcp/` (Legifrance), `scripts/` (logique des hooks) + `scripts/lib/` (mapping, protection, commits, facturation…). |
 | `litellm-proxy/` | Proxy LiteLLM officiel entouré du middleware PII PieceMaker ; pass-through des authentifications Claude Code/Codex, sans stockage de leurs jetons. |
 
+### Limite de responsabilité du proxy
+
+LiteLLM reste l'unique implémentation du proxy, des transports et des
+protocoles LLM, y compris HTTP, SSE et WebSocket. PieceMaker peut configurer ou
+brancher les capacités fournies par LiteLLM, mais ne doit jamais réimplémenter
+un client, un serveur ou un relais de transport au-dessus de lui. Le seul code
+spécifique autorisé sur les échanges est l'anonymisation des requêtes et la
+ré-identification des réponses.
+
 Archives à ignorer : `admin.backup-*`, `_mxc_hooktest/`, `ARCHITECTURE_FIX.md`,
 `central-hook-haiku-test.md`.
 
