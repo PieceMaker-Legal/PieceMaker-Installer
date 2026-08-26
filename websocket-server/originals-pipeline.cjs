@@ -787,7 +787,7 @@ async function startOriginalsJob({ casesRoot, caseName, action, files = [], opti
   const selected = (wanted.size ? originals.filter((file) => wanted.has(file.path)) : originals)
     .filter((file) => !file.resource && file.pipelineEligible !== false);
   if (!selected.length) {
-    throw new Error('Aucune pièce de Correspondance ou de Data Room à traiter.');
+    throw new Error('Aucune pièce à traiter : seules Correspondance et Data Room alimentent ce pipeline.');
   }
 
   // Sans sélection, le travail porte sur tout le dossier et ne refait que ce
