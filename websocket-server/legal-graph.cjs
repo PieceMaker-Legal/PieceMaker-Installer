@@ -32,6 +32,7 @@ const {
   partyRelationForPosition,
   serializeSafePartyRegistry,
 } = require('./legal-party-registry.cjs');
+const { isGraphPriorityPath } = require('./case-folder-structure.cjs');
 
 const LEGAL_GRAPH_RELATIVE = '.piecemaker/graphify/legal';
 const LEGAL_PROMPT_FILE = path.join(__dirname, 'legal-graph-prompt.txt');
@@ -185,9 +186,10 @@ function safeLabel(document) {
  *
  * Le graphe juridique est désormais recentré sur les parties sélectionnées
  * (`docs/PLAN-Legal-Graphify.md` § 6) : le registre autoritatif détermine
- * quelles pièces entrent dans le corpus Graphify, une pièce ne mentionnant
- * aucune partie sélectionnée restant disponible dans la chronologie mais
- * écartée du graphe juridique.
+ * quelles pièces entrent dans le corpus Graphify. Correspondance et Data Room
+ * sont toutefois des sources métier autoritatives : leurs pièces entrent sans
+ * condition de mention, tandis qu'une pièce située ailleurs et ne mentionnant
+ * aucune partie reste disponible dans la chronologie mais est écartée.
  */
 function legalTopology(caseRoot, chronology, mappingDocument) {
   const registry = buildLegalPartyRegistry(mappingDocument);
@@ -205,7 +207,8 @@ function legalTopology(caseRoot, chronology, mappingDocument) {
       .map((entry) => String(entry.code || ''))
       .filter(Boolean))].sort();
     const partyCodes = entityCodes.filter((code) => partyCodeSet.has(code));
-    if (!partyCodes.length) {
+    const graphPriority = isGraphPriorityPath(caseRoot, doc.path);
+    if (!partyCodes.length && !graphPriority) {
       excludedDocuments.push({ key, reason: 'aucune_partie_selectionnee' });
       continue;
     }
@@ -234,6 +237,9 @@ function legalTopology(caseRoot, chronology, mappingDocument) {
       // Sous-ensemble de `codes` restreint aux parties du registre : c'est
       // lui qui pilote désormais le corpus, les nœuds et les arêtes.
       partyCodes,
+      // Une pièce de Correspondance/Data Room est toujours présente dans le
+      // graphe, même si GLiNER n'y a trouvé aucune partie sélectionnée.
+      graphPriority,
       scanned: Boolean(doc.scanned),
       analyzable,
       content,
@@ -271,6 +277,7 @@ function topologySignature(topology) {
       dateIso: document.dateIso,
       nature: document.nature,
       partyCodes: document.partyCodes,
+      graphPriority: document.graphPriority,
       scanned: document.scanned,
       analyzable: document.analyzable,
       contentHash: document.contentHash,
