@@ -148,6 +148,19 @@ const downloadFile = async (url, fallbackName) => {
 
 const byId = (id) => document.getElementById(id);
 const ADMIN_THEME_STORAGE_KEY = 'piecemaker-admin-theme';
+const CASE_FOLDER_STRUCTURE_DEFAULTS = Object.freeze({
+  administrative: '00_ADMINISTRATIF_ET_FACTURATION',
+  correspondence: '01_CORRESPONDANCE',
+  correspondenceClient: '01_Client',
+  correspondenceOpposingCounsel: '02_Avocats_adverses',
+  correspondenceThirdParties: '03_Tiers',
+  correspondenceMarkdown: '00 - Emails convertis Md',
+  dataRoom: '02_DATA_ROOM',
+  dataRoomMarkdown: '00 - Pièces converties Md',
+  drafts: '03_PROJETS',
+  notesAndResearch: '04_NOTES_ET_RECHERCHES',
+  procedure: '05_PROCEDURE',
+});
 let selectedFile = null;
 let currentFrontMatter = '';
 let editorTouched = false;
@@ -527,6 +540,12 @@ async function loadSettings() {
       byId('port').value = data.config.port || 43098;
       byId('pythonPath').value = data.config.pythonPath || data.env.PYTHON_PATH || '';
       applyAdminTheme(data.config.adminTheme);
+      for (const [key, fallback] of Object.entries(CASE_FOLDER_STRUCTURE_DEFAULTS)) {
+        const input = document.querySelector(`[data-case-folder-key="${key}"]`);
+        const configured = data.config.caseFolderStructure?.[key];
+        input.value = typeof configured === 'string' && configured.trim() ? configured : fallback;
+        input.setCustomValidity('');
+      }
       byId('commitUserName').value = data.env.PIECEMAKER_USER_NAME || '';
       byId('legifranceEnv').value = 'production';
       document.querySelectorAll('[data-secret-state]').forEach((element) => {
@@ -546,9 +565,23 @@ async function saveSettings(event) {
   const formElement = event.currentTarget;
   const message = byId('settingsMessage');
   const button = event.submitter || formElement.querySelector('button[type="submit"]');
+  const form = new FormData(formElement);
+  const caseFolderStructure = {};
+  for (const key of Object.keys(CASE_FOLDER_STRUCTURE_DEFAULTS)) {
+    const input = formElement.elements.namedItem(`caseFolderStructure.${key}`);
+    const value = String(form.get(`caseFolderStructure.${key}`) || '').trim();
+    const validationMessage = !value
+      ? 'Saisissez un nom de dossier.'
+      : /[/\\]/.test(value) ? 'Le nom ne peut pas contenir de barre oblique.' : '';
+    input.setCustomValidity(validationMessage);
+    if (!input.reportValidity()) {
+      setMessage(message, 'Corrigez le nom de dossier indiqué.', 'error');
+      return;
+    }
+    caseFolderStructure[key] = value;
+  }
   button.disabled = true;
   setMessage(message, 'Enregistrement…');
-  const form = new FormData(formElement);
   const env = {
     PIECEMAKER_USER_NAME: String(form.get('PIECEMAKER_USER_NAME') || '').trim(),
   };
@@ -566,6 +599,7 @@ async function saveSettings(event) {
           port: Number(form.get('port')),
           pythonPath: form.get('pythonPath'),
           adminTheme: byId('adminDarkMode').checked ? 'dark' : 'light',
+          caseFolderStructure,
         },
         env,
       }),
@@ -2112,7 +2146,8 @@ function formatBytes(size) {
 }
 
 function pendingOriginals() {
-  return caseOriginals().filter((original) => !original.converted || !original.scanned);
+  return caseOriginals().filter((original) =>
+    original.pipelineEligible !== false && (!original.converted || !original.scanned));
 }
 
 function visibleOriginals() {
@@ -2233,6 +2268,7 @@ function originalStatusBadge(className, label) {
 }
 
 function statusLabel(original) {
+  if (original.pipelineEligible === false) return 'Hors conversion et analyse PII';
   if (!original.converted) return 'Non converti';
   return original.scanned ? 'Converti et analysé' : 'Converti, analyse PII en attente';
 }
@@ -2304,7 +2340,9 @@ function renderOriginals() {
       checkbox.disabled = !selectable;
       checkbox.title = isResource
         ? 'Ressource : exclue de la conversion et du scan'
-        : (selectable ? 'Sélectionner pour la conversion ou l’analyse' : 'Pièce déjà convertie et analysée');
+        : original.pipelineEligible === false
+          ? 'Seules les pièces de Correspondance et de Data Room sont converties et analysées'
+          : (selectable ? 'Sélectionner pour la conversion ou l’analyse' : 'Pièce déjà convertie et analysée');
       checkbox.addEventListener('change', () => {
         if (checkbox.checked) selectedOriginals.add(original.path);
         else selectedOriginals.delete(original.path);

@@ -2,13 +2,11 @@
  * Conversion Markdown et pipeline d'anonymisation des pièces originales d'un
  * dossier juridique, pilotés depuis l'administration.
  *
- * Les originaux ne sortent jamais du dossier : `smart_converter.py` et
- * `convert_and_scan_pipeline.py` sont lancés avec le sous-dossier
- * `Fichiers convertis PieceMaker/` du dossier juridique comme répertoire de
- * sortie, si bien que le Markdown converti et le seul `mapping_default.json` y
- * atterrissent, laissant la racine du dossier aux seuls originaux et documents
- * de travail. L'état technique (`.piecemaker/anonymization-state.json`) reste,
- * lui, à la racine. Seules les lignes `PROGRESS:` et un extrait d'erreur sont conservés dans le
+ * Les originaux ne sortent jamais du dossier. Le Markdown est rangé dans le
+ * sous-dossier de conversion de `01_CORRESPONDANCE` ou `02_DATA_ROOM` ; le
+ * mapping canonique reste dans `Fichiers convertis PieceMaker/` et l'état
+ * technique dans `.piecemaker/anonymization-state.json`. Seules les lignes
+ * `PROGRESS:` et un extrait d'erreur sont conservés dans le
  * journal d'un travail : la sortie brute des scripts peut contenir du texte de
  * pièce, qui ne doit jamais remonter dans l'interface.
  */
@@ -25,6 +23,11 @@ const {
   safeCaseFiles,
 } = require('../piecemaker-plugin/scripts/lib/commits.cjs');
 const { documentKey, WORKSPACE_SUBDIR } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
+const {
+  caseConversionOutputDirectory,
+  classifyRelativeCaseFolderPath,
+  readCaseFolderStructure,
+} = require('./case-folder-structure.cjs');
 const {
   markFilesAnonymized,
   markFilesConverted,
@@ -83,7 +86,20 @@ const JOB_TORCH_THREADS = () => process.env.PIECEMAKER_TORCH_THREADS || '4';
 /** Les pièces d'un dossier listées dans l'administration : tout sauf le Markdown. */
 async function listOriginals(caseRoot) {
   const originals = await originalFilesOverview(caseRoot);
-  return originals.filter((file) => file.extension !== '.md');
+  const snapshot = readCaseFolderStructure(caseRoot);
+  return originals
+    .map((file) => ({
+      file,
+      info: classifyRelativeCaseFolderPath(file.path, snapshot.structure, { managed: snapshot.exists }),
+    }))
+    // Les images et autres dérivés produits avec le Markdown ne redeviennent
+    // jamais des pièces originales dans l'administration.
+    .filter(({ file, info }) => file.extension !== '.md' && !info.generated)
+    .map(({ file, info }) => ({
+      ...file,
+      pipelineEligible: snapshot.exists ? info.businessSource : true,
+      businessArea: info.area,
+    }));
 }
 
 function caseMappingPayload(document) {
@@ -577,7 +593,7 @@ function spawnTracked(job, script, args) {
 
 /**
  * Migration « au prochain traitement », rattachée aux pièces du lot : range dans
- * `WORKSPACE_SUBDIR` le Markdown que d'anciennes versions ont laissé à la racine
+ * le dossier de conversion métier le Markdown que d'anciennes versions ont laissé à la racine
  * pour une pièce effectivement (re)traitée. Le rattachement au lot est délibéré —
  * comme `sessionArtifactPaths` — pour ne jamais déplacer un document de travail
  * de l'utilisateur ni un fichier modifié en parallèle. Retourne les chemins
@@ -588,9 +604,15 @@ function spawnTracked(job, script, args) {
  * chemin de succès (`writeCaseMapping`), qui lit les copies racine puis les
  * supprime. Un scan en échec ne doit pas migrer prématurément un ancien mapping.
  */
+function outputDirectoryForOriginal(caseRoot, absoluteFile) {
+  const relative = path.relative(caseRoot, absoluteFile).split(path.sep).join('/');
+  return caseConversionOutputDirectory(caseRoot, relative)
+    || path.join(caseRoot, WORKSPACE_SUBDIR);
+}
+
 function migrateRootArtifacts(caseRoot, absoluteFiles) {
-  const documentKeys = new Set(absoluteFiles.map((file) => documentKey(file)));
-  if (!documentKeys.size) return [];
+  const sourceByKey = new Map(absoluteFiles.map((file) => [documentKey(file), file]));
+  if (!sourceByKey.size) return [];
   let entries;
   try {
     entries = fs.readdirSync(caseRoot, { withFileTypes: true });
@@ -600,14 +622,14 @@ function migrateRootArtifacts(caseRoot, absoluteFiles) {
   const toMove = entries.filter((entry) =>
     entry.isFile()
     && path.extname(entry.name).toLowerCase() === '.md'
-    && documentKeys.has(documentKey(entry.name)));
+    && sourceByKey.has(documentKey(entry.name)));
   if (!toMove.length) return [];
-  const workspaceDir = path.join(caseRoot, WORKSPACE_SUBDIR);
-  fs.mkdirSync(workspaceDir, { recursive: true });
   const removed = [];
   for (const entry of toMove) {
     const source = path.join(caseRoot, entry.name);
-    const destination = path.join(workspaceDir, entry.name);
+    const outputDirectory = outputDirectoryForOriginal(caseRoot, sourceByKey.get(documentKey(entry.name)));
+    fs.mkdirSync(outputDirectory, { recursive: true });
+    const destination = path.join(outputDirectory, entry.name);
     // Le sous-dossier fait autorité : un doublon plus récent y gagne, on se
     // contente d'écarter la copie racine périmée.
     if (fs.existsSync(destination)) fs.rmSync(source, { force: true });
@@ -618,8 +640,6 @@ function migrateRootArtifacts(caseRoot, absoluteFiles) {
 }
 
 async function runJob(job, legalCase, absoluteFiles, options) {
-  const workspaceDir = path.join(legalCase.root, WORKSPACE_SUBDIR);
-  fs.mkdirSync(workspaceDir, { recursive: true });
   job.migratedFromRoot = migrateRootArtifacts(legalCase.root, absoluteFiles);
   if (job.action === 'convert') {
     // `smart_converter.py` ne prend qu'un fichier : on avance dossier par
@@ -628,7 +648,9 @@ async function runJob(job, legalCase, absoluteFiles, options) {
     for (const [index, absolute] of absoluteFiles.entries()) {
       job.processed = index;
       job.percent = Math.round((index / absoluteFiles.length) * 100);
-      const args = [absolute, '-o', workspaceDir];
+      const outputDirectory = outputDirectoryForOriginal(legalCase.root, absolute);
+      fs.mkdirSync(outputDirectory, { recursive: true });
+      const args = [absolute, '-o', outputDirectory];
       if (options.engine) args.push('--engine', options.engine);
       if (options.mode) args.push('--mode', options.mode);
       if (options.lang) args.push('--lang', options.lang);
@@ -654,18 +676,29 @@ async function runJob(job, legalCase, absoluteFiles, options) {
   // `--mapping-file` vise la copie de travail de l'unique mapping du dossier.
   // `--state-file` découple le statut « analysé » du contenu sensible ; les
   // cartes brutes restent temporaires et ne sont jamais déposées ici.
-  const args = [...absoluteFiles, '-o', workspaceDir, '--mapping-file', workingMapping];
-  // `--case-root` découple la clé du manifeste de `--output` : les pièces vivent
-  // sous le dossier, pas sous le sous-dossier de sortie, donc leur clé d'état doit
-  // rester relative au dossier juridique pour correspondre à celle du Node.
-  args.push('--case-root', legalCase.root);
-  args.push('--state-file', path.join(legalCase.root, '.piecemaker', 'anonymization-state.json'));
-  if (options.skipExisting) args.push('--skip-existing');
-  if (options.engine) args.push('--engine', options.engine);
-  if (options.mode) args.push('--mode', options.mode);
-  if (options.lang) args.push('--lang', options.lang);
+  // Le script n'accepte qu'un répertoire de sortie. On regroupe donc les
+  // pièces par zone métier (au plus Correspondance et Data Room) tout en
+  // réutilisant le même mapping temporaire entre les groupes.
+  const groups = new Map();
+  for (const absolute of absoluteFiles) {
+    const outputDirectory = outputDirectoryForOriginal(legalCase.root, absolute);
+    if (!groups.has(outputDirectory)) groups.set(outputDirectory, []);
+    groups.get(outputDirectory).push(absolute);
+  }
   try {
-    await spawnTracked(job, PIPELINE_SCRIPT(), args);
+    for (const [outputDirectory, groupFiles] of groups) {
+      fs.mkdirSync(outputDirectory, { recursive: true });
+      const args = [...groupFiles, '-o', outputDirectory, '--mapping-file', workingMapping];
+      // `--case-root` découple la clé du manifeste de `--output` : les pièces
+      // vivent sous le dossier juridique, pas sous le sous-dossier de sortie.
+      args.push('--case-root', legalCase.root);
+      args.push('--state-file', path.join(legalCase.root, '.piecemaker', 'anonymization-state.json'));
+      if (options.skipExisting) args.push('--skip-existing');
+      if (options.engine) args.push('--engine', options.engine);
+      if (options.mode) args.push('--mode', options.mode);
+      if (options.lang) args.push('--lang', options.lang);
+      await spawnTracked(job, PIPELINE_SCRIPT(), args);
+    }
     const produced = readJsonFile(workingMapping, null);
     if (!produced) throw new Error('Le pipeline n’a produit aucun mapping exploitable.');
     writeCaseMapping(legalCase.root, produced);
@@ -752,8 +785,10 @@ async function startOriginalsJob({ casesRoot, caseName, action, files = [], opti
   // quelles, elles ne sont ni converties ni scannées. On les écarte même si elles
   // sont explicitement cochées, pour que le drapeau reste la seule vérité.
   const selected = (wanted.size ? originals.filter((file) => wanted.has(file.path)) : originals)
-    .filter((file) => !file.resource);
-  if (!selected.length) throw new Error('Aucune pièce à traiter.');
+    .filter((file) => !file.resource && file.pipelineEligible !== false);
+  if (!selected.length) {
+    throw new Error('Aucune pièce de Correspondance ou de Data Room à traiter.');
+  }
 
   // Sans sélection, le travail porte sur tout le dossier et ne refait que ce
   // qui manque : le modèle GLiNER ne se charge pas si tout est déjà scanné.

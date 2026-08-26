@@ -80,6 +80,12 @@ const {
   saveTelegramConfig,
 } = require('./telegram-admin.cjs');
 const { ensureCaseRule } = require('./case-instructions.cjs');
+const {
+  DEFAULT_CASE_FOLDER_STRUCTURE,
+  configuredCaseFolderStructure,
+  ensureCaseFolderStructure,
+  normalizeCaseFolderStructure,
+} = require('./case-folder-structure.cjs');
 
 const MAX_MARKDOWN_BYTES = 1024 * 1024;
 const SECRET_KEYS = new Set([
@@ -104,13 +110,14 @@ function validateNewCaseName(value) {
   return name;
 }
 
-async function createLegalCase({ casesRoot, homeDir, name }) {
+async function createLegalCase({ casesRoot, homeDir, name, config = {} }) {
   const root = resolveCasesRoot(casesRoot);
   const safeName = validateNewCaseName(name);
   const directory = path.join(root, safeName);
   if (fs.existsSync(directory)) throw new Error(`Le dossier juridique « ${safeName} » existe déjà.`);
   fs.mkdirSync(directory);
   try {
+    const structure = ensureCaseFolderStructure(directory, config);
     writeProtection(directory, { unprotected: [] });
     const mapping = writeCaseMapping(directory, { mapping: {}, reverse_mapping: {} });
     await createCommit({
@@ -126,6 +133,7 @@ async function createLegalCase({ casesRoot, homeDir, name }) {
     });
     const folder = await caseOverview(root, homeDir, safeName);
     folder.branches = await historyBranches(root, homeDir, safeName);
+    folder.structure = structure;
     return folder;
   } catch (error) {
     fs.rmSync(directory, { recursive: true, force: true });
@@ -220,6 +228,8 @@ async function registerLegalCase({
   claudeAssetsInstaller = installClaudeAssets,
 } = {}) {
   const root = validateSelectedCaseFolder(folder);
+  const previous = readRegistryConfig(configFile);
+  const structure = ensureCaseFolderStructure(root, previous);
   const claudeAssets = await claudeAssetsInstaller(repoRoot, userHome);
   const rule = ensureCaseRule(repoRoot, root);
   const protection = readProtection(root);
@@ -229,7 +239,6 @@ async function registerLegalCase({
     ? currentMapping
     : writeCaseMapping(root, { mapping: {}, reverse_mapping: {} });
 
-  const previous = readRegistryConfig(configFile);
   const registered = registerCaseFolder(previous, root);
   atomicWrite(configFile, `${JSON.stringify(registered.config, null, 2)}\n`);
 
@@ -255,6 +264,7 @@ async function registerLegalCase({
       rule: path.relative(root, rule).split(path.sep).join('/'),
       mapping: path.relative(root, mapping.file).split(path.sep).join('/'),
       protection: path.relative(root, protection.file).split(path.sep).join('/'),
+      structure: structure.directories,
       commit: commit.commit || null,
     },
   };
@@ -266,6 +276,7 @@ function defaultConfig(repoRoot, homeDir = path.join(os.homedir(), '.piecemaker'
     pythonPath: null,
     venvPath: path.join(homeDir, 'venv'),
     adminTheme: 'light',
+    caseFolderStructure: { ...DEFAULT_CASE_FOLDER_STRUCTURE },
   };
 }
 
@@ -1971,7 +1982,14 @@ function createAdminRouter({
   const configFile = path.join(homeDir, 'config.json');
   const envFile = path.join(repoRoot, '.env');
   const registryConfig = () => readRegistryConfig(configFile);
-  const selectedCase = (reference) => resolveCaseReference(registryConfig(), reference);
+  const selectedCase = (reference) => {
+    const config = registryConfig();
+    const legalCase = resolveCaseReference(config, reference);
+    // Migration idempotente des dossiers enregistrés avant l'introduction de
+    // l'arborescence métier. Le manifeste fige les noms utilisés par ce dossier.
+    ensureCaseFolderStructure(legalCase.root, config);
+    return legalCase;
+  };
 
   // Migration : l'identité de commit ne vivait que dans le `.env` du clone
   // runtime, invisible au hook d'édition qui tourne depuis le cache du plugin.
@@ -2071,6 +2089,7 @@ function createAdminRouter({
 
   router.get('/settings', (req, res) => {
     const config = { ...defaultConfig(repoRoot, homeDir), ...readJson(configFile, {}) };
+    config.caseFolderStructure = configuredCaseFolderStructure(config);
     const env = readEnvFile(envFile);
     const publicEnv = {};
     const secrets = {};
@@ -2084,6 +2103,7 @@ function createAdminRouter({
   router.put('/settings', (req, res) => {
     try {
       const current = { ...defaultConfig(repoRoot, homeDir), ...readJson(configFile, {}) };
+      current.caseFolderStructure = configuredCaseFolderStructure(current);
       const patch = req.body?.config || {};
       const next = { ...current };
 
@@ -2094,6 +2114,14 @@ function createAdminRouter({
       }
       if (patch.pythonPath !== undefined) next.pythonPath = String(patch.pythonPath || '').trim() || null;
       if (patch.adminTheme !== undefined) next.adminTheme = validateAdminTheme(patch.adminTheme);
+      if (patch.caseFolderStructure !== undefined) {
+        next.caseFolderStructure = normalizeCaseFolderStructure({
+          ...current.caseFolderStructure,
+          ...(patch.caseFolderStructure && typeof patch.caseFolderStructure === 'object'
+            ? patch.caseFolderStructure
+            : {}),
+        });
+      }
 
       // L'identité de commit est aussi mémorisée dans config.json : le hook
       // d'édition (lancé depuis le cache du plugin) ne peut pas lire le `.env`
@@ -2385,7 +2413,7 @@ function createAdminRouter({
       folder.registered = legalCase.registered;
       // Les Markdown convertis vivent déjà dans l'historique ; ce cadre ne
       // présente que les pièces originales et un résumé non sensible du mapping.
-      folder.originals = folder.originals.filter((file) => file.extension !== '.md');
+      folder.originals = await listOriginals(legalCase.root);
       const mapping = readCaseMapping(legalCase.root);
       folder.mapping = {
         exists: mapping.exists,

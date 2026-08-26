@@ -889,6 +889,21 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .configuration-form-group.in-configuration-detail .card { margin: 0 0 12px; box-shadow: none; }
 .configuration-form-group.in-configuration-detail .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
+/* Arborescence configurable des nouveaux dossiers juridiques. */
+.case-folder-structure-intro { max-width: 880px; margin: -7px 0 20px; line-height: 1.55; }
+.case-folder-tree { display: grid; gap: 10px; }
+.case-folder-branch { display: grid; gap: 8px; }
+.case-folder-field { display: grid; min-width: 0; grid-template-columns: minmax(190px, .8fr) minmax(250px, 1.2fr); align-items: center; gap: 18px; border: 1px solid var(--line); border-radius: 11px; background: #fbfcfb; padding: 12px 14px; }
+.case-folder-field > span { display: grid; min-width: 0; gap: 4px; }
+.case-folder-field strong { color: var(--ink); font-size: .82rem; }
+.case-folder-field small { color: var(--muted); font-size: .7rem; font-weight: 500; line-height: 1.4; }
+.case-folder-field input { min-width: 0; background: #fff; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; }
+.case-folder-root { border-left: 3px solid var(--brand); }
+.case-folder-children { display: grid; gap: 8px; margin-left: 28px; border-left: 2px solid var(--line); padding-left: 14px; }
+.case-folder-children .case-folder-field { position: relative; }
+.case-folder-children .case-folder-field::before { position: absolute; top: 50%; left: -16px; width: 14px; border-top: 2px solid var(--line); content: ''; }
+.markdown-folder-field { background: #f3f8f7; }
+
 .configuration-hooks-flow { display: grid; gap: 10px; }
 .configuration-hook-step { display: grid; gap: 6px; border: 1px solid var(--line); border-radius: 11px; padding: 11px 12px; }
 .configuration-hook-step.read { border-left: 3px solid #4f9ad8; }
@@ -920,6 +935,8 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
   .configuration-form-group.in-configuration-detail .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .configuration-form-group.in-configuration-detail .form-grid,
   .configuration-form-group.in-configuration-detail .telegram-grid { grid-template-columns: 1fr; }
+  .case-folder-field { grid-template-columns: 1fr; gap: 9px; }
+  .case-folder-children { margin-left: 13px; padding-left: 11px; }
 }
 
 @media (max-width: 560px) {
@@ -993,6 +1010,8 @@ html[data-theme="dark"] :is(.status-pill.error, .component-state.error, .file-ro
 html[data-theme="dark"] :is(.asset-badge.warn, .dirty-badge, .component-state.warn) { background: var(--dark-yellow-muted); }
 html[data-theme="dark"] .mini-badge.protected { background: #272e49; color: #b6c2ee; }
 html[data-theme="dark"] .card { box-shadow: 0 8px 28px rgba(0, 0, 0, .2); }
+html[data-theme="dark"] :is(.case-folder-field, .markdown-folder-field) { background: var(--dark-surface-muted); }
+html[data-theme="dark"] .case-folder-field input { background: var(--paper); }
 
 html[data-theme="dark"] :is(.dossier-bot, .agent-fields, .metadata-editor, .term-chip) { background: var(--dark-surface-muted); }
 html[data-theme="dark"] .term-chip button { background: var(--dark-border); }
