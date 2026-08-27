@@ -1784,7 +1784,7 @@ async function loadMcpTab() {
     container.textContent = '';
 
     if (!items.length) {
-      container.append(createHistoryEmpty('Aucun serveur MCP configuré', 'Lancez l'installateur pour configurer les serveurs locaux.'));
+      container.append(createHistoryEmpty('Aucun serveur MCP configuré', 'Lancez l’installateur pour configurer les serveurs locaux.'));
       status.textContent = 'Aucun serveur MCP détecté.';
       return;
     }
