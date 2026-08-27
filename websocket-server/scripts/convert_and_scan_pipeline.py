@@ -1484,12 +1484,19 @@ def load_document_index(index_path: Path) -> Dict:
         raw = {}
     documents = raw.get("documents", {}) if isinstance(raw, dict) else {}
     overrides = raw.get("overrides", {}) if isinstance(raw, dict) else {}
+    entity_decisions = raw.get("entityDecisions", {}) if isinstance(raw, dict) else {}
+    revisions = raw.get("revisions", []) if isinstance(raw, dict) else []
     return {
-        "version": 1,
+        "version": 2,
         "documents": documents if isinstance(documents, dict) else {},
         # Corrections manuelles écrites par le serveur Node : un re-scan met à
         # jour `documents`, mais ne doit jamais les effacer.
         "overrides": overrides if isinstance(overrides, dict) else {},
+        # Les décisions locales d'entités et leur journal sont également
+        # append-only du point de vue du pipeline : seul le serveur admin les
+        # modifie, un nouveau scan rafraîchit uniquement la détection brute.
+        "entityDecisions": entity_decisions if isinstance(entity_decisions, dict) else {},
+        "revisions": revisions if isinstance(revisions, list) else [],
     }
 
 

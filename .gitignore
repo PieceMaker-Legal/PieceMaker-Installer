@@ -95,6 +95,27 @@ test_*.py
 *_test.py
 _mxc_hooktest/
 
+# Tests de régression Graphify/chronologie livrés avec le dépôt. Les fixtures
+# restent synthétiques ; les autres tests locaux peuvent toujours être ignorés
+# afin de ne jamais embarquer de données de dossiers de développement.
+!test/
+test/*
+!test/legal-graph-contracts.test.cjs
+!test/legal-admin-chronology.test.cjs
+!test/legal-chronology-projection.test.cjs
+!test/legal-document-layer.test.cjs
+!test/legal-graph-cli.test.mjs
+!test/legal-graph-materializer.test.cjs
+!test/legal-graph-state.test.cjs
+!test/legal-graph.test.cjs
+!test/legal-manual-corrections.test.cjs
+!test/legal-party-boundary.test.cjs
+!test/legal-party-registry.test.cjs
+!test/admin-chronology-model.test.mjs
+!test/assistant-chronology.test.cjs
+!test/document-index.test.cjs
+!test/graphify-install-step.test.mjs
+
 # output/ contient les mappings d'anonymisation : des données client réelles.
 # Rien n'y est versionné hormis les modèles de documents.
 output/*

@@ -635,6 +635,14 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 
 .chronology-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }
 .chronology-summary span { border-radius: 999px; background: #edf1ef; padding: 3px 10px; color: var(--brand-dark); font-size: .74rem; font-weight: 700; }
+.chronology-graph-state { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; background: var(--card); font-size: .74rem; }
+.chronology-graph-state strong { border-radius: 999px; padding: 3px 9px; }
+.chronology-graph-state .state-ok { background: #dafbe1; color: #116329; }
+.chronology-graph-state .state-warning { background: #fff8c5; color: #7d4e00; }
+.chronology-graph-state .state-progress { background: #ddf4ff; color: #0550ae; }
+.chronology-graph-state .state-error { background: #ffebe9; color: #82071e; }
+.chronology-graph-state .state-muted { background: #edf1ef; color: var(--muted); }
+.chronology-graph-state span, .chronology-graph-state small { color: var(--muted); }
 
 .chronology-toggle { display: inline-flex; gap: 4px; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
 .chronology-toggle button { border: 0; border-radius: 999px; padding: 5px 14px; background: transparent; color: var(--muted); font-weight: 700; font-size: .8rem; cursor: pointer; }
@@ -670,6 +678,11 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 
 .chronology-card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .chronology-card-actions .button.compact { min-height: 26px; padding: 4px 9px; font-size: .7rem; font-weight: 700; }
+.chronology-flags { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; }
+.chronology-flag { border-left: 3px solid #bf8700; border-radius: 5px; background: #fff8c5; padding: 5px 7px; color: #633c01; font-size: .7rem; }
+.chronology-flag.error { border-color: #cf222e; background: #ffebe9; color: #82071e; }
+.chronology-flag.info { border-color: #218bff; background: #ddf4ff; color: #0550ae; }
+.chronology-flag small { display: block; margin-top: 2px; color: inherit; opacity: .8; }
 
 .entity-chip { border-radius: 999px; padding: 3px 9px; font-size: .74rem; font-weight: 700; border: 1px solid transparent; }
 .entity-chip.cat-personne { background: #e5effb; color: #1d4e89; }
@@ -681,6 +694,9 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 /* Graphe */
 .graphify-viewer-wrap { position: relative; }
 .chronology-graph-meta { margin: 0 88px 8px 0; color: var(--muted); font-size: .7rem; font-weight: 700; }
+.chronology-graph-quality { margin-bottom: 8px; border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; background: var(--card); }
+.chronology-graph-quality strong { display: block; margin-bottom: 5px; font-size: .76rem; }
+.chronology-graph-quality ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: .7rem; }
 .graphify-viewer-frame { display: block; width: 100%; height: clamp(520px, 68vh, 780px); border: 1px solid var(--line); border-radius: 10px; background: #0f0f1a; }
 .graphify-fullscreen-toggle { position: absolute; top: 0; right: 0; z-index: 2; }
 /* Le bouton bascule la classe suivante sur le conteneur (au lieu de la
@@ -701,7 +717,11 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .chronology-entity-list-col, .chronology-entity-preview-col { display: flex; min-width: 0; min-height: 220px; flex-direction: column; overflow: hidden; border: 1px solid #d8dee4; border-radius: 12px; background: #f6f8fa; }
 .chronology-entity-col-title { border-bottom: 1px solid #d8dee4; padding: 10px 12px; color: #57606a; font-size: .65rem; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
 .chronology-entity-rows { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 8px; overflow: auto; padding: 10px; }
-.chronology-entity-row { display: grid; grid-template-columns: auto minmax(0, 1fr) 28px; align-items: center; gap: 8px; border: 1px solid #d8dee4; border-radius: 9px; background: #fff; padding: 8px 9px; }
+.chronology-entity-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; border: 1px solid #d8dee4; border-radius: 9px; background: #fff; padding: 8px 9px; }
+.chronology-entity-row.excluded { opacity: .62; background: #f6f8fa; }
+.chronology-entity-local-action { white-space: nowrap; }
+.chronology-entity-delete-global { border: 0; border-radius: 6px; background: transparent; padding: 5px 7px; color: #cf222e; cursor: pointer; font-size: .68rem; }
+.chronology-entity-delete-global:hover { background: #ffebe9; color: #82071e; }
 .chronology-entity-row input { width: 100%; min-width: 0; min-height: 32px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; padding: 5px 8px; color: #24292f; font-size: .78rem; }
 .chronology-entity-row input:focus { border-color: #0969da; outline: 2px solid rgba(9, 105, 218, .12); }
 .chronology-entity-row input.invalid { border-color: #cf222e; background: #fff8f7; }
@@ -712,6 +732,8 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .chronology-entity-preview { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; font-size: .82rem; line-height: 1.55; }
 .chronology-entity-preview :is(h1, h2, h3) { margin: 12px 0 6px; }
 .chronology-entity-preview p { margin: 0 0 10px; }
+.chronology-entity-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; border-top: 1px solid #d8dee4; padding: 9px 10px; }
+.chronology-entity-add select { min-width: 0; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; padding: 5px 8px; color: #24292f; }
 
 /* Champs libres affichés sur la carte de chronologie. */
 .chronology-fields { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; margin-top: 6px; }
@@ -1095,9 +1117,17 @@ html[data-theme="dark"] :is(.dialog-close:hover, .remove-procedure-party:hover, 
 
 html[data-theme="dark"] .tampon-preview { border-color: var(--dark-border); background: var(--dark-surface-muted); }
 html[data-theme="dark"] .chronology-summary span { background: var(--dark-surface-raised); color: var(--brand-dark); }
+html[data-theme="dark"] .chronology-graph-state, html[data-theme="dark"] .chronology-graph-quality { background: var(--dark-surface); }
+html[data-theme="dark"] .chronology-graph-state .state-ok { background: #132b1d; color: #4ac26b; }
+html[data-theme="dark"] .chronology-graph-state .state-warning, html[data-theme="dark"] .chronology-flag { background: #3d3218; color: #e3b341; }
+html[data-theme="dark"] .chronology-graph-state .state-progress, html[data-theme="dark"] .chronology-flag.info { background: var(--dark-blue-muted); color: #79c0ff; }
+html[data-theme="dark"] .chronology-graph-state .state-error, html[data-theme="dark"] .chronology-flag.error { background: var(--dark-red-muted); color: #ff938a; }
 html[data-theme="dark"] .chronology-dot { border-color: var(--paper); }
 html[data-theme="dark"] .chronology-entity-row { border-color: var(--line); background: var(--dark-surface); }
+html[data-theme="dark"] .chronology-entity-row.excluded { background: var(--dark-surface-muted); }
 html[data-theme="dark"] .chronology-entity-col-title { color: var(--muted); }
+html[data-theme="dark"] .chronology-entity-add { border-color: var(--line); }
+html[data-theme="dark"] .chronology-entity-add select { border-color: var(--dark-border); background: var(--paper); color: var(--ink); }
 html[data-theme="dark"] .entity-chip.cat-personne { background: #172f4d; color: #79c0ff; }
 html[data-theme="dark"] .entity-chip.cat-societe { background: #30264d; color: #d2a8ff; }
 html[data-theme="dark"] .entity-chip.cat-adresse { background: #123c37; color: #79e2d2; }

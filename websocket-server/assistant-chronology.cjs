@@ -1,13 +1,21 @@
 /**
  * Chronologie structurée destinée aux assistants en ligne de commande.
  *
- * La source de vérité reste l'index documentaire local. Cette projection ne
- * contient ni mapping inverse, ni contenu de pièce, ni libellé d'entité en
- * clair. Les noms éventuellement présents dans les noms de fichiers passent
- * en outre par le mapping avant toute sortie standard.
+ * La source de vérité est le graphe juridique matérialisé. Il est alimenté
+ * par l'index documentaire local, mais permet à l'assistant, à l'admin et aux
+ * exports de partager exactement la même liste de pièces et les mêmes valeurs
+ * effectives. Cette projection ne contient ni mapping inverse, ni contenu de
+ * pièce, ni libellé d'entité en clair. Les noms éventuellement présents dans
+ * les noms de fichiers passent en outre par le mapping avant toute sortie
+ * standard.
  */
-const { buildChronology, readDocumentIndexOverrides } = require('./document-index.cjs');
-const { stateKey } = require('../piecemaker-plugin/scripts/lib/anonymization-state.cjs');
+const fs = require('node:fs');
+const { buildChronology } = require('./document-index.cjs');
+const { chronologyFromLegalGraph } = require('./legal-chronology.cjs');
+const {
+  legalGraphStatus,
+  rematerializeDeterministicLegalGraph,
+} = require('./legal-graph.cjs');
 const {
   applyMapping,
   readCaseMapping,
@@ -38,22 +46,73 @@ function compareDocuments(left, right) {
  * libres et la juridiction manuelle restent exclus du mode assistant.
  */
 async function buildAssistantChronology(caseRoot) {
-  const chronology = await buildChronology(caseRoot, { deanonymize: false });
-  const overrides = readDocumentIndexOverrides(caseRoot).documents || {};
+  const localChronology = await buildChronology(caseRoot, {
+    deanonymizeLabels: false,
+    includeManualDecisions: true,
+  });
 
-  const documents = chronology.documents.map((document) => {
-    const override = overrides[stateKey(document.path)] || null;
+  // La matérialisation ne relance jamais Graphify ni un LLM : elle réunit la
+  // couche documentaire exhaustive et, s'il existe, le snapshot sémantique
+  // pseudonymisé. Ainsi un assistant ne peut pas déclencher une analyse par
+  // simple lecture de chronologie.
+  let status = await legalGraphStatus(caseRoot);
+  if (!status.exists || !fs.existsSync(status.graphFile)) {
+    const synchronized = await rematerializeDeterministicLegalGraph(caseRoot);
+    status = {
+      ...status,
+      exists: true,
+      graphFile: synchronized.graphFile,
+      generatedAt: synchronized.generatedAt,
+      staticState: synchronized.staticState,
+      semanticState: synchronized.semanticState,
+      staticRevision: synchronized.staticRevision,
+      semanticBaseRevision: synchronized.semanticBaseRevision,
+      semanticStaleReasons: synchronized.semanticStaleReasons,
+      semanticQuarantined: synchronized.semanticQuarantined,
+      registry: synchronized.registry,
+      registryStatus: synchronized.registry?.status || status.registryStatus,
+    };
+  }
+  let graph;
+  try {
+    graph = JSON.parse(fs.readFileSync(status.graphFile, 'utf8'));
+  } catch {
+    throw new Error('Le graphe documentaire matérialisé est illisible.');
+  }
+  const projected = chronologyFromLegalGraph(
+    graph,
+    localChronology,
+    readCaseMapping(caseRoot),
+    {
+      deanonymize: false,
+      graphRevision: status.staticRevision,
+      graphStatus: status,
+      generatedAt: status.generatedAt,
+    },
+  );
+
+  // La borne assistant est volontairement plus étroite que la vue cabinet :
+  // les commentaires libres et les juridictions saisies manuellement ne sont
+  // jamais remis au modèle, même déjà pseudonymisés.
+  const documents = projected.documents.map((document) => {
+    const dateSource = document.metadata?.dateIso?.source;
+    const natureSource = document.metadata?.nature?.source;
+    const manualJuridiction = document.metadata?.juridiction?.source === 'admin_manual';
     return {
       piece: document.path,
-      date: override?.dateIso || document.dateIso || null,
-      dateSource: override?.dateIso ? 'correction-cabinet' : (document.dateIso ? 'detection' : null),
-      nature: override?.nature || document.nature || null,
-      natureSource: override?.nature ? 'correction-cabinet' : (document.nature ? 'detection' : null),
-      juridiction: document.juridiction || null,
+      date: document.dateIso || null,
+      dateSource: document.dateIso
+        ? (dateSource === 'admin_manual' ? 'correction-cabinet' : 'detection') : null,
+      nature: document.nature || null,
+      natureSource: document.nature
+        ? (natureSource === 'admin_manual' ? 'correction-cabinet' : 'detection') : null,
+      // Les annotations libres du cabinet ne sont pas nécessaires au modèle,
+      // même pseudonymisées ; seule une juridiction détectée est projetée.
+      juridiction: manualJuridiction ? null : (document.juridiction || null),
       indexed: Boolean(document.indexed),
       scanned: Boolean(document.scanned),
       status: document.status,
-      entities: document.codes.map((entry) => ({ code: entry.code, category: entry.category })),
+      entities: (document.codes || []).map((entry) => ({ code: entry.code, category: entry.category })),
     };
   }).sort(compareDocuments);
 
@@ -83,7 +142,7 @@ async function buildAssistantChronology(caseRoot) {
   const dated = documents.filter((document) => document.date);
   const result = {
     version: 1,
-    source: 'piecemaker-document-index',
+    source: 'piecemaker-legal-graph',
     confidentiality: 'pseudonymisee',
     generatedAt: new Date().toISOString(),
     stats: {
@@ -99,6 +158,8 @@ async function buildAssistantChronology(caseRoot) {
       kind: 'pieces-entites',
       entities,
       edgeCount: entities.reduce((total, entity) => total + entity.documentCount, 0),
+      staticRevision: projected.graphRevision,
+      semanticState: projected.graphStatus?.semanticState || 'missing',
     },
     warnings: [
       'Les dates et natures détectées automatiquement sont indicatives et doivent être vérifiées sur les pièces converties.',

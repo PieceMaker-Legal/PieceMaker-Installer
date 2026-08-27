@@ -185,6 +185,7 @@
                   <div class="inline-detail-toolbar">
                     <div><strong>Chronologie du dossier</strong><span id="chronologyHint">Scans PII · nature et dates détectées automatiquement à titre indicatif.</span></div>
                     <div class="chronology-toolbar-actions">
+                      <button id="chronologyRefreshSemantic" class="button secondary compact" type="button" disabled>Actualiser l’analyse juridique</button>
                       <button id="chronologyExportPdf" class="button ghost compact" type="button" disabled>Exporter PDF</button>
                       <button id="chronologyExportDocx" class="button ghost compact" type="button" disabled>Exporter DOCX</button>
                       <span id="chronologyStats" class="count-badge">0</span>
@@ -871,13 +872,17 @@
   <dialog id="chronologyEntityDialog" class="chronology-entity-dialog">
     <form id="chronologyEntityForm" class="dialog-card chronology-entity-card">
       <header class="procedure-dialog-header">
-        <div><p class="eyebrow">CHRONOLOGIE</p><h2 id="chronologyEntityTitle">Entités détectées</h2><p>Corrigez les entités trouvées par le scan PII ; une entrée supprimée est ignorée lors des prochains scans.</p></div>
+        <div><p class="eyebrow">CHRONOLOGIE</p><h2 id="chronologyEntityTitle">Entités de la pièce</h2><p>Écartez ou ajoutez un code pour cette pièce seulement. Renommer agit sur le même code dans tout le dossier ; la suppression globale demande une confirmation distincte.</p></div>
         <button id="closeChronologyEntity" class="dialog-close" type="button" aria-label="Fermer">×</button>
       </header>
       <div class="chronology-entity-columns">
         <section class="chronology-entity-list-col">
           <div class="chronology-entity-col-title">Entités de cette pièce</div>
           <div id="chronologyEntityRows" class="chronology-entity-rows"></div>
+          <div class="chronology-entity-add">
+            <select id="chronologyEntityAddCode" aria-label="Entité à ajouter à cette pièce"></select>
+            <button id="addChronologyEntityToDocument" class="button ghost compact" type="button">Ajouter à cette pièce</button>
+          </div>
         </section>
         <section class="chronology-entity-preview-col">
           <div class="chronology-entity-col-title">Contenu (Markdown converti)</div>

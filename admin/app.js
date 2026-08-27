@@ -13,6 +13,14 @@ import {
   principalPartyOptions,
   procedureSummary,
 } from './mapping-model.mjs';
+import {
+  chronologyDocumentFlags,
+  chronologyStateModel,
+  detectedDocumentEntityCodes,
+  effectiveDocumentEntityCodes,
+  entityDecisionsForSelection,
+  sameEntityDecisions,
+} from './chronology-model.mjs';
 import { drawStamp } from './stamp-builder.mjs';
 
 // ---------------------------------------------------------------------------
@@ -3684,6 +3692,7 @@ const NATURE_ICONS = {
 };
 
 let chronologyData = null;
+let chronologyRefreshBusy = false;
 
 function escapeHtml(value) {
   return String(value == null ? '' : value)
@@ -3700,6 +3709,7 @@ async function loadChronology() {
   if (!selectedFolder) {
     chronologyData = null;
     byId('chronologyStats').textContent = '0';
+    updateChronologyRefreshState();
     body.innerHTML = '<p class="chronology-empty">Sélectionnez un dossier pour afficher sa chronologie.</p>';
     return;
   }
@@ -3710,6 +3720,38 @@ async function loadChronology() {
     renderChronology(data);
   } catch (error) {
     body.innerHTML = `<p class="chronology-empty">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function updateChronologyRefreshState(data = chronologyData) {
+  const button = byId('chronologyRefreshSemantic');
+  if (!button) return;
+  const state = chronologyStateModel(data || {});
+  button.textContent = chronologyRefreshBusy
+    ? 'Analyse juridique en cours…'
+    : 'Actualiser l’analyse juridique';
+  button.disabled = !selectedFolder || chronologyRefreshBusy || !state.canRefresh;
+  button.title = state.semanticState === 'blocked'
+    ? (state.detail || 'Identifiez les parties et vérifiez le corpus avant de relancer l’analyse.')
+    : 'Relancer explicitement Graphify sur le corpus pseudonymisé.';
+}
+
+async function refreshChronologySemanticGraph() {
+  if (!selectedFolder || chronologyRefreshBusy) return;
+  chronologyRefreshBusy = true;
+  updateChronologyRefreshState();
+  try {
+    await api('/api/admin/repository/legal-graph/refresh', {
+      method: 'POST',
+      body: JSON.stringify({ case: selectedFolder }),
+    });
+    toast('Analyse juridique actualisée');
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    chronologyRefreshBusy = false;
+    await loadChronology();
+    updateChronologyRefreshState();
   }
 }
 
@@ -3749,9 +3791,10 @@ function renderChronology(data) {
   body.textContent = '';
   const { stats } = data;
   byId('chronologyStats').textContent = `${stats.documents}`;
+  updateChronologyRefreshState(data);
 
-  if (!stats.indexed) {
-    body.innerHTML = '<p class="chronology-empty">Aucune pièce scannée pour l’instant. Lancez « Anonymiser & mapper » sur les pièces pour alimenter la chronologie.</p>';
+  if (!stats.documents) {
+    body.innerHTML = '<p class="chronology-empty">Aucune pièce originale dans ce dossier.</p>';
     return;
   }
 
@@ -3765,6 +3808,7 @@ function renderChronology(data) {
     + `<span>${stats.entities} entité${stats.entities > 1 ? 's' : ''}</span>`
     + `<span>${spanText}</span>`;
   body.append(summary);
+  body.append(renderChronologyGraphState(data));
 
   // Sélecteur de vue : frise chronologique / graphe des liens.
   const toggle = document.createElement('div');
@@ -3795,6 +3839,29 @@ function renderChronology(data) {
       }
     });
   });
+}
+
+function renderChronologyGraphState(data) {
+  const state = chronologyStateModel(data);
+  const container = document.createElement('div');
+  container.className = 'chronology-graph-state';
+  const badge = document.createElement('strong');
+  badge.className = `state-${state.tone}`;
+  badge.textContent = state.label;
+  const revision = document.createElement('span');
+  revision.textContent = state.revisionLabel;
+  container.append(badge, revision);
+  if (state.semanticBaseRevision != null && state.semanticBaseRevision !== state.staticRevision) {
+    const base = document.createElement('span');
+    base.textContent = `Analyse fondée sur la révision ${state.semanticBaseRevision}`;
+    container.append(base);
+  }
+  if (state.detail) {
+    const detail = document.createElement('small');
+    detail.textContent = state.detail;
+    container.append(detail);
+  }
+  return container;
 }
 
 function formatChronoDate(iso) {
@@ -3879,6 +3946,26 @@ function renderTimelineRow(doc) {
     card.append(none);
   }
 
+  const documentFlags = chronologyDocumentFlags(doc);
+  if (documentFlags.length) {
+    const flags = document.createElement('div');
+    flags.className = 'chronology-flags';
+    for (const flag of documentFlags) {
+      const item = document.createElement('div');
+      item.className = `chronology-flag ${flag.severity}`;
+      const title = document.createElement('strong');
+      title.textContent = flag.label;
+      item.append(title);
+      if (flag.detail) {
+        const detail = document.createElement('small');
+        detail.textContent = flag.detail;
+        item.append(detail);
+      }
+      flags.append(item);
+    }
+    card.append(flags);
+  }
+
   const actions = document.createElement('div');
   actions.className = 'chronology-card-actions';
 
@@ -3941,25 +4028,52 @@ async function revealChronologyPiece(doc, button) {
 // la page d'administration ni à ses données JavaScript.
 function renderChronologyGraph(data) {
   const graphData = data.graph || {};
-  if (graphData.status === 'error') {
+  const state = chronologyStateModel(data);
+  const wrapper = document.createElement('div');
+  wrapper.className = 'graphify-viewer-wrap';
+  const meta = document.createElement('p');
+  meta.className = 'chronology-graph-meta';
+  meta.textContent = state.ready
+    ? 'Graphe juridique Graphify · recentré sur les parties sélectionnées · analyse à jour'
+    : state.quarantined
+      ? `Graphe documentaire actuel · ancienne analyse juridique masquée · ${state.label}`
+      : state.semanticState === 'missing'
+        ? 'Graphe documentaire Graphify · résultats GLiNER locaux · sans LLM'
+        : `Graphe documentaire actuel · ${state.label}`;
+  wrapper.append(meta);
+
+  const flaggedDocuments = (data.documents || [])
+    .map((document) => ({ document, flags: chronologyDocumentFlags(document) }))
+    .filter((entry) => entry.flags.length);
+  if (flaggedDocuments.length) {
+    const quality = document.createElement('div');
+    quality.className = 'chronology-graph-quality';
+    const title = document.createElement('strong');
+    title.textContent = `Points à vérifier dans le graphe (${flaggedDocuments.length})`;
+    const list = document.createElement('ul');
+    for (const { document: flaggedDocument, flags } of flaggedDocuments) {
+      const item = document.createElement('li');
+      item.textContent = `${flaggedDocument.name} — ${flags.map((flag) => flag.label).join(' · ')}`;
+      list.append(item);
+    }
+    quality.append(title, list);
+    wrapper.append(quality);
+  }
+
+  if (graphData.status === 'error' || graphData.viewerError) {
     const error = document.createElement('p');
     error.className = 'chronology-empty';
-    error.textContent = graphData.error || 'Le graphe Graphify n’a pas pu être généré.';
-    return error;
+    error.textContent = graphData.viewerError || graphData.error || 'Le graphe Graphify n’a pas pu être affiché.';
+    wrapper.append(error);
+    return wrapper;
   }
   if (!graphData.viewerHtml) {
     const empty = document.createElement('p');
     empty.className = 'chronology-empty';
     empty.textContent = 'Pas assez de liens GLiNER pour tracer un graphe.';
-    return empty;
+    wrapper.append(empty);
+    return wrapper;
   }
-  const wrapper = document.createElement('div');
-  wrapper.className = 'graphify-viewer-wrap';
-  const meta = document.createElement('p');
-  meta.className = 'chronology-graph-meta';
-  meta.textContent = graphData.llm
-    ? 'Graphe juridique Graphify · recentré sur les parties sélectionnées'
-    : 'Graphe documentaire Graphify · résultats GLiNER locaux · sans LLM';
   const frame = document.createElement('iframe');
   frame.className = 'graphify-viewer-frame';
   frame.title = 'Graphe interactif Graphify';
@@ -3990,19 +4104,14 @@ function renderChronologyGraph(data) {
   fullscreenButton.addEventListener('click', () => setFullscreen(!wrapper.classList.contains('graphify-fullscreen')));
   setFullscreenLabel(false);
 
-  wrapper.append(meta, fullscreenButton, frame);
+  wrapper.append(fullscreenButton, frame);
   return wrapper;
 }
 
 // ---------------------------------------------------------------------------
-// Correction des entités détectées (chronologie) — popup à deux colonnes :
-// les entités de la pièce à gauche (éditables), son Markdown converti à
-// droite pour le contexte. Toute modification passe par les MÊMES helpers que
-// l'éditeur de mapping (`groupMappingByCode` / `buildMappingDocument`) et le
-// même endpoint `PUT /api/admin/mapping` — jamais de substitution maison.
-// `chronologyEntityContext.groups` porte TOUT le mapping du dossier : seuls
-// les groupes des codes de cette pièce sont montrés/édités, les autres sont
-// renvoyés inchangés pour ne rien perdre du reste du dossier.
+// Correction des entités : les décisions d'inclusion sont locales à la
+// pièce ; le libellé et la suppression du code sont des opérations globales,
+// annoncées comme telles. Le Markdown converti reste affiché à droite.
 let chronologyEntityDoc = null;
 let chronologyEntityContext = null;
 
@@ -4029,7 +4138,15 @@ async function openChronologyEntityDialog(doc) {
     chronologyEntityContext = {
       groups: groupMappingByCode(mappingData.mapping, mappingData.reverse_mapping),
       informations_dossier: mappingData.informations_dossier,
+      labels: new Map(),
+      activeCodes: new Set(effectiveDocumentEntityCodes(doc)),
+      detectedCodes: new Set(detectedDocumentEntityCodes(doc)),
+      deletedCodes: new Set(),
+      initialDecisions: doc.entityDecisions || { additions: [], exclusions: [] },
     };
+    for (const group of chronologyEntityContext.groups) {
+      chronologyEntityContext.labels.set(group.code, group.principal);
+    }
     renderChronologyEntityRows(doc);
     renderChronologyEntityPreview(documentData.content);
     setMessage(byId('chronologyEntityMessage'), '');
@@ -4042,63 +4159,128 @@ function chronologyEntityRowsList() {
   return byId('chronologyEntityRows').querySelectorAll('.chronology-entity-row');
 }
 
-function showChronologyEntityEmptyState() {
-  const rows = byId('chronologyEntityRows');
-  const empty = document.createElement('p');
-  empty.className = 'chronology-entity-empty';
-  empty.textContent = 'Toutes les entités de cette pièce ont été écartées.';
-  rows.append(empty);
+function categoryForChronologyCode(code) {
+  return chronologyEntityDoc?.codes?.find((entity) => entity.code === code)?.category
+    || (/PERSONNE_PHYSIQUE|DIRIGEANT/.test(code) ? 'personne'
+      : (/SOCIETE|MORALE|(?:^|_)(?:SAS|SARL|SA|SCI|GMBH|LTD)(?:_|$)/.test(code) ? 'societe' : 'autre'));
+}
+
+function captureChronologyEntityLabels() {
+  if (!chronologyEntityContext) return;
+  for (const row of chronologyEntityRowsList()) {
+    chronologyEntityContext.labels.set(
+      row.dataset.code,
+      row.querySelector('.chronology-entity-label')?.value || '',
+    );
+  }
+}
+
+function updateChronologyEntityAddOptions() {
+  const select = byId('chronologyEntityAddCode');
+  select.textContent = '';
+  const available = chronologyEntityContext.groups.filter((group) =>
+    !chronologyEntityContext.activeCodes.has(group.code)
+    && !chronologyEntityContext.deletedCodes.has(group.code));
+  if (!available.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'Aucune autre entité disponible';
+    select.append(option);
+  } else {
+    for (const group of available) {
+      const option = document.createElement('option');
+      option.value = group.code;
+      option.textContent = `${chronologyEntityContext.labels.get(group.code) || group.principal} · ${group.code}`;
+      select.append(option);
+    }
+  }
+  select.disabled = !available.length;
+  byId('addChronologyEntityToDocument').disabled = !available.length;
+}
+
+function addChronologyEntityToDocument() {
+  if (!chronologyEntityContext) return;
+  captureChronologyEntityLabels();
+  const code = byId('chronologyEntityAddCode').value;
+  if (!code) return;
+  chronologyEntityContext.activeCodes.add(code);
+  renderChronologyEntityRows(chronologyEntityDoc);
 }
 
 function renderChronologyEntityRows(doc) {
   const rows = byId('chronologyEntityRows');
   rows.textContent = '';
-  const codes = [...new Set(doc.codes.map((entity) => entity.code))];
+  const codes = [...new Set([
+    ...chronologyEntityContext.detectedCodes,
+    ...chronologyEntityContext.activeCodes,
+  ])].filter((code) => !chronologyEntityContext.deletedCodes.has(code)).sort();
   if (!codes.length) {
     const empty = document.createElement('p');
     empty.className = 'chronology-entity-empty';
-    empty.textContent = 'Aucune entité détectée dans cette pièce.';
+    empty.textContent = 'Aucune entité associée à cette pièce.';
     rows.append(empty);
-    return;
   }
   for (const code of codes) {
-    const entity = doc.codes.find((item) => item.code === code);
+    const category = categoryForChronologyCode(code);
     const group = chronologyEntityContext.groups.find((candidate) => candidate.code === code);
+    if (!group) continue;
+    const active = chronologyEntityContext.activeCodes.has(code);
     const row = document.createElement('div');
-    row.className = 'chronology-entity-row';
+    row.className = `chronology-entity-row${active ? '' : ' excluded'}`;
     row.dataset.code = code;
+    row.dataset.active = String(active);
 
     const badge = document.createElement('span');
-    badge.className = `entity-chip cat-${entity.category}`;
-    badge.textContent = CATEGORY_LABELS[entity.category] || entity.category;
+    badge.className = `entity-chip cat-${category}`;
+    badge.textContent = CATEGORY_LABELS[category] || category;
 
     const field = document.createElement('div');
     const input = document.createElement('input');
     input.className = 'chronology-entity-label';
-    input.value = group?.principal || entity.label || '';
+    input.value = chronologyEntityContext.labels.get(code) || group.principal || '';
     input.setAttribute('aria-label', `Libellé de ${code}`);
+    input.title = 'Renommer ce libellé pour le même code dans tout le dossier';
     input.addEventListener('input', () => {
       input.classList.remove('invalid');
+      chronologyEntityContext.labels.set(code, input.value);
       setMessage(byId('chronologyEntityMessage'), '');
     });
     const codeLabel = document.createElement('span');
     codeLabel.className = 'chronology-entity-code';
-    codeLabel.textContent = code;
+    codeLabel.textContent = `${code} · renommage global`;
     field.append(input, codeLabel);
 
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'remove-chronology-entity';
-    remove.title = 'Écarter cette entité (fausse détection) — ses variants iront dans les entrées ignorées';
-    remove.textContent = '×';
-    remove.addEventListener('click', () => {
-      row.remove();
-      if (!chronologyEntityRowsList().length) showChronologyEntityEmptyState();
+    const localAction = document.createElement('button');
+    localAction.type = 'button';
+    localAction.className = 'button ghost compact chronology-entity-local-action';
+    localAction.textContent = active ? 'Écarter de cette pièce' : 'Ajouter à cette pièce';
+    localAction.addEventListener('click', () => {
+      if (chronologyEntityContext.activeCodes.has(code)) chronologyEntityContext.activeCodes.delete(code);
+      else chronologyEntityContext.activeCodes.add(code);
+      renderChronologyEntityRows(doc);
     });
 
-    row.append(badge, field, remove);
+    const deleteGlobal = document.createElement('button');
+    deleteGlobal.type = 'button';
+    deleteGlobal.className = 'chronology-entity-delete-global';
+    deleteGlobal.textContent = 'Supprimer partout';
+    deleteGlobal.title = 'Supprimer ce code et tous ses variants du mapping du dossier';
+    deleteGlobal.addEventListener('click', () => {
+      const confirmed = window.confirm(
+        `Supprimer « ${chronologyEntityContext.labels.get(code) || code} » du mapping de tout le dossier ?\n\n`
+        + 'Cette action peut modifier les parties, le corpus et rendre l’analyse juridique obsolète.',
+      );
+      if (!confirmed) return;
+      captureChronologyEntityLabels();
+      chronologyEntityContext.deletedCodes.add(code);
+      chronologyEntityContext.activeCodes.delete(code);
+      renderChronologyEntityRows(doc);
+    });
+
+    row.append(badge, field, localAction, deleteGlobal);
     rows.append(row);
   }
+  updateChronologyEntityAddOptions();
 }
 
 function renderChronologyEntityPreview(content) {
@@ -4132,36 +4314,67 @@ async function saveChronologyEntityChanges(event) {
   const button = byId('saveChronologyEntity');
   button.disabled = true;
   try {
-    const editedCodes = new Set(chronologyEntityDoc.codes.map((entity) => entity.code));
-    const kept = [...chronologyEntityRowsList()].map((row) => {
-      const code = row.dataset.code;
-      const group = chronologyEntityContext.groups.find((candidate) => candidate.code === code);
-      return chronologyRelabeledGroup(group, code, row.querySelector('.chronology-entity-label').value);
-    });
-    const untouched = chronologyEntityContext.groups.filter((group) => !editedCodes.has(group.code));
-    const nextGroups = [...untouched, ...kept];
-    let document;
+    captureChronologyEntityLabels();
+    const nextGroups = chronologyEntityContext.groups
+      .filter((group) => !chronologyEntityContext.deletedCodes.has(group.code))
+      .map((group) => chronologyRelabeledGroup(
+        group,
+        group.code,
+        chronologyEntityContext.labels.get(group.code),
+      ));
+    let nextMapping;
+    let currentMapping;
     try {
-      // eslint-disable-next-line no-shadow -- même convention que saveMapping() : `document` désigne ici le document de mapping envoyé au serveur, pas le DOM.
-      document = {
+      nextMapping = {
         ...buildMappingDocument(nextGroups),
         informations_dossier: chronologyEntityContext.informations_dossier,
       };
+      currentMapping = buildMappingDocument(chronologyEntityContext.groups);
     } catch (validationError) {
-      // Le libellé en cause est forcément un des groupes édités dans cette
-      // popup (les groupes intouchés viennent du mapping déjà valide) —
-      // on retrouve la ligne par son code pour la mettre en évidence.
       const offending = nextGroups[validationError.rowIndex];
       const input = offending && byId('chronologyEntityRows').querySelector(`[data-code="${CSS.escape(offending.code)}"] .chronology-entity-label`);
       input?.classList.add('invalid');
       input?.focus();
       throw validationError;
     }
-    const data = await api('/api/admin/mapping', {
-      method: 'PUT',
-      body: JSON.stringify({ case: selectedFolder, ...document }),
+
+    const mappingChanged = JSON.stringify(currentMapping) !== JSON.stringify({
+      mapping: nextMapping.mapping,
+      reverse_mapping: nextMapping.reverse_mapping,
     });
-    toast(`Entités mises à jour${data.commit?.created ? ' et commitées' : ''}`);
+    const knownCodes = new Set(Object.keys(nextMapping.reverse_mapping));
+    const computedDecisions = entityDecisionsForSelection(
+      chronologyEntityDoc,
+      [...chronologyEntityContext.activeCodes].filter((code) => knownCodes.has(code)),
+    );
+    const decisions = {
+      additions: computedDecisions.additions.filter((code) => knownCodes.has(code)),
+      exclusions: computedDecisions.exclusions.filter((code) => knownCodes.has(code)),
+    };
+    const decisionsChanged = !sameEntityDecisions(decisions, chronologyEntityContext.initialDecisions);
+    let committed = false;
+    if (mappingChanged) {
+      const result = await api('/api/admin/mapping', {
+        method: 'PUT',
+        body: JSON.stringify({ case: selectedFolder, ...nextMapping }),
+      });
+      committed ||= Boolean(result.commit?.created);
+    }
+    if (decisionsChanged) {
+      const result = await api('/api/admin/repository/document-entities', {
+        method: 'PUT',
+        body: JSON.stringify({
+          case: selectedFolder,
+          path: chronologyEntityDoc.path,
+          entityDecisions: decisions,
+          reason: 'Correction des entités depuis la chronologie',
+        }),
+      });
+      committed ||= Boolean(result.commit?.created);
+    }
+    toast(mappingChanged || decisionsChanged
+      ? `Entités mises à jour${committed ? ' et commitées' : ''}`
+      : 'Aucune modification à enregistrer');
     closeChronologyEntityDialog();
     await loadChronology();
   } catch (error) {
@@ -4465,6 +4678,7 @@ function initPerformanceMonitoring() {
 document.querySelectorAll('[data-history-view]').forEach((button) => button.addEventListener('click', () => setHistoryView(button.dataset.historyView)));
 byId('showOriginals').addEventListener('click', showOriginalsView);
 byId('showChronology').addEventListener('click', openChronologyView);
+byId('chronologyRefreshSemantic').addEventListener('click', refreshChronologySemanticGraph);
 byId('chronologyExportPdf').addEventListener('click', () => exportChronology('pdf'));
 byId('chronologyExportDocx').addEventListener('click', () => exportChronology('docx'));
 byId('historyMonth').addEventListener('change', updateHistoryExportState);
@@ -4508,6 +4722,7 @@ byId('procedurePartiesForm').addEventListener('submit', saveProcedureParties);
 byId('closeChronologyEntity').addEventListener('click', closeChronologyEntityDialog);
 byId('cancelChronologyEntity').addEventListener('click', closeChronologyEntityDialog);
 byId('chronologyEntityForm').addEventListener('submit', saveChronologyEntityChanges);
+byId('addChronologyEntityToDocument').addEventListener('click', addChronologyEntityToDocument);
 byId('closeChronologyMeta').addEventListener('click', closeChronologyMetaDialog);
 byId('cancelChronologyMeta').addEventListener('click', closeChronologyMetaDialog);
 byId('addChronologyMetaField').addEventListener('click', () => addChronologyMetaFieldRow());

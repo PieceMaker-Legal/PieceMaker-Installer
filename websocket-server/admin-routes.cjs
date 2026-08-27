@@ -46,14 +46,18 @@ const {
   readProtection,
   writeProtection,
 } = require('../piecemaker-plugin/scripts/lib/protection.cjs');
-const { buildChronology, writeDocumentIndexOverride } = require('./document-index.cjs');
+const { stateKey } = require('../piecemaker-plugin/scripts/lib/anonymization-state.cjs');
 const {
-  buildGraphifyDocumentGraph,
-  graphifyErrorGraph,
-} = require('./graphify-document-graph.cjs');
+  applyDocumentIndexCorrection,
+  buildChronology,
+  documentIndexFile,
+  readDocumentIndex,
+} = require('./document-index.cjs');
+const { chronologyFromLegalGraph } = require('./legal-chronology.cjs');
 const {
-  deanonymizeLegalGraphForAdmin,
-  legalGraphPaths,
+  buildLegalGraph,
+  legalGraphStatus,
+  rematerializeDeterministicLegalGraph,
   renderLegalGraphViewer,
 } = require('./legal-graph.cjs');
 const { renderChronologyHtml, renderHistoryHtml } = require('./lib/export-render.cjs');
@@ -1966,6 +1970,160 @@ async function sendGeneratedDocument(res, { html, filename, format }) {
   stream.pipe(res);
 }
 
+// Une sauvegarde touche successivement l'index, le graphe matérialisé et
+// l'historique local. Cette file par dossier empêche deux requêtes admin de
+// produire un graphe correspondant à une révision intermédiaire.
+const documentMetaMutationQueues = new Map();
+
+async function serializeDocumentMetaMutation(caseRoot, callback) {
+  const key = path.resolve(caseRoot);
+  const previous = documentMetaMutationQueues.get(key) || Promise.resolve();
+  const current = previous.catch(() => {}).then(callback);
+  documentMetaMutationQueues.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (documentMetaMutationQueues.get(key) === current) documentMetaMutationQueues.delete(key);
+  }
+}
+
+/**
+ * Point de mutation testable de la chronologie. Il ne lance jamais Graphify :
+ * la couche sémantique existante est relue puis la couche déterministe est
+ * rematérialisée avant que la réponse puisse annoncer le succès.
+ */
+async function applyDocumentMetaMutation({
+  legalCase,
+  relativePath,
+  correction,
+  homeDir,
+  envFile,
+  applyCorrection = applyDocumentIndexCorrection,
+  rematerialize = rematerializeDeterministicLegalGraph,
+  createHistoryCommit = createCommit,
+}) {
+  return serializeDocumentMetaMutation(legalCase.root, async () => {
+    const mutation = applyCorrection(legalCase.root, relativePath, correction);
+    const graph = await rematerialize(legalCase.root, {
+      semanticStaleReasons: mutation.semanticStaleReasons,
+    });
+    let history;
+    try {
+      history = await createHistoryCommit({
+        casesRoot: legalCase.casesRoot,
+        caseName: legalCase.caseName,
+        homeDir,
+        envFile,
+        label: 'Correction manuelle de la chronologie',
+        description: `Mise à jour déterministe de la pièce ${mutation.documentKey.slice(0, 12).toUpperCase()}.`,
+        event: 'admin-document-meta-edit',
+        paths: [path.relative(legalCase.root, documentIndexFile(legalCase.root)).split(path.sep).join('/')],
+        waitForLockMs: 10_000,
+      });
+    } catch (error) {
+      // La correction et le graphe sont déjà cohérents : une indisponibilité
+      // de l'historique ne doit ni les annuler ni provoquer une seconde saisie.
+      history = { created: false, error: error.message };
+    }
+    return {
+      mutation,
+      graph: {
+        graphFile: graph.graphFile,
+        staticState: 'current',
+        staticRevision: graph.staticRevision,
+        semanticState: graph.semanticState,
+        semanticStaleReasons: graph.semanticStaleReasons,
+      },
+      history: {
+        created: Boolean(history?.created),
+        hash: history?.commit || null,
+        skipped: history?.skipped || null,
+        error: history?.error || null,
+      },
+    };
+  });
+}
+
+function graphStatusFromSynchronization(initialStatus, synchronized) {
+  return {
+    ...initialStatus,
+    exists: true,
+    stale: synchronized.semanticState !== 'current' || synchronized.semanticQuarantined,
+    staticState: synchronized.staticState,
+    semanticState: synchronized.semanticState,
+    staticRevision: synchronized.staticRevision,
+    semanticBaseRevision: synchronized.semanticBaseRevision,
+    semanticStaleReasons: synchronized.semanticStaleReasons || [],
+    semanticQuarantined: Boolean(synchronized.semanticQuarantined),
+    graphFile: synchronized.graphFile,
+    generatedAt: synchronized.generatedAt,
+    stats: synchronized.graph?.piecemaker || null,
+    registry: synchronized.registry || initialStatus.registry,
+    registryStatus: synchronized.registry?.status || initialStatus.registryStatus,
+  };
+}
+
+/**
+ * Vue admin unifiée : synchronise exclusivement la couche déterministe,
+ * projette la frise depuis ce graphe, puis ré-identifie en mémoire. Toutes les
+ * dépendances coûteuses sont injectables pour prouver que ce chemin de lecture
+ * ne peut jamais lancer `buildLegalGraph` ni un LLM.
+ */
+async function loadAdminLegalChronology({
+  caseRoot,
+  buildLocalChronology = buildChronology,
+  readMapping = readCaseMapping,
+  readGraph = (file) => readJson(file, null),
+  readStatus = legalGraphStatus,
+  rematerialize = rematerializeDeterministicLegalGraph,
+  renderViewer = renderLegalGraphViewer,
+  project = chronologyFromLegalGraph,
+}) {
+  let status = await readStatus(caseRoot);
+  // Au premier affichage il n'existe encore aucun manifeste. Créer la couche
+  // documentaire ici reste une opération locale et déterministe ; Graphify
+  // profond n'est accessible que par la route POST d'actualisation explicite.
+  if (!status.exists || !readGraph(status.graphFile)) {
+    const synchronized = await rematerialize(caseRoot);
+    status = graphStatusFromSynchronization(status, synchronized);
+  }
+  const graph = readGraph(status.graphFile);
+  if (!graph) throw new Error('Le graphe documentaire du dossier n’a pas pu être matérialisé.');
+  const [localChronology, mappingDocument] = await Promise.all([
+    buildLocalChronology(caseRoot, {
+      deanonymizeLabels: true,
+      includeManualDecisions: true,
+    }),
+    Promise.resolve(readMapping(caseRoot)),
+  ]);
+  const chronology = project(graph, localChronology, mappingDocument, {
+    deanonymize: true,
+    graphRevision: status.staticRevision,
+    graphStatus: status,
+    generatedAt: status.generatedAt,
+  });
+  if (typeof renderViewer === 'function') {
+    try {
+      chronology.graph.viewerHtml = await renderViewer(chronology.graph);
+    } catch (error) {
+      // Le renderer est un enrichissement local. La frise et les états du
+      // graphe restent disponibles, sans jamais requalifier l'analyse en ready.
+      chronology.graph.viewerError = String(error?.message || error);
+    }
+  }
+  return chronology;
+}
+
+/** Construction sémantique réservée à l'action admin explicite. */
+async function refreshAdminLegalGraph({
+  caseRoot,
+  build = buildLegalGraph,
+  readStatus = legalGraphStatus,
+}) {
+  await build(caseRoot, { refreshSemantic: true, force: true });
+  return readStatus(caseRoot);
+}
+
 function createAdminRouter({
   repoRoot = path.resolve(__dirname, '..'),
   homeDir = path.join(os.homedir(), '.piecemaker'),
@@ -2435,40 +2593,10 @@ function createAdminRouter({
     const startedAt = performance.now();
     try {
       const legalCase = selectedCase(req.query.case);
-      // Vue cabinet par défaut (codes ré-identifiés, comme l'éditeur de mapping) ;
-      // `?deanonymize=0` renvoie le graphe indexé par code, sans aucun nom.
-      const deanonymize = req.query.deanonymize !== '0' && req.query.deanonymize !== 'false';
-      const chronology = await buildChronology(legalCase.root, { deanonymize });
-      try {
-        // Le graphe juridique (LLM, recentré sur les parties) prime dès qu'il a
-        // été construit au moins une fois ; il n'est jamais reconstruit ici,
-        // seulement lu et réidentifié pour l'affichage cabinet. Tant qu'il
-        // n'existe pas encore, la frise retombe sur le graphe documentaire
-        // GLiNER, sans LLM, qui reste toujours disponible.
-        const legalFiles = legalGraphPaths(legalCase.root);
-        const legalGraph = readJson(legalFiles.graph, null);
-        if (legalGraph) {
-          const mappingDocument = readCaseMapping(legalCase.root);
-          const deanonymized = deanonymizeLegalGraphForAdmin(legalGraph, mappingDocument);
-          const viewerHtml = await renderLegalGraphViewer(deanonymized);
-          chronology.graph = {
-            engine: 'graphify',
-            source: 'piecemaker-legal',
-            llm: true,
-            status: 'ready',
-            nodes: deanonymized.nodes,
-            edges: deanonymized.edges,
-            viewerHtml,
-          };
-        } else {
-          chronology.graph = await buildGraphifyDocumentGraph(legalCase.root, chronology);
-        }
-      } catch (graphifyError) {
-        // Le graphe est un enrichissement : une installation Graphify absente ou
-        // une sortie invalide ne doit jamais rendre la frise inaccessible.
-        console.warn(`[graphify] Graphe chronologique indisponible: ${graphifyError.message}`);
-        chronology.graph = graphifyErrorGraph(graphifyError);
-      }
+      // Cette route est une vue cabinet et n'expose plus de branche publique
+      // pseudonymisée. `deanonymize=0` est volontairement ignoré : les données
+      // destinées au modèle empruntent les chemins internes dédiés.
+      const chronology = await loadAdminLegalChronology({ caseRoot: legalCase.root });
       chronology.case = { path: legalCase.id, name: legalCase.caseName, location: legalCase.root };
       finishAdminTiming(res, 'chronology', startedAt, {
         documents: chronology.stats.documents,
@@ -2481,18 +2609,32 @@ function createAdminRouter({
     }
   });
 
-  // Export « papier » (PDF/DOCX) de la chronologie — même règle de vue
-  // (cabinet ré-identifiée par défaut) que la route JSON ci-dessus. Le graphe
-  // interactif (vis-network) n'a pas d'équivalent papier et coûte cher à
-  // construire (appel Graphify) : contrairement à `/repository/chronology`,
-  // cette route ne le construit jamais.
+  // Seule cette action explicite peut appeler Graphify profond/LLM depuis
+  // l'administration. Le manifeste passe à `building` avant l'extraction et à
+  // `failed` en cas d'erreur ; un GET concurrent ne présente donc jamais
+  // l'ancien fragment comme prêt.
+  router.post('/repository/legal-graph/refresh', async (req, res) => {
+    try {
+      const legalCase = selectedCase(req.body?.case);
+      const status = await refreshAdminLegalGraph({ caseRoot: legalCase.root });
+      res.json({ ok: true, graph: status });
+    } catch (error) {
+      res.status(503).json({ error: error.message });
+    }
+  });
+
+  // Export « papier » (PDF/DOCX) de la même projection matérialisée que la
+  // frise admin, ré-identifiée en mémoire pour le cabinet. Le renderer HTML du
+  // graphe n'a pas d'équivalent papier et n'est donc jamais appelé ici.
   router.get('/repository/chronology/export', async (req, res) => {
     const startedAt = performance.now();
     try {
       const format = validateExportFormat(String(req.query.format || ''));
       const legalCase = selectedCase(req.query.case);
-      const deanonymize = req.query.deanonymize !== '0' && req.query.deanonymize !== 'false';
-      const chronology = await buildChronology(legalCase.root, { deanonymize });
+      const chronology = await loadAdminLegalChronology({
+        caseRoot: legalCase.root,
+        renderViewer: null,
+      });
       const html = renderChronologyHtml(chronology, { caseName: legalCase.caseName });
       finishAdminTiming(res, 'chronology-export', startedAt, {
         documents: chronology.stats.documents,
@@ -2513,12 +2655,13 @@ function createAdminRouter({
 
   // Correction manuelle des métadonnées d'une pièce dans la chronologie —
   // nature (type), date, lieu (juridiction) et champs libres ajoutés/retirés par
-  // le cabinet. Stocké dans un fichier d'override séparé que le pipeline ne
-  // réécrit jamais : un re-scan ne peut donc pas écraser la correction.
+  // le cabinet. Stocké avec sa provenance dans l'index documentaire que le
+  // pipeline relit en préservant décisions et révisions : un re-scan rafraîchit
+  // la détection sans écraser la correction.
   // `path` désigne la pièce ORIGINALE (comme le reste de la chronologie) et sert
   // seulement à calculer la clé de hachage — il n'est jamais lu. Envoyer une
   // correction entièrement vide efface l'entrée (retour aux valeurs détectées).
-  router.put('/repository/document-meta', (req, res) => {
+  router.put('/repository/document-meta', async (req, res) => {
     try {
       const legalCase = selectedCase(req.body?.case);
       const relativePath = String(req.body?.path || '').trim();
@@ -2527,13 +2670,67 @@ function createAdminRouter({
       // lit pas la pièce, on refuse seulement un chemin hors racine.
       resolveCasePath(legalCase.root, relativePath);
       const body = req.body || {};
-      const override = writeDocumentIndexOverride(legalCase.root, relativePath, {
-        nature: body.nature,
-        dateIso: body.dateIso,
-        juridiction: body.juridiction,
-        fields: body.fields,
+      const result = await applyDocumentMetaMutation({
+        legalCase,
+        relativePath,
+        homeDir,
+        envFile,
+        correction: {
+          nature: body.nature,
+          dateIso: body.dateIso,
+          juridiction: body.juridiction,
+          fields: body.fields,
+          reason: body.reason,
+          ...(Object.hasOwn(body, 'entityDecisions')
+            ? { entityDecisions: body.entityDecisions }
+            : {}),
+        },
       });
-      res.json({ ok: true, override });
+      res.json({
+        ok: true,
+        override: result.mutation.override,
+        entityDecisions: result.mutation.entityDecisions,
+        editRevision: result.mutation.editRevision,
+        revisions: result.mutation.revisions,
+        graph: result.graph,
+        commit: result.history,
+      });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Décisions d'entité propres à une pièce. Contrairement à l'éditeur de
+  // mapping global, cette route préserve l'override de métadonnées existant et
+  // ne supprime ni ne renomme aucun code dans le reste du dossier.
+  router.put('/repository/document-entities', async (req, res) => {
+    try {
+      const legalCase = selectedCase(req.body?.case);
+      const relativePath = String(req.body?.path || '').trim();
+      if (!relativePath) throw new Error('Chemin de pièce manquant.');
+      resolveCasePath(legalCase.root, relativePath);
+      const index = readDocumentIndex(legalCase.root);
+      const key = stateKey(relativePath);
+      const existingOverride = index.overrides?.[key] || {};
+      const result = await applyDocumentMetaMutation({
+        legalCase,
+        relativePath,
+        homeDir,
+        envFile,
+        correction: {
+          ...existingOverride,
+          reason: req.body?.reason,
+          entityDecisions: req.body?.entityDecisions,
+        },
+      });
+      res.json({
+        ok: true,
+        entityDecisions: result.mutation.entityDecisions,
+        editRevision: result.mutation.editRevision,
+        revisions: result.mutation.revisions,
+        graph: result.graph,
+        commit: result.history,
+      });
     } catch (error) {
       res.status(400).json({ error: error.message });
     }
@@ -2742,6 +2939,11 @@ function createAdminRouter({
           ? { informations_dossier: req.body.informations_dossier }
           : {}),
       });
+      // Un renommage garde les codes stables ; une suppression peut en revanche
+      // modifier les parties ou le corpus. Le synchroniseur compare les
+      // signatures et met en quarantaine l'ancien fragment si nécessaire,
+      // toujours sans lancer le LLM.
+      const graph = await rematerializeDeterministicLegalGraph(legalCase.root);
       const commit = await createCommit({
         casesRoot: legalCase.casesRoot,
         caseName: legalCase.caseName,
@@ -2760,6 +2962,13 @@ function createAdminRouter({
         mapping: saved.mapping,
         reverse_mapping: saved.reverse_mapping,
         informations_dossier: saved.informations_dossier,
+        graph: {
+          staticState: graph.staticState,
+          staticRevision: graph.staticRevision,
+          semanticState: graph.semanticState,
+          semanticStaleReasons: graph.semanticStaleReasons,
+          semanticQuarantined: graph.semanticQuarantined,
+        },
         commit: { created: commit.created, hash: commit.commit || null },
       });
     } catch (error) {
@@ -2959,6 +3168,8 @@ function createAdminRouter({
 }
 
 module.exports = {
+  loadAdminLegalChronology,
+  applyDocumentMetaMutation,
   applyMarketplaceSelection,
   applyPluginComponentSelection,
   checkOllamaModelUpdate,
@@ -2984,6 +3195,7 @@ module.exports = {
   normalizeAgentModel,
   normalizeAgentTools,
   readManagedFile,
+  refreshAdminLegalGraph,
   registerLegalCase,
   registerOfficialMarketplace,
   renameManagedFile,

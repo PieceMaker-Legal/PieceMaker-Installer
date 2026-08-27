@@ -1,12 +1,12 @@
 /**
  * Graphe juridique riche PieceMaker.
  *
- * Le graphe léger de la frise reste déterministe et sans LLM. Celui-ci est un
- * artefact distinct : Graphify analyse un corpus temporaire dont les noms de
- * fichiers sont des empreintes et dont le texte a déjà été pseudonymisé. Le
- * prompt spécialisé modélise contrats, obligations, inexécutions, prétentions,
- * contestations et normes, puis PieceMaker ajoute les liens document↔entité
- * issus de GLiNER qui, eux, ne dépendent jamais d'une interprétation du modèle.
+ * Le graphe final superpose une couche documentaire déterministe, exhaustive,
+ * et la couche sémantique produite par Graphify. Graphify analyse un corpus
+ * temporaire dont les noms de fichiers sont des empreintes et dont le texte a
+ * déjà été pseudonymisé. PieceMaker conserve chaque original même hors de ce
+ * corpus, puis ajoute les liens document↔partie issus de GLiNER, qui ne
+ * dépendent jamais d'une interprétation du modèle.
  */
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -33,17 +33,38 @@ const {
   serializeSafePartyRegistry,
 } = require('./legal-party-registry.cjs');
 const { isGraphPriorityPath } = require('./case-folder-structure.cjs');
+const {
+  materializeCompositeLegalGraph,
+  persistCompositeLegalGraph,
+  readLegalSemanticSnapshot: readStoredLegalSemanticSnapshot,
+} = require('./legal-graph-materializer.cjs');
+const {
+  PARTY_METADATA_FIELDS,
+  buildLegalIdentityBoundary,
+  canonicalPartyId,
+  identityAttemptForNode,
+  nonPartyIdentityQualityFlag,
+  sanitizeContextEntityCodes,
+} = require('./legal-identity-boundary.cjs');
 
 const LEGAL_GRAPH_RELATIVE = '.piecemaker/graphify/legal';
 const LEGAL_PROMPT_FILE = path.join(__dirname, 'legal-graph-prompt.txt');
 const LEGAL_SITECUSTOMIZE_FILE = path.join(__dirname, 'scripts', 'graphify-legal-sitecustomize.py');
-const LEGAL_PROMPT_VERSION = 1;
+const LEGAL_PROMPT_VERSION = 2;
+// Ces versions évoluent indépendamment : le prompt décrit le contrat remis au
+// LLM, l'intégration décrit la couture Graphify↔PieceMaker et le finalizer
+// constitue la frontière de confiance juridique déterministe.
+const LEGAL_INTEGRATION_VERSION = 2;
+const LEGAL_FINALIZER_VERSION = 2;
 const LEGAL_GRAPH_TIMEOUT_MS = 30 * 60 * 1000;
 const LEGAL_QUERY_TIMEOUT_MS = 2 * 60 * 1000;
 const LEGAL_FRAMEWORK_FILE = 'cadre_juridique_francais.md';
 const LEGAL_FRAMEWORK_VERIFIED_AT = '2026-08-25';
 const LEGAL_GRAPH_VIEWER_MAX_BYTES = 16 * 1024 * 1024;
 const generations = new Map();
+const SEMANTIC_STATES = new Set([
+  'missing', 'current', 'stale', 'building', 'failed', 'blocked',
+]);
 const NON_GRAPHIFY_SECRET_KEYS = [
   'LEGIFRANCE_CLIENT_ID', 'LEGIFRANCE_CLIENT_SECRET', 'MCP_API_KEY',
   'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CODEX_BOT_TOKEN',
@@ -157,6 +178,8 @@ function legalGraphPaths(caseRoot) {
     output: path.join(directory, 'graphify-out'),
     graph: path.join(directory, 'graphify-out', 'graph.json'),
     manifest: path.join(directory, 'manifest.json'),
+    semanticDirectory: path.join(directory, 'semantic-snapshot'),
+    semanticGraph: path.join(directory, 'semantic-snapshot', 'graph.json'),
   };
 }
 
@@ -189,41 +212,47 @@ function safeLabel(document) {
  * quelles pièces entrent dans le corpus Graphify. Correspondance et Data Room
  * sont toutefois des sources métier autoritatives : leurs pièces entrent sans
  * condition de mention, tandis qu'une pièce située ailleurs et ne mentionnant
- * aucune partie reste disponible dans la chronologie mais est écartée.
+ * aucune partie reste dans la couche documentaire avec un périmètre sémantique
+ * explicitement écarté.
  */
 function legalTopology(caseRoot, chronology, mappingDocument) {
   const registry = buildLegalPartyRegistry(mappingDocument);
-  if (registry.status !== 'ready') {
-    return { documents: [], codes: [], registry, partyCodes: [], excludedDocuments: [] };
-  }
-  const partyCodeSet = new Set(registry.parties.map((party) => party.code));
+  const partyCodeSet = new Set((registry.parties || []).map((party) => party.code));
   const documents = [];
-  const excludedDocuments = [];
   for (const doc of chronology.documents || []) {
-    if (doc.resource) continue;
-    const key = stateKey(doc.path || doc.id);
+    const key = doc.documentKey || stateKey(doc.path || doc.id);
     const entityCodes = [...new Set((doc.codes || [])
       .filter((entry) => ['personne', 'societe'].includes(entry.category))
       .map((entry) => String(entry.code || ''))
       .filter(Boolean))].sort();
     const partyCodes = entityCodes.filter((code) => partyCodeSet.has(code));
     const graphPriority = isGraphPriorityPath(caseRoot, doc.path);
-    if (!partyCodes.length && !graphPriority) {
-      excludedDocuments.push({ key, reason: 'aucune_partie_selectionnee' });
-      continue;
-    }
-    const counterpart = markdownCounterpart(path.join(caseRoot, doc.path), caseRoot);
+    const semanticEligible = !doc.resource && (partyCodes.length > 0 || graphPriority);
     let content = '';
     let analyzable = false;
-    if (doc.scanned && counterpart.exists) {
-      try {
-        content = applyMapping(fs.readFileSync(counterpart.path, 'utf8'), mappingDocument.mapping);
-        analyzable = Boolean(content.trim());
-      } catch {
-        // Une conversion devenue illisible ne doit pas empêcher le graphe de
-        // conserver la pièce et ses mentions GLiNER déterministes.
-        content = '';
+    let semanticScope = 'excluded';
+    let semanticReason = doc.resource ? 'piece_ressource' : 'aucune_partie_selectionnee';
+    if (semanticEligible) {
+      semanticScope = 'unavailable';
+      semanticReason = 'piece_non_analysee';
+      if (doc.scanned) {
+        const counterpart = markdownCounterpart(path.join(caseRoot, doc.path), caseRoot);
+        if (!counterpart.exists) {
+          semanticReason = 'markdown_indisponible';
+        } else {
+          try {
+            content = applyMapping(fs.readFileSync(counterpart.path, 'utf8'), mappingDocument.mapping);
+            analyzable = Boolean(content.trim());
+            semanticReason = analyzable ? null : 'contenu_vide';
+          } catch {
+            // Une conversion devenue illisible ne doit pas empêcher le graphe
+            // de conserver la pièce et ses mentions déterministes.
+            content = '';
+            semanticReason = 'markdown_illisible';
+          }
+        }
       }
+      if (analyzable) semanticScope = 'included';
     }
     documents.push({
       key,
@@ -231,6 +260,15 @@ function legalTopology(caseRoot, chronology, mappingDocument) {
       label: safeLabel({ key, nature: doc.nature, dateIso: doc.dateIso }),
       nature: doc.nature || null,
       dateIso: doc.dateIso || null,
+      juridiction: doc.juridiction || null,
+      fields: Array.isArray(doc.fields) ? doc.fields : [],
+      metadata: doc.metadata && typeof doc.metadata === 'object' ? doc.metadata : null,
+      editRevision: Number.isSafeInteger(doc.editRevision) ? doc.editRevision : 0,
+      qualityFlags: Array.isArray(doc.qualityFlags) ? doc.qualityFlags : [],
+      entityDecisions: doc.entityDecisions && typeof doc.entityDecisions === 'object'
+        ? doc.entityDecisions : { additions: [], exclusions: [] },
+      detectedCodes: Array.isArray(doc.detectedCodes) ? doc.detectedCodes : entityCodes,
+      effectiveCodes: Array.isArray(doc.effectiveCodes) ? doc.effectiveCodes : entityCodes,
       // Conservé pour compatibilité descendante : tous les codes GLiNER
       // personne/société de la pièce, parties sélectionnées ou non.
       codes: entityCodes,
@@ -240,50 +278,141 @@ function legalTopology(caseRoot, chronology, mappingDocument) {
       // Une pièce de Correspondance/Data Room est toujours présente dans le
       // graphe, même si GLiNER n'y a trouvé aucune partie sélectionnée.
       graphPriority,
+      resource: Boolean(doc.resource),
       scanned: Boolean(doc.scanned),
       analyzable,
+      semanticEligible,
+      semanticScope,
+      semanticReason,
       content,
       contentHash: sha256(content),
     });
   }
   const sortedPartyCodes = [...partyCodeSet].sort();
+  const excludedDocuments = documents
+    .filter((document) => document.semanticScope === 'excluded')
+    .map((document) => ({ key: document.key, reason: document.semanticReason }));
+  const unavailableDocuments = documents
+    .filter((document) => document.semanticScope === 'unavailable')
+    .map((document) => ({ key: document.key, reason: document.semanticReason }));
   return {
-    documents,
+    // `documents` conserve son contrat historique : les pièces éligibles au
+    // corpus, analysables ou momentanément indisponibles. La nouvelle couche
+    // déterministe exhaustive vit dans `documentRecords`.
+    documentRecords: documents,
+    documents: documents.filter((document) => document.semanticEligible),
+    semanticDocuments: documents.filter((document) => document.semanticScope === 'included'),
     codes: sortedPartyCodes,
     registry,
     partyCodes: sortedPartyCodes,
     excludedDocuments,
+    unavailableDocuments,
   };
 }
 
-function topologySignature(topology) {
-  const promptHash = sha256(fs.readFileSync(LEGAL_PROMPT_FILE));
-  return sha256(JSON.stringify({
+function topologyDocumentRecords(topology) {
+  return topology.documentRecords || topology.documents || [];
+}
+
+function topologySemanticDocuments(topology) {
+  if (Array.isArray(topology.semanticDocuments)) return topology.semanticDocuments;
+  return (topology.documents || []).filter((document) =>
+    document.semanticScope ? document.semanticScope === 'included' : document.analyzable);
+}
+
+function sortedParties(topology) {
+  return (topology.registry?.parties || []).map((party) => ({
+    code: party.code,
+    entityType: party.entityType,
+    side: party.side,
+    position: party.position,
+  })).sort((left, right) => String(left.code).localeCompare(String(right.code)));
+}
+
+function semanticVersionDescriptor() {
+  return {
     promptVersion: LEGAL_PROMPT_VERSION,
-    promptHash,
+    promptHash: sha256(fs.readFileSync(LEGAL_PROMPT_FILE)),
+    integrationVersion: LEGAL_INTEGRATION_VERSION,
+    finalizerVersion: LEGAL_FINALIZER_VERSION,
     framework: sha256(LEGAL_FRAMEWORK),
-    // Le registre des parties pilote désormais la topologie : le modifier
-    // (partie ajoutée, retirée ou position changée) invalide le cache même
-    // si le texte des pièces n'a pas bougé (§ 6.4 du plan).
+  };
+}
+
+/** Empreinte des seules entrées effectivement remises à Graphify. */
+function topologySemanticSignature(topology) {
+  const documents = topologySemanticDocuments(topology).map((document) => ({
+    key: document.key,
+    dateIso: document.dateIso,
+    nature: document.nature,
+    partyCodes: document.partyCodes,
+    graphPriority: document.graphPriority,
+    contentHash: document.contentHash,
+  })).sort((left, right) => String(left.key).localeCompare(String(right.key)));
+  return sha256(JSON.stringify({
+    ...semanticVersionDescriptor(),
     registryVersion: 1,
-    parties: (topology.registry?.parties || []).map((party) => ({
-      code: party.code,
-      entityType: party.entityType,
-      side: party.side,
-      position: party.position,
-    })),
-    documents: topology.documents.map((document) => ({
+    parties: sortedParties(topology),
+    documents,
+  }));
+}
+
+/**
+ * Empreinte du périmètre autoritatif. Sa variation impose de masquer l'ancien
+ * snapshot : des concepts extraits pour une ancienne partie ou une ancienne
+ * pièce ne doivent jamais rester visibles comme s'ils appartenaient au dossier.
+ */
+function topologySemanticBoundarySignature(topology) {
+  return sha256(JSON.stringify({
+    registryVersion: 1,
+    parties: sortedParties(topology),
+    documents: topologySemanticDocuments(topology).map((document) => ({
+      key: document.key,
+      partyCodes: document.partyCodes,
+      graphPriority: document.graphPriority,
+    })).sort((left, right) => String(left.key).localeCompare(String(right.key))),
+  }));
+}
+
+/** Empreinte de la couche déterministe, champs d'affichage compris. */
+function topologyStaticSignature(topology) {
+  return sha256(JSON.stringify({
+    staticSchemaVersion: 1,
+    registryVersion: 1,
+    registryStatus: topology.registry?.status || 'mapping_missing',
+    parties: sortedParties(topology),
+    documents: topologyDocumentRecords(topology).map((document) => ({
       key: document.key,
       dateIso: document.dateIso,
       nature: document.nature,
+      juridiction: document.juridiction,
+      fields: document.fields,
+      metadata: document.metadata,
+      editRevision: document.editRevision,
+      qualityFlags: document.qualityFlags,
+      entityDecisions: document.entityDecisions,
+      detectedCodes: document.detectedCodes,
+      effectiveCodes: document.effectiveCodes,
       partyCodes: document.partyCodes,
       graphPriority: document.graphPriority,
+      resource: document.resource,
       scanned: document.scanned,
       analyzable: document.analyzable,
+      semanticEligible: document.semanticEligible,
+      semanticScope: document.semanticScope,
+      semanticReason: document.semanticReason,
       contentHash: document.contentHash,
-    })),
+    })).sort((left, right) => String(left.key).localeCompare(String(right.key))),
     excludedDocuments: topology.excludedDocuments || [],
+    unavailableDocuments: topology.unavailableDocuments || [],
   }));
+}
+
+// Contrat public historique : cette signature décide si une extraction
+// Graphify peut être réutilisée. Les métadonnées purement visuelles n'y entrent
+// donc plus.
+function topologySignature(topology) {
+  return topologySemanticSignature(topology);
 }
 
 function corpusDocument(document, parties) {
@@ -320,7 +449,7 @@ function writeLegalInputs(temporary, topology) {
   for (const directory of [corpus, output, bootstrap]) {
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   }
-  for (const document of topology.documents.filter((entry) => entry.analyzable)) {
+  for (const document of topologySemanticDocuments(topology)) {
     fs.writeFileSync(path.join(corpus, document.file), corpusDocument(document, topology.registry.parties), {
       encoding: 'utf8', mode: 0o600,
     });
@@ -364,6 +493,62 @@ function defaultAssertionStatus(edge) {
   if (edge.confidence === 'INFERRED') return 'INFERRE';
   if (edge.confidence === 'AMBIGUOUS') return 'A_VERIFIER';
   return 'CONSTATE_DANS_PIECE';
+}
+
+function comparableStructuredValue(value) {
+  if (value == null) return null;
+  return String(value).normalize('NFKC').trim().toLocaleLowerCase('fr');
+}
+
+/**
+ * Compare uniquement les champs structurés que Graphify a explicitement
+ * posés sur ses nœuds documentaires. La valeur du cabinet reste toujours
+ * autoritative ; une divergence après reconstruction devient un signal de
+ * revue, jamais une nouvelle reconstruction automatique.
+ */
+function semanticContradictionsByFile(rawNodes, documentRecords) {
+  const documentsByFile = new Map(documentRecords.map((document) => [document.file, document]));
+  const candidates = new Map();
+  const aliases = {
+    dateIso: ['date_iso', 'dateIso'],
+    nature: ['nature'],
+    juridiction: ['juridiction', 'jurisdiction'],
+  };
+  for (const node of rawNodes || []) {
+    if (node?.file_type !== 'document') continue;
+    const sourceFile = normalizeSourceFile(node.source_file);
+    if (!documentsByFile.has(sourceFile)) continue;
+    for (const [field, names] of Object.entries(aliases)) {
+      for (const name of names) {
+        if (!Object.prototype.hasOwnProperty.call(node, name) || node[name] == null) continue;
+        const key = `${sourceFile}\u0000${field}`;
+        if (!candidates.has(key)) candidates.set(key, []);
+        candidates.get(key).push(node[name]);
+      }
+    }
+  }
+  const result = new Map();
+  for (const document of documentRecords) {
+    const contradictions = [];
+    for (const field of Object.keys(aliases)) {
+      if (document.metadata?.[field]?.source !== 'admin_manual') continue;
+      const semanticValues = [...new Set(candidates.get(`${document.file}\u0000${field}`) || [])];
+      if (!semanticValues.length) continue;
+      const manual = comparableStructuredValue(document[field]);
+      const conflicting = semanticValues.filter((value) => comparableStructuredValue(value) !== manual);
+      if (!conflicting.length) continue;
+      contradictions.push({
+        type: 'LLM_CONTRADICTS_MANUAL_FACT',
+        field,
+        manualValue: document[field] ?? null,
+        semanticValue: conflicting.length === 1 ? conflicting[0] : conflicting,
+        source: 'graphify_structured_output',
+        status: 'open',
+      });
+    }
+    if (contradictions.length) result.set(document.file, contradictions);
+  }
+  return result;
 }
 
 function legalNode(id, label, legalKind, sourceUrl = null) {
@@ -452,35 +637,108 @@ function pruneToPartyConnectivity(nodes, edges, hyperedges, seedIds) {
   };
 }
 
+function assertFinalPartyBoundary(nodes, edges, hyperedges, parties, entityNodes, identityBoundary) {
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const canonicalIds = new Set(entityNodes.values());
+  for (const party of parties) {
+    const expectedId = entityNodes.get(party.code);
+    const matches = nodes.filter((node) => node.label === party.code);
+    if (matches.length !== 1 || matches[0].id !== expectedId) {
+      throw new Error(`Frontière des parties violée pour « ${party.code} » : nœud canonique non unique.`);
+    }
+    const node = matches[0];
+    if (node.legal_kind !== 'personne' || node.entity_type !== party.entityType
+        || node.side !== party.side || node.procedural_role !== party.position
+        || node.is_key_party !== true) {
+      throw new Error(`Frontière des parties violée pour « ${party.code} » : métadonnées non autoritatives.`);
+    }
+  }
+  for (const node of nodes) {
+    if (canonicalIds.has(node.id)) continue;
+    if (PARTY_METADATA_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(node, field))) {
+      throw new Error('Le graphe final contient des métadonnées de partie sur un nœud non canonique.');
+    }
+    if (identityAttemptForNode(node, identityBoundary)) {
+      throw new Error('Le graphe final contient encore une identité non autorisée.');
+    }
+    if (Array.isArray(node.context_entity_codes)) {
+      const sanitized = sanitizeContextEntityCodes(
+        node.context_entity_codes,
+        identityBoundary,
+        node.source_file,
+      );
+      if (JSON.stringify(sanitized) !== JSON.stringify(node.context_entity_codes)) {
+        throw new Error('Le graphe final contient un code contextuel hors du périmètre de sa pièce.');
+      }
+    }
+  }
+  for (const edge of edges) {
+    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) {
+      throw new Error('Le graphe final contient une arête pendante après contrôle des identités.');
+    }
+  }
+  for (const hyperedge of hyperedges) {
+    if (!Array.isArray(hyperedge.nodes) || hyperedge.nodes.length < 3
+        || hyperedge.nodes.some((id) => !nodeIds.has(id))) {
+      throw new Error('Le graphe final contient une hyperarête dangereuse après contrôle des identités.');
+    }
+  }
+}
+
 /** Normalise, complète et contrôle le fragment produit par Graphify. */
 function finalizeLegalGraph(raw, topology, mappingDocument) {
   if (!raw || typeof raw !== 'object' || !Array.isArray(raw.nodes)) {
     throw new Error('Graphify a produit un graphe juridique invalide.');
   }
-  const allowedFiles = new Set([LEGAL_FRAMEWORK_FILE, ...topology.documents.map((document) => document.file)]);
-  const parties = topology.registry?.parties || [];
-  // Seules les parties du registre autoritatif peuvent devenir des nœuds
-  // `legal_kind="personne"` : un code non partie ne peut pas en devenir un
-  // par reformulation du modèle (§ 7.1 et 7.4 du plan).
+  const documentRecords = topologyDocumentRecords(topology);
+  const semanticDocuments = topologySemanticDocuments(topology);
+  const allowedFiles = new Set([LEGAL_FRAMEWORK_FILE, ...documentRecords.map((document) => document.file)]);
+  const semanticFiles = new Set([
+    LEGAL_FRAMEWORK_FILE,
+    ...semanticDocuments.map((document) => document.file),
+  ]);
+  const partiesByCode = new Map();
+  for (const party of topology.registry?.parties || []) {
+    const code = String(party?.code || '').trim();
+    if (!code) throw new Error('Le registre autoritatif contient une partie sans code.');
+    const previous = partiesByCode.get(code);
+    if (previous && ['entityType', 'side', 'position'].some((field) => previous[field] !== party[field])) {
+      throw new Error(`Le registre autoritatif contient des métadonnées incompatibles pour « ${code} ».`);
+    }
+    if (!previous) partiesByCode.set(code, { ...party, code });
+  }
+  const parties = [...partiesByCode.values()];
   const partyCodeSet = new Set(parties.map((party) => party.code));
+  const identityBoundary = buildLegalIdentityBoundary(mappingDocument, topology);
+  const contradictionsByFile = semanticContradictionsByFile(raw.nodes, documentRecords);
+  const qualityFlags = [];
+  const qualityFlagKeys = new Set();
+  const addIdentityQualityFlag = (node, attempt, sourceFile) => {
+    if (attempt.code && partyCodeSet.has(attempt.code)) return;
+    const flag = nonPartyIdentityQualityFlag(
+      node,
+      attempt,
+      semanticFiles.has(sourceFile) ? sourceFile : '',
+    );
+    const key = JSON.stringify(flag);
+    if (!qualityFlagKeys.has(key)) {
+      qualityFlagKeys.add(key);
+      qualityFlags.push(flag);
+    }
+  };
   const nodes = [];
   const nodeIds = new Set();
-  const addNode = (node) => {
+  const addNode = (node, { trusted = false } = {}) => {
     const id = String(node?.id || '');
     if (!/^[a-z0-9_]+$/.test(id) || nodeIds.has(id)) return;
     const sourceFile = normalizeSourceFile(node.source_file);
     if (sourceFile && !allowedFiles.has(sourceFile)) return;
     const label = String(node.label || id).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 500);
-    if (node.legal_kind === 'personne' && !partyCodeSet.has(label)) return;
-    if (/^(?:PERSONNE|SOCIETE|SA|SAS|SARL|SCI|EURL|ASSOCIATION|DIRIGEANT)[_\s-]/i.test(label)
-        && !partyCodeSet.has(label)) return;
-    nodeIds.add(id);
     const fileType = GRAPHIFY_FILE_TYPES.has(node.file_type) ? node.file_type : 'concept';
     const legalKind = LEGAL_KINDS.has(node.legal_kind) ? node.legal_kind : null;
     const assertionStatus = ASSERTION_STATUSES.has(node.assertion_status)
       ? node.assertion_status : null;
-    nodes.push({
-      ...node,
+    const normalized = {
       id,
       label,
       file_type: fileType,
@@ -492,16 +750,122 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
       mandatory_character: MANDATORY_CHARACTERS.has(node.mandatory_character)
         ? node.mandatory_character : null,
       validity_status: VALIDITY_STATUSES.has(node.validity_status) ? node.validity_status : null,
-    });
+    };
+    for (const field of ['citation', 'rationale', 'source_url', 'source_verified_at']) {
+      if (typeof node[field] === 'string') normalized[field] = node[field].slice(0, 2_000);
+      else if (node[field] === null) normalized[field] = null;
+    }
+    if (!trusted) {
+      const contextCodes = sanitizeContextEntityCodes(
+        node.context_entity_codes,
+        identityBoundary,
+        sourceFile,
+      );
+      if (contextCodes.length) normalized.context_entity_codes = contextCodes;
+    } else {
+      // Les propriétés étendues ne peuvent venir que des constructeurs
+      // déterministes PieceMaker. Le fragment LLM est limité à l'allowlist
+      // juridique ci-dessus.
+      for (const field of [
+        'extraction_method', 'document_key', 'date_iso', 'nature', 'juridiction',
+        'fields', 'metadata', 'edit_revision', 'quality_flags', 'entity_decisions',
+        'detected_codes', 'effective_codes', 'scanned', 'analyzable',
+        'graph_priority', 'semantic_scope', 'semantic_reason', 'review_required',
+        'review_reasons', 'entity_type', 'procedural_role', 'side', 'is_key_party',
+        'contradictions',
+      ]) {
+        if (Object.prototype.hasOwnProperty.call(node, field)) normalized[field] = node[field];
+      }
+    }
+    nodeIds.add(id);
+    nodes.push(normalized);
   };
 
+  // Les identifiants documentaires de Graphify ne sont pas stables. Les
+  // pièces sont donc toujours matérialisées sous l'identifiant déterministe
+  // dérivé de `document_key`, puis les références du fragment brut sont
+  // réécrites vers cet identifiant canonique.
+  const documentIdByFile = new Map(
+    documentRecords.map((document) => [document.file, `piece_${document.key}`]),
+  );
+  const deterministicDocumentIds = new Set(documentIdByFile.values());
+  const entityNodes = new Map();
+  for (const party of parties) {
+    const id = canonicalPartyId(party.code);
+    if (nodeIds.has(id)) throw new Error(`Collision d'identifiant canonique pour la partie « ${party.code} ».`);
+    addNode({
+      id,
+      label: party.code,
+      file_type: 'concept',
+      legal_kind: 'personne',
+      source_file: '',
+      source_location: null,
+      assertion_status: 'CONSTATE_DANS_PIECE',
+      extraction_method: 'registre_parties_piecemaker',
+      entity_type: party.entityType,
+      procedural_role: party.position,
+      side: party.side,
+      is_key_party: true,
+    }, { trusted: true });
+    entityNodes.set(party.code, id);
+  }
+  const canonicalPartyIds = new Set(entityNodes.values());
+  const partyCodeByEntityId = new Map(
+    [...entityNodes.entries()].map(([code, id]) => [id, code]),
+  );
+  const explicitPartyCodesByFile = new Map(
+    documentRecords.map((document) => [document.file, new Set(document.partyCodes || [])]),
+  );
+  const rawDocumentIdRemap = new Map();
+  const rejectedIdentityNodeIds = new Set();
+  const registerRawRemap = (rawId, targetId) => {
+    if (!rawId) return;
+    const previous = rawDocumentIdRemap.get(rawId);
+    if (previous && previous !== targetId) {
+      throw new Error('Graphify a produit un identifiant ambigu entre plusieurs identités autoritatives.');
+    }
+    rawDocumentIdRemap.set(rawId, targetId);
+  };
+
+  // Première passe : tous les alias documentaires et toutes les occurrences
+  // EXACTES d'une partie sélectionnée sont rabattus avant la lecture des
+  // arêtes/hyperarêtes. Les doublons Graphify ne créent donc jamais un second
+  // nœud d'identité.
   for (const node of raw.nodes) {
     const sourceFile = normalizeSourceFile(node?.source_file);
-    if (!sourceFile && !partyCodeSet.has(String(node?.label || ''))) continue;
+    const rawId = String(node?.id || '');
+    if (node?.file_type === 'document' && documentIdByFile.has(sourceFile)) {
+      registerRawRemap(rawId, documentIdByFile.get(sourceFile));
+      continue;
+    }
+    const rawLabel = String(node?.label || '').trim();
+    if (partyCodeSet.has(rawLabel)) {
+      registerRawRemap(rawId, entityNodes.get(rawLabel));
+      continue;
+    }
+    if (canonicalPartyIds.has(rawId) || deterministicDocumentIds.has(rawId)) {
+      throw new Error('Graphify a tenté de réutiliser un identifiant déterministe PieceMaker.');
+    }
+    const identityAttempt = identityAttemptForNode(node, identityBoundary);
+    if (identityAttempt) {
+      if (rawId) rejectedIdentityNodeIds.add(rawId);
+      addIdentityQualityFlag(node, identityAttempt, sourceFile);
+    }
+  }
+
+  for (const node of raw.nodes) {
+    const rawId = String(node?.id || '');
+    if (rawDocumentIdRemap.has(rawId) || rejectedIdentityNodeIds.has(rawId)) continue;
+    const sourceFile = normalizeSourceFile(node?.source_file);
+    // Un concept sémantique n'est recevable que s'il provient réellement du
+    // corpus Graphify. Les fichiers exclus ou indisponibles n'alimentent que
+    // la couche documentaire déterministe.
+    if (sourceFile && !semanticFiles.has(sourceFile)) continue;
+    if (!sourceFile) continue;
     addNode(node);
   }
-  for (const definition of FRAMEWORK_NODES) addNode(legalNode(...definition));
-  for (const definition of INDEX_NODES) addNode(indexNode(...definition));
+  for (const definition of FRAMEWORK_NODES) addNode(legalNode(...definition), { trusted: true });
+  for (const definition of INDEX_NODES) addNode(indexNode(...definition), { trusted: true });
   // Nœud stable de la procédure : jamais de nom de dossier ni autre PII
   // (§ 7.1 du plan). Sert d'ancre déterministe pour rattacher les parties.
   addNode({
@@ -513,70 +877,47 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
     source_location: null,
     assertion_status: 'CONSTATE_DANS_PIECE',
     extraction_method: 'index_piecemaker',
-  });
+  }, { trusted: true });
 
   const documentNodes = new Map();
-  for (const document of topology.documents) {
-    let node = nodes.find((entry) => entry.file_type === 'document' && entry.source_file === document.file);
-    if (!node) {
-      node = {
-        id: `piece_${document.key}`,
-        label: document.label,
-        file_type: 'document',
-        legal_kind: 'document',
-        source_file: document.file,
-        source_location: null,
-        assertion_status: 'CONSTATE_DANS_PIECE',
-        date_iso: document.dateIso,
-        nature: document.nature,
-        analyzable: document.analyzable,
-      };
-      addNode(node);
-      node = nodes.find((entry) => entry.id === node.id);
-    } else {
-      node.legal_kind = 'document';
-      node.label = document.label;
-      node.assertion_status = 'CONSTATE_DANS_PIECE';
-      node.date_iso = document.dateIso;
-      node.nature = document.nature;
-      node.analyzable = document.analyzable;
-    }
+  for (const document of documentRecords) {
+    const id = documentIdByFile.get(document.file);
+    addNode({
+      id,
+      label: document.label,
+      file_type: 'document',
+      legal_kind: 'document',
+      source_file: document.file,
+      source_location: null,
+      assertion_status: 'CONSTATE_DANS_PIECE',
+      extraction_method: 'index_piecemaker',
+      document_key: document.key,
+      date_iso: document.dateIso,
+      nature: document.nature,
+      juridiction: document.juridiction,
+      fields: document.fields,
+      metadata: document.metadata,
+      edit_revision: document.editRevision,
+      quality_flags: document.qualityFlags,
+      contradictions: contradictionsByFile.get(document.file) || [],
+      entity_decisions: document.entityDecisions,
+      detected_codes: document.detectedCodes,
+      effective_codes: document.effectiveCodes,
+      scanned: document.scanned,
+      analyzable: document.analyzable,
+      graph_priority: document.graphPriority,
+      semantic_scope: document.semanticScope,
+      semantic_reason: document.semanticReason,
+    }, { trusted: true });
+    const node = nodes.find((entry) => entry.id === id);
     const reviewReasons = [];
-    if (!document.codes.length) reviewReasons.push('aucune_personne_indexee');
-    if (!document.analyzable) reviewReasons.push('piece_non_analysee');
+    if (!document.codes.length && !document.resource) reviewReasons.push('aucune_personne_indexee');
+    if (document.semanticReason && document.semanticReason !== 'piece_ressource') {
+      reviewReasons.push(document.semanticReason);
+    }
     node.review_required = reviewReasons.length > 0;
     node.review_reasons = reviewReasons;
-    documentNodes.set(document.file, node.id);
-  }
-
-  // Exactement un nœud canonique par partie sélectionnée du registre — pas un
-  // par code GLiNER (§ 7.1 du plan). Le registre écrase toute métadonnée
-  // produite par le modèle sur ces nœuds.
-  const entityNodes = new Map();
-  for (const party of parties) {
-    const code = party.code;
-    let node = nodes.find((entry) => entry.label === code);
-    if (!node) {
-      const id = `entite_${code.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
-      addNode({
-        id,
-        label: code,
-        file_type: 'concept',
-        legal_kind: 'personne',
-        source_file: '',
-        source_location: null,
-        assertion_status: 'CONSTATE_DANS_PIECE',
-      });
-      node = nodes.find((entry) => entry.id === id);
-    } else {
-      node.legal_kind = 'personne';
-      node.assertion_status = 'CONSTATE_DANS_PIECE';
-    }
-    node.entity_type = party.entityType;
-    node.procedural_role = party.position;
-    node.side = party.side;
-    node.is_key_party = true;
-    entityNodes.set(code, node.id);
+    documentNodes.set(document.file, id);
   }
 
   // Une partie sélectionnée qui n'est mentionnée dans aucune pièce reste dans
@@ -584,7 +925,7 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
   // plan) : l'absence de mention est une information utile au cabinet, pas
   // une erreur qui doit faire disparaître la partie du graphe.
   const mentionedPartyCodes = new Set(
-    topology.documents.flatMap((document) => document.partyCodes),
+    documentRecords.flatMap((document) => document.partyCodes),
   );
   for (const party of parties) {
     if (mentionedPartyCodes.has(party.code)) continue;
@@ -596,7 +937,7 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
 
   const edges = [];
   const edgeKeys = new Set();
-  const addEdge = (edge) => {
+  const addEdge = (edge, { trusted = false } = {}) => {
     const source = String(edge?.source || '');
     const target = String(edge?.target || '');
     const relation = String(edge?.relation || '');
@@ -610,8 +951,7 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
       ? edge.confidence : 'AMBIGUOUS';
     const assertionStatus = ASSERTION_STATUSES.has(edge.assertion_status)
       ? edge.assertion_status : defaultAssertionStatus({ confidence });
-    edges.push({
-      ...edge,
+    const normalized = {
       source,
       target,
       relation,
@@ -624,29 +964,66 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
       source_file: sourceFile,
       source_location: edge.source_location ?? null,
       weight: Number.isFinite(edge.weight) ? edge.weight : 1,
-    });
+    };
+    if (trusted && typeof edge.extraction_method === 'string') {
+      normalized.extraction_method = edge.extraction_method;
+    }
+    edges.push(normalized);
   };
 
   const sourceByNode = new Map(nodes.map((node) => [node.id, node.source_file]));
   const documentIds = new Set(documentNodes.values());
   const entityIdsForRaw = new Set(entityNodes.values());
   for (const edge of graphEdges(raw)) {
-    const source = String(edge?.source || '');
-    const target = String(edge?.target || '');
+    const rawSource = String(edge?.source || '');
+    const rawTarget = String(edge?.target || '');
+    if (rejectedIdentityNodeIds.has(rawSource) || rejectedIdentityNodeIds.has(rawTarget)) continue;
+    for (const endpoint of [rawSource, rawTarget]) {
+      if (!identityBoundary.identityCodes.has(endpoint) || partyCodeSet.has(endpoint)) continue;
+      addIdentityQualityFlag({ id: endpoint, label: endpoint }, {
+        code: endpoint,
+        reasons: ['relation_vers_identite_non_partie'],
+      }, normalizeSourceFile(edge?.source_file));
+    }
+    if ([rawSource, rawTarget].some((endpoint) =>
+      identityBoundary.identityCodes.has(endpoint) && !partyCodeSet.has(endpoint))) continue;
+    const source = rawDocumentIdRemap.get(rawSource) || entityNodes.get(rawSource) || rawSource;
+    const target = rawDocumentIdRemap.get(rawTarget) || entityNodes.get(rawTarget) || rawTarget;
     if (edge?.relation === 'references'
         && ((documentIds.has(source) && entityIdsForRaw.has(target))
           || (documentIds.has(target) && entityIdsForRaw.has(source)))) continue;
     const sourceFile = normalizeSourceFile(edge?.source_file)
       || sourceByNode.get(source) || sourceByNode.get(target) || '';
     if (!sourceFile) continue;
-    addEdge({ ...edge, source_file: sourceFile });
+    if (sourceFile && !semanticFiles.has(sourceFile)) continue;
+    const explicitParties = explicitPartyCodesByFile.get(sourceFile) || new Set();
+    const partyEndpoints = [source, target]
+      .map((id) => partyCodeByEntityId.get(id))
+      .filter(Boolean);
+    if (partyEndpoints.some((code) => !explicitParties.has(code))) continue;
+    // Les mentions document→partie sont entièrement déterministes et seront
+    // recréées plus bas depuis l'index effectif de la pièce.
+    if (edge?.relation === 'mentionne'
+        && ((documentIds.has(source) && canonicalPartyIds.has(target))
+          || (documentIds.has(target) && canonicalPartyIds.has(source)))) continue;
+    addEdge({
+      source,
+      target,
+      relation: edge.relation,
+      confidence: edge.confidence,
+      confidence_score: edge.confidence_score,
+      assertion_status: edge.assertion_status,
+      source_file: sourceFile,
+      source_location: edge.source_location,
+      weight: edge.weight,
+    });
   }
-  for (const definition of FRAMEWORK_EDGES) addEdge(legalEdge(...definition));
+  for (const definition of FRAMEWORK_EDGES) addEdge(legalEdge(...definition), { trusted: true });
 
   // Points d'entrée lexicaux stables pour les questions générales. Graphify
   // sélectionne son sous-graphe sans LLM : sans ces nœuds, « chronologie du
   // dossier » pourrait ne correspondre à aucun libellé de pièce.
-  for (const document of topology.documents) {
+  for (const document of documentRecords) {
     addEdge({
       source: 'index_chronologie_dossier',
       target: documentNodes.get(document.file),
@@ -655,9 +1032,9 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
       assertion_status: 'CONSTATE_DANS_PIECE',
       source_file: document.file,
       extraction_method: 'index_piecemaker',
-    });
+    }, { trusted: true });
   }
-  const datedDocuments = topology.documents.filter((document) => document.dateIso);
+  const datedDocuments = documentRecords.filter((document) => document.dateIso);
   for (let index = 0; index < datedDocuments.length - 1; index += 1) {
     const current = datedDocuments[index];
     const next = datedDocuments[index + 1];
@@ -669,7 +1046,7 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
       assertion_status: 'CONSTATE_DANS_PIECE',
       source_file: current.file,
       extraction_method: 'chronologie_indexee',
-    });
+    }, { trusted: true });
   }
   // Relations procédurales déterministes, jamais laissées au LLM (§ 7.2) :
   // la position de chaque partie fixe sans ambiguïté sa relation à la
@@ -686,7 +1063,7 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
       assertion_status: 'CONSTATE_DANS_PIECE',
       source_file: '',
       extraction_method: 'index_piecemaker',
-    });
+    }, { trusted: true });
     addEdge({
       source: 'index_personnes_dossier',
       target: entityId,
@@ -695,13 +1072,13 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
       assertion_status: 'CONSTATE_DANS_PIECE',
       source_file: '',
       extraction_method: 'index_piecemaker',
-    });
+    }, { trusted: true });
   }
 
   // Garantie déterministe : chaque mention document↔partie indexée existe,
   // même si le modèle sémantique omet ou reformule cette arête. Un code non
   // partie ne crée jamais d'arête « mentionne » (§ 7.2 du plan).
-  for (const document of topology.documents) {
+  for (const document of documentRecords) {
     for (const code of document.partyCodes) {
       addEdge({
         source: documentNodes.get(document.file),
@@ -714,7 +1091,7 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
         source_location: null,
         weight: 1,
         extraction_method: 'index_gliner',
-      });
+      }, { trusted: true });
     }
   }
 
@@ -734,7 +1111,7 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
       source_location: node.source_location,
       weight: 1,
       extraction_method: 'piece_source',
-    });
+    }, { trusted: true });
   }
 
   // Le contrat est une norme particulière entre ses parties, sous réserve de
@@ -742,8 +1119,8 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
   // de contrôle, jamais la validité du contrat particulier.
   for (const node of nodes.filter((entry) => entry.legal_kind === 'contrat')) {
     if (!node.authority_level) node.authority_level = 'contrat';
-    addEdge(legalEdge(node.id, 'principe_force_obligatoire', 'conceptuellement_lie_a'));
-    addEdge(legalEdge(node.id, 'principe_ordre_public', 'soumis_a'));
+    addEdge(legalEdge(node.id, 'principe_force_obligatoire', 'conceptuellement_lie_a'), { trusted: true });
+    addEdge(legalEdge(node.id, 'principe_ordre_public', 'soumis_a'), { trusted: true });
   }
 
   for (const node of nodes) {
@@ -757,14 +1134,49 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
       assertion_status: 'CONSTATE_DANS_PIECE',
       source_file: node.source_file,
       extraction_method: 'index_piecemaker',
-    });
+    }, { trusted: true });
   }
 
-  const rawHyperedges = (Array.isArray(raw.hyperedges) ? raw.hyperedges : [])
-    .filter((entry) => entry && Array.isArray(entry.nodes) && entry.nodes.length >= 3)
-    .filter((entry) => entry.nodes.every((id) => nodeIds.has(id)))
-    .map((entry) => ({ ...entry, source_file: normalizeSourceFile(entry.source_file) }))
-    .filter((entry) => !entry.source_file || allowedFiles.has(entry.source_file));
+  const rawHyperedges = [];
+  for (const entry of Array.isArray(raw.hyperedges) ? raw.hyperedges : []) {
+    if (!entry || !Array.isArray(entry.nodes) || entry.nodes.length < 3) continue;
+    const rawEndpoints = entry.nodes.map((id) => String(id || ''));
+    if (rawEndpoints.some((id) => rejectedIdentityNodeIds.has(id))) continue;
+    const nonPartyEndpoint = rawEndpoints.find((id) =>
+      identityBoundary.identityCodes.has(id) && !partyCodeSet.has(id));
+    if (nonPartyEndpoint) {
+      addIdentityQualityFlag({ id: nonPartyEndpoint, label: nonPartyEndpoint }, {
+        code: nonPartyEndpoint,
+        reasons: ['hyperarete_vers_identite_non_partie'],
+      }, normalizeSourceFile(entry.source_file));
+      continue;
+    }
+    const endpointIds = rawEndpoints.map((id) =>
+      rawDocumentIdRemap.get(id) || entityNodes.get(id) || id);
+    if (new Set(endpointIds).size < 3 || !endpointIds.every((id) => nodeIds.has(id))) continue;
+    const sourceFile = normalizeSourceFile(entry.source_file);
+    if (!sourceFile || !semanticFiles.has(sourceFile)) continue;
+    const explicitParties = explicitPartyCodesByFile.get(sourceFile) || new Set();
+    const partyEndpoints = endpointIds
+      .map((endpointId) => partyCodeByEntityId.get(endpointId))
+      .filter(Boolean);
+    if (partyEndpoints.some((code) => !explicitParties.has(code))) continue;
+    const id = String(entry.id || '');
+    const relation = String(entry.relation || '');
+    if (!/^[a-z0-9_]+$/.test(id) || !/^[a-z0-9_]+$/.test(relation)) continue;
+    const confidence = ['EXTRACTED', 'INFERRED', 'AMBIGUOUS'].includes(entry.confidence)
+      ? entry.confidence : 'AMBIGUOUS';
+    rawHyperedges.push({
+      id,
+      label: String(entry.label || id).replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 500),
+      nodes: endpointIds,
+      relation,
+      confidence,
+      confidence_score: normalizeConfidenceScore(confidence, entry.confidence_score),
+      source_file: sourceFile,
+      source_location: entry.source_location ?? null,
+    });
+  }
 
   // Invariant de connexité (§ 7.3 du plan) : seuls les nœuds atteignables
   // depuis les parties sélectionnées et `procedure_dossier` — ou les pièces
@@ -792,6 +1204,15 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
       missingParticipants.push(node.id);
     }
   }
+  assertFinalPartyBoundary(
+    keptNodes,
+    keptEdges,
+    hyperedges,
+    parties,
+    entityNodes,
+    identityBoundary,
+  );
+  qualityFlags.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
 
   const result = {
     // Graphify parcourt un graphe non dirigé pour retrouver aussi bien les
@@ -804,6 +1225,8 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
       source: 'piecemaker-legal',
       edgeDirection: 'source_to_target',
       legalPromptVersion: LEGAL_PROMPT_VERSION,
+      legalIntegrationVersion: LEGAL_INTEGRATION_VERSION,
+      legalFinalizerVersion: LEGAL_FINALIZER_VERSION,
     },
     nodes: keptNodes,
     edges: keptEdges,
@@ -812,8 +1235,11 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
     output_tokens: Number(raw.output_tokens || 0),
     piecemaker: {
       confidentiality: 'pseudonymisee',
-      documents: topology.documents.length,
-      analyzableDocuments: topology.documents.filter((document) => document.analyzable).length,
+      documents: documentRecords.length,
+      allDocuments: documentRecords.length,
+      semanticCandidates: topology.documents.length,
+      semanticDocuments: semanticDocuments.length,
+      analyzableDocuments: semanticDocuments.length,
       entities: parties.length,
       selectedParties: parties.length,
       mentionedParties: parties.filter((party) => mentionedPartyCodes.has(party.code)).length,
@@ -821,6 +1247,12 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
         .filter((party) => !mentionedPartyCodes.has(party.code))
         .map((party) => party.code),
       excludedDocuments: (topology.excludedDocuments || []).map((entry) => entry.key),
+      unavailableDocuments: (topology.unavailableDocuments || []).map((entry) => entry.key),
+      documentScopes: {
+        included: documentRecords.filter((document) => document.semanticScope === 'included').length,
+        excluded: documentRecords.filter((document) => document.semanticScope === 'excluded').length,
+        unavailable: documentRecords.filter((document) => document.semanticScope === 'unavailable').length,
+      },
       prunedDisconnectedNodes: pruned.prunedCount,
       legalRelations: keptEdges.filter((edge) =>
         !['index_piecemaker', 'chronologie_indexee'].includes(edge.extraction_method)
@@ -829,12 +1261,13 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
         node.source_file && node.source_file !== LEGAL_FRAMEWORK_FILE
         && !['document', 'personne'].includes(node.legal_kind)).length,
       reviewRequired: missingParticipants,
-      documentsWithoutPersons: topology.documents
+      documentsWithoutPersons: documentRecords
         .filter((document) => document.codes.length === 0)
         .map((document) => `PIECE_${document.key.slice(0, 12).toUpperCase()}`),
-      unanalyzableDocuments: topology.documents
-        .filter((document) => !document.analyzable)
+      unanalyzableDocuments: documentRecords
+        .filter((document) => document.semanticScope === 'unavailable')
         .map((document) => `PIECE_${document.key.slice(0, 12).toUpperCase()}`),
+      qualityFlags,
     },
   };
 
@@ -845,6 +1278,30 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
     }
   }
   return result;
+}
+
+/**
+ * Matérialise le graphe composite à partir du snapshot Graphify et de la
+ * topologie déterministe. Un snapshot absent produit volontairement un graphe
+ * documentaire seul ; un snapshot fourni par une extraction doit en revanche
+ * respecter le contrat Graphify.
+ */
+function materializeLegalGraph(semanticSnapshot, topology, mappingDocument, {
+  requireSemanticSnapshot = false,
+} = {}) {
+  const allowedSourceFiles = [
+    LEGAL_FRAMEWORK_FILE,
+    ...topologySemanticDocuments(topology).map((document) => document.file),
+  ];
+  return materializeCompositeLegalGraph({
+    semanticSnapshot,
+    topology,
+    mappingDocument,
+    finalizeGraph: finalizeLegalGraph,
+    allowedSourceFiles,
+    forbiddenClearTexts: Object.keys(mappingDocument?.mapping || {}),
+    requireSemanticSnapshot,
+  });
 }
 
 function normalizeConfidenceScore(confidence, value) {
@@ -860,80 +1317,329 @@ function normalizeConfidenceScore(confidence, value) {
     Math.abs(candidate - score) < Math.abs(closest - score) ? candidate : closest, allowed[0]);
 }
 
-function persistLegalGraph(caseRoot, signature, graph) {
-  const files = legalGraphPaths(caseRoot);
-  fs.mkdirSync(files.output, { recursive: true, mode: 0o700 });
-  for (const directory of [files.directory, files.output]) {
-    try { fs.chmodSync(directory, 0o700); } catch { /* ACL Windows */ }
-  }
-  const generatedAt = new Date().toISOString();
-  const graphTemporary = `${files.graph}.${process.pid}.tmp`;
-  const manifestTemporary = `${files.manifest}.${process.pid}.tmp`;
-  fs.writeFileSync(graphTemporary, `${JSON.stringify(graph, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-  fs.writeFileSync(manifestTemporary, `${JSON.stringify({
-    version: 1,
-    engine: 'graphify',
-    source: 'piecemaker-legal',
-    llm: true,
-    legalPromptVersion: LEGAL_PROMPT_VERSION,
-    signature,
-    generatedAt,
-    stats: graph.piecemaker,
-  }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-  fs.renameSync(graphTemporary, files.graph);
-  fs.renameSync(manifestTemporary, files.manifest);
-  return { graph, graphFile: files.graph, manifestFile: files.manifest, generatedAt, cacheHit: false };
+function normalizeSemanticReasons(reasons) {
+  return [...new Set((Array.isArray(reasons) ? reasons : [])
+    .map((reason) => String(reason || '').trim())
+    .filter(Boolean))].sort();
 }
 
-function readCachedLegalGraph(caseRoot, signature) {
+function semanticVersionStaleReasons(manifest) {
+  if (!manifest) return [];
+  const reasons = [];
+  if (manifest.legalPromptVersion !== LEGAL_PROMPT_VERSION) reasons.push('legal_prompt_version_changed');
+  if (manifest.legalIntegrationVersion !== LEGAL_INTEGRATION_VERSION) {
+    reasons.push('legal_integration_version_changed');
+  }
+  if (manifest.legalFinalizerVersion !== LEGAL_FINALIZER_VERSION) {
+    reasons.push('legal_finalizer_version_changed');
+  }
+  return reasons;
+}
+
+function blockedReasonForTopology(topology) {
+  const registryStatus = topology.registry?.status;
+  if (registryStatus && registryStatus !== 'ready') return registryStatus;
+  if (!topology.documents?.length) return 'no_party_documents';
+  return null;
+}
+
+function maxTopologyEditRevision(topology) {
+  return Math.max(0, ...topologyDocumentRecords(topology)
+    .map((document) => Number(document.editRevision) || 0));
+}
+
+function nextStaticRevision(previousManifest, staticSignature, topology) {
+  const previous = Number(previousManifest?.staticRevision) || 0;
+  const edited = maxTopologyEditRevision(topology);
+  if (previousManifest?.staticSignature === staticSignature) return Math.max(previous, edited);
+  if (!previousManifest) return Math.max(1, edited);
+  return Math.max(previous + 1, edited);
+}
+
+function manifestVersions() {
+  return {
+    legalPromptVersion: LEGAL_PROMPT_VERSION,
+    legalIntegrationVersion: LEGAL_INTEGRATION_VERSION,
+    legalFinalizerVersion: LEGAL_FINALIZER_VERSION,
+  };
+}
+
+function statefulGraph(graph, manifest) {
+  return {
+    ...graph,
+    piecemaker: {
+      ...(graph.piecemaker || {}),
+      staticState: manifest.staticState,
+      semanticState: manifest.semanticState,
+      staticRevision: manifest.staticRevision,
+      semanticBaseRevision: manifest.semanticBaseRevision,
+      semanticStaleReasons: manifest.semanticStaleReasons,
+      semanticQuarantined: Boolean(manifest.semanticQuarantined),
+    },
+  };
+}
+
+function persistLegalGraph(caseRoot, signature, graph, semanticSnapshot = null, manifest = {}) {
+  const files = legalGraphPaths(caseRoot);
+  const state = {
+    ...manifestVersions(),
+    staticState: 'current',
+    semanticState: semanticSnapshot ? 'current' : 'missing',
+    staticRevision: 1,
+    semanticBaseRevision: semanticSnapshot ? 1 : null,
+    semanticStaleReasons: [],
+    semanticQuarantined: false,
+    ...manifest,
+  };
+  if (!SEMANTIC_STATES.has(state.semanticState)) {
+    throw new Error(`État sémantique juridique inconnu : ${state.semanticState}.`);
+  }
+  state.semanticStaleReasons = normalizeSemanticReasons(state.semanticStaleReasons);
+  const persistedGraph = statefulGraph(graph, state);
+  return persistCompositeLegalGraph({
+    files,
+    signature,
+    semanticSnapshotSignature: state.semanticBaseSignature || signature,
+    graph: persistedGraph,
+    semanticSnapshot,
+    manifest: state,
+  });
+}
+
+function readPersistedLegalSemanticSnapshot(caseRoot, options = {}) {
+  const files = legalGraphPaths(caseRoot);
+  const manifest = readJson(files.manifest);
+  if (!manifest?.semanticSnapshot) return null;
+  return readStoredLegalSemanticSnapshot(files.semanticGraph, {
+    ...options,
+    signature: options.signature || manifest.semanticSnapshot.signature,
+  });
+}
+
+function readCachedLegalGraph(caseRoot, signature, staticSignature = null) {
   const files = legalGraphPaths(caseRoot);
   const manifest = readJson(files.manifest);
   const graph = readJson(files.graph);
   if (!manifest || !graph || manifest.signature !== signature
-      || manifest.legalPromptVersion !== LEGAL_PROMPT_VERSION) return null;
+      || manifest.semanticBaseSignature !== signature
+      || (staticSignature && manifest.staticSignature !== staticSignature)
+      || manifest.semanticState !== 'current'
+      || manifest.semanticQuarantined
+      || semanticVersionStaleReasons(manifest).length) return null;
   return {
     graph,
     graphFile: files.graph,
     manifestFile: files.manifest,
+    semanticSnapshotFile: manifest.semanticSnapshot && fs.existsSync(files.semanticGraph)
+      ? files.semanticGraph : null,
     generatedAt: manifest.generatedAt,
     cacheHit: true,
+    staticState: manifest.staticState,
+    semanticState: manifest.semanticState,
+    staticRevision: manifest.staticRevision,
+    semanticBaseRevision: manifest.semanticBaseRevision,
+    semanticStaleReasons: manifest.semanticStaleReasons || [],
+    semanticQuarantined: Boolean(manifest.semanticQuarantined),
+  };
+}
+
+function sameReasons(left, right) {
+  return JSON.stringify(normalizeSemanticReasons(left)) === JSON.stringify(normalizeSemanticReasons(right));
+}
+
+function atomicUpdateLegalManifest(caseRoot, patch) {
+  const files = legalGraphPaths(caseRoot);
+  const current = readJson(files.manifest) || {};
+  fs.mkdirSync(files.directory, { recursive: true, mode: 0o700 });
+  const next = {
+    ...current,
+    ...manifestVersions(),
+    ...patch,
+    semanticStaleReasons: normalizeSemanticReasons(
+      Object.hasOwn(patch, 'semanticStaleReasons')
+        ? patch.semanticStaleReasons : current.semanticStaleReasons,
+    ),
+    stateUpdatedAt: new Date().toISOString(),
+  };
+  if (!SEMANTIC_STATES.has(next.semanticState)) {
+    throw new Error(`État sémantique juridique inconnu : ${next.semanticState}.`);
+  }
+  const temporary = `${files.manifest}.${process.pid}.${process.hrtime.bigint()}.tmp`;
+  fs.writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  fs.renameSync(temporary, files.manifest);
+  return next;
+}
+
+/**
+ * Réapplique exclusivement la couche déterministe après une correction admin.
+ * Le snapshot Graphify existant est réutilisé comme entrée immuable ; aucun
+ * processus ni appel LLM n'est déclenché ici. Les changements qui influencent
+ * le corpus invalident explicitement la couche sémantique pour la prochaine
+ * construction ou requête juridique.
+ */
+async function rematerializeDeterministicLegalGraph(caseRoot, {
+  semanticStaleReasons = [],
+  preserveTransientState = true,
+} = {}) {
+  const mappingDocument = readCaseMapping(caseRoot);
+  const chronology = await buildChronology(caseRoot, {
+    deanonymizeLabels: false,
+    includeManualDecisions: true,
+  });
+  const topology = legalTopology(caseRoot, chronology, mappingDocument);
+  const signature = topologySemanticSignature(topology);
+  const boundarySignature = topologySemanticBoundarySignature(topology);
+  const staticSignature = topologyStaticSignature(topology);
+  const files = legalGraphPaths(caseRoot);
+  const previousManifest = readJson(files.manifest);
+  const storedSnapshot = readPersistedLegalSemanticSnapshot(caseRoot);
+  const semanticSnapshot = storedSnapshot?.graph || null;
+  const baseSignature = previousManifest?.semanticBaseSignature
+    || storedSnapshot?.signature || null;
+  const baseBoundarySignature = previousManifest?.semanticBaseBoundarySignature || null;
+  const versionReasons = semanticVersionStaleReasons(previousManifest);
+  const semanticChanged = Boolean(semanticSnapshot && baseSignature !== signature);
+  const boundaryChanged = Boolean(semanticSnapshot && baseBoundarySignature
+    && baseBoundarySignature !== boundarySignature);
+  const previousReasons = ['stale', 'building', 'failed'].includes(previousManifest?.semanticState)
+    ? previousManifest.semanticStaleReasons || [] : [];
+  const explicitReasons = normalizeSemanticReasons(semanticStaleReasons).filter((reason) =>
+    reason !== 'document_entities_changed' || semanticChanged || !baseSignature);
+  const inferredReason = semanticChanged && !explicitReasons.length && !previousReasons.length
+    ? [boundaryChanged ? 'party_or_corpus_boundary_changed' : 'semantic_corpus_changed'] : [];
+  const reasons = normalizeSemanticReasons([
+    ...previousReasons,
+    ...explicitReasons,
+    ...inferredReason,
+    ...versionReasons,
+  ]);
+  const blockedReason = blockedReasonForTopology(topology);
+  let semanticState = blockedReason ? 'blocked'
+    : (semanticSnapshot ? (reasons.length ? 'stale' : 'current') : 'missing');
+  if (!blockedReason && preserveTransientState
+      && ['building', 'failed'].includes(previousManifest?.semanticState)) {
+    semanticState = previousManifest.semanticState;
+  }
+  const versionQuarantine = versionReasons.some((reason) => [
+    'legal_prompt_version_changed',
+    'legal_integration_version_changed',
+    'legal_finalizer_version_changed',
+  ].includes(reason));
+  const semanticQuarantined = Boolean(blockedReason || boundaryChanged || versionQuarantine
+    || (previousManifest?.semanticQuarantined
+      && semanticState !== 'current'));
+  const staticRevision = nextStaticRevision(previousManifest, staticSignature, topology);
+  const semanticBaseRevision = semanticSnapshot
+    ? (previousManifest?.semanticBaseRevision ?? previousManifest?.staticRevision ?? null) : null;
+  const graphSnapshot = semanticQuarantined ? null : semanticSnapshot;
+  const materialized = materializeLegalGraph(graphSnapshot, topology, mappingDocument);
+  const state = {
+    staticState: 'current',
+    semanticState,
+    semanticStaleReasons: blockedReason
+      ? normalizeSemanticReasons([...reasons, blockedReason]) : reasons,
+    semanticQuarantined,
+    staticRevision,
+    appliedEditRevision: maxTopologyEditRevision(topology),
+    semanticBaseRevision,
+    staticSignature,
+    semanticBaseSignature: baseSignature,
+    semanticBoundarySignature: boundarySignature,
+    semanticBaseBoundarySignature: baseBoundarySignature,
+  };
+  const graphExists = fs.existsSync(files.graph);
+  const stateChanged = !previousManifest
+    || previousManifest.staticSignature !== staticSignature
+    || previousManifest.signature !== signature
+    || previousManifest.semanticState !== state.semanticState
+    || previousManifest.semanticQuarantined !== state.semanticQuarantined
+    || previousManifest.staticRevision !== state.staticRevision
+    || previousManifest.semanticBaseRevision !== state.semanticBaseRevision
+    || previousManifest.semanticBoundarySignature !== boundarySignature
+    || !sameReasons(previousManifest.semanticStaleReasons, state.semanticStaleReasons)
+    || semanticVersionStaleReasons(previousManifest).length > 0;
+  if (!stateChanged && graphExists) {
+    return {
+      graph: readJson(files.graph),
+      graphFile: files.graph,
+      manifestFile: files.manifest,
+      semanticSnapshotFile: semanticSnapshot ? files.semanticGraph : null,
+      generatedAt: previousManifest.generatedAt,
+      cacheHit: true,
+      ...state,
+      registry: topology.registry,
+    };
+  }
+  return {
+    ...persistLegalGraph(caseRoot, signature, materialized.graph, semanticSnapshot, state),
+    ...state,
+    registry: topology.registry,
   };
 }
 
 async function buildLegalGraph(caseRoot, options = {}) {
   const mappingDocument = readCaseMapping(caseRoot);
   if (!mappingDocument.exists) {
+    if (fs.existsSync(legalGraphPaths(caseRoot).graph)) {
+      await rematerializeDeterministicLegalGraph(caseRoot);
+    }
     throw new Error('Le dossier doit être anonymisé avant de construire son graphe juridique.');
   }
-  const chronology = await buildChronology(caseRoot, { deanonymize: false });
+  const chronology = await buildChronology(caseRoot, {
+    deanonymizeLabels: false,
+    includeManualDecisions: true,
+  });
   const topology = legalTopology(caseRoot, chronology, mappingDocument);
   // Le registre des parties prime sur les anciens contrôles de topologie
   // (§ 6 et 7.4 du plan) : sans sélection cohérente, aucun graphe recentré
   // n'est construit.
   if (topology.registry.status === 'mapping_missing') {
+    await rematerializeDeterministicLegalGraph(caseRoot);
     throw new Error('Le dossier doit être anonymisé avant de construire son graphe juridique.');
   }
   if (topology.registry.status === 'parties_required') {
+    await rematerializeDeterministicLegalGraph(caseRoot);
     throw new Error('Aucune partie du dossier n’est sélectionnée ; le graphe juridique ne peut pas être recentré.');
   }
   if (topology.registry.status === 'party_selection_invalid') {
+    await rematerializeDeterministicLegalGraph(caseRoot);
     throw new Error(`La sélection des parties du dossier est invalide : ${topology.registry.errors.join(' ; ')}`);
   }
   if (!topology.documents.length) {
+    await rematerializeDeterministicLegalGraph(caseRoot);
     throw new Error('no_party_documents : aucune pièce analysable ne mentionne une partie sélectionnée.');
   }
-  if (!topology.documents.some((document) => document.analyzable)) {
-    throw new Error('Aucune pièce convertie et anonymisée n’est disponible pour l’analyse juridique.');
-  }
   const signature = topologySignature(topology);
+  const staticSignature = topologyStaticSignature(topology);
+  const synchronized = await rematerializeDeterministicLegalGraph(caseRoot);
   if (!options.force && !options.backend && !options.model) {
-    const cached = readCachedLegalGraph(caseRoot, signature);
+    const cached = readCachedLegalGraph(caseRoot, signature, staticSignature);
     if (cached) return { ...cached, registry: topology.registry };
+  }
+  // Une pièce indexée mais pas encore convertible ne doit pas empêcher la
+  // matérialisation de la topologie. Le snapshot absent est explicite et aucun
+  // processus Graphify/LLM n'est lancé dans ce cas.
+  if (!topologySemanticDocuments(topology).length) {
+    return { ...synchronized, registry: topology.registry };
   }
 
   const generationKey = [path.resolve(caseRoot), signature, options.backend || '', options.model || ''].join('\u0000');
   if (generations.has(generationKey)) return generations.get(generationKey);
-  const generation = generateLegalGraph(caseRoot, signature, topology, mappingDocument, options);
+  atomicUpdateLegalManifest(caseRoot, {
+    semanticState: 'building',
+    semanticStaleReasons: synchronized.semanticStaleReasons,
+    semanticQuarantined: synchronized.semanticQuarantined,
+    buildStartedAt: new Date().toISOString(),
+    buildFailedAt: null,
+    buildError: null,
+  });
+  const generation = generateLegalGraph(
+    caseRoot,
+    signature,
+    topology,
+    mappingDocument,
+    { ...options, synchronized },
+  );
   generations.set(generationKey, generation);
   try {
     return await generation;
@@ -976,10 +1682,71 @@ async function generateLegalGraph(caseRoot, signature, topology, mappingDocument
     }
     const rawFile = path.join(inputs.output, 'graphify-out', 'graph.json');
     const raw = readJson(rawFile);
-    const graph = finalizeLegalGraph(raw, topology, mappingDocument);
-    return { ...persistLegalGraph(caseRoot, signature, graph), registry: topology.registry };
+    const materialized = materializeLegalGraph(raw, topology, mappingDocument, {
+      requireSemanticSnapshot: true,
+    });
+    const staticRevision = options.synchronized?.staticRevision
+      || maxTopologyEditRevision(topology) || 1;
+    const boundarySignature = topologySemanticBoundarySignature(topology);
+    return {
+      ...persistLegalGraph(
+        caseRoot,
+        signature,
+        materialized.graph,
+        materialized.semanticSnapshot,
+        {
+          staticState: 'current',
+          semanticState: 'current',
+          staticRevision,
+          appliedEditRevision: maxTopologyEditRevision(topology),
+          semanticBaseRevision: staticRevision,
+          semanticStaleReasons: [],
+          semanticQuarantined: false,
+          staticSignature: topologyStaticSignature(topology),
+          semanticBaseSignature: signature,
+          semanticBoundarySignature: boundarySignature,
+          semanticBaseBoundarySignature: boundarySignature,
+          buildCompletedAt: new Date().toISOString(),
+          buildStartedAt: null,
+          buildFailedAt: null,
+          buildError: null,
+        },
+      ),
+      staticState: 'current',
+      semanticState: 'current',
+      staticRevision,
+      semanticBaseRevision: staticRevision,
+      semanticStaleReasons: [],
+      semanticQuarantined: false,
+      registry: topology.registry,
+    };
+  } catch (error) {
+    const manifest = readJson(legalGraphPaths(caseRoot).manifest) || {};
+    atomicUpdateLegalManifest(caseRoot, {
+      semanticState: 'failed',
+      semanticStaleReasons: normalizeSemanticReasons([
+        ...(manifest.semanticStaleReasons || []),
+        'semantic_build_failed',
+      ]),
+      buildStartedAt: null,
+      buildFailedAt: new Date().toISOString(),
+      buildError: String(error?.message || error).slice(0, 1_000),
+    });
+    throw error;
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
+  }
+}
+
+class SemanticRefreshRequiredError extends Error {
+  constructor(status) {
+    super('Le graphe sémantique juridique doit être actualisé avant cette requête.');
+    this.name = 'SemanticRefreshRequiredError';
+    this.code = 'semantic_refresh_required';
+    this.semanticState = status.semanticState;
+    this.semanticStaleReasons = status.semanticStaleReasons || [];
+    this.semanticQuarantined = Boolean(status.semanticQuarantined);
+    this.status = status;
   }
 }
 
@@ -987,7 +1754,32 @@ async function queryLegalGraph(caseRoot, question, options = {}) {
   const cleanQuestion = String(question || '').trim();
   if (!cleanQuestion) throw new Error('La question juridique est vide.');
   if (cleanQuestion.length > 2_000) throw new Error('La question juridique est trop longue.');
-  const built = await buildLegalGraph(caseRoot, options);
+  const status = await legalGraphStatus(caseRoot);
+  let built;
+  if (status.exists && status.semanticState === 'current' && !status.semanticQuarantined) {
+    const files = legalGraphPaths(caseRoot);
+    built = {
+      graph: readJson(files.graph),
+      graphFile: files.graph,
+      manifestFile: files.manifest,
+      generatedAt: status.generatedAt,
+      cacheHit: true,
+      staticState: status.staticState,
+      semanticState: status.semanticState,
+      staticRevision: status.staticRevision,
+      semanticBaseRevision: status.semanticBaseRevision,
+      semanticStaleReasons: status.semanticStaleReasons,
+      semanticQuarantined: status.semanticQuarantined,
+      registry: status.registry,
+    };
+  } else if (options.refreshSemantic === true || (!status.exists && options.refreshSemantic !== false)) {
+    built = await buildLegalGraph(caseRoot, { ...options, force: true });
+  } else {
+    throw new SemanticRefreshRequiredError(status);
+  }
+  if (built.semanticState !== 'current' || built.semanticQuarantined || !built.graph) {
+    throw new SemanticRefreshRequiredError({ ...status, ...built });
+  }
   const runner = options.runnerQuery || options.runner || runGraphifyProcess;
   const result = await runner(options.command || graphifyCommand(), [
     'query', cleanQuestion,
@@ -1124,31 +1916,58 @@ async function legalGraphStatus(caseRoot) {
   const manifest = readJson(files.manifest);
   const mappingDocument = readCaseMapping(caseRoot);
   if (!manifest || !fs.existsSync(files.graph)) {
+    const chronology = await buildChronology(caseRoot, {
+      deanonymizeLabels: false,
+      includeManualDecisions: true,
+    });
+    const topology = legalTopology(caseRoot, chronology, mappingDocument);
+    const registry = topology.registry;
+    const blockedReason = blockedReasonForTopology(topology);
     return {
       exists: false,
       stale: true,
+      staticState: 'missing',
+      semanticState: blockedReason ? 'blocked' : 'missing',
+      staticRevision: 0,
+      semanticBaseRevision: null,
+      semanticStaleReasons: blockedReason ? [blockedReason] : [],
+      semanticQuarantined: Boolean(blockedReason),
+      ...manifestVersions(),
       graphFile: files.graph,
-      registry: buildLegalPartyRegistry(mappingDocument),
+      registry,
+      registryStatus: registry.status,
     };
   }
-  const chronology = await buildChronology(caseRoot, { deanonymize: false });
-  const topology = legalTopology(caseRoot, chronology, mappingDocument);
+  // Synchronisation strictement déterministe : cette lecture peut intégrer un
+  // nouvel original ou une correction, mais n'appelle jamais Graphify/LLM.
+  const synchronized = await rematerializeDeterministicLegalGraph(caseRoot);
   return {
     exists: true,
-    stale: manifest.signature !== topologySignature(topology),
+    stale: synchronized.semanticState !== 'current' || synchronized.semanticQuarantined,
+    staticState: synchronized.staticState,
+    semanticState: synchronized.semanticState,
+    staticRevision: synchronized.staticRevision,
+    semanticBaseRevision: synchronized.semanticBaseRevision,
+    semanticStaleReasons: synchronized.semanticStaleReasons,
+    semanticQuarantined: synchronized.semanticQuarantined,
+    ...manifestVersions(),
     graphFile: files.graph,
-    generatedAt: manifest.generatedAt,
-    stats: manifest.stats || null,
-    registry: topology.registry,
+    generatedAt: synchronized.generatedAt,
+    stats: synchronized.graph?.piecemaker || null,
+    registry: synchronized.registry,
+    registryStatus: synchronized.registry.status,
   };
 }
 
 module.exports = {
   ASSERTION_STATUSES,
   LEGAL_FRAMEWORK_FILE,
+  LEGAL_FINALIZER_VERSION,
   LEGAL_GRAPH_RELATIVE,
+  LEGAL_INTEGRATION_VERSION,
   LEGAL_PROMPT_VERSION,
   LEGAL_RELATIONS,
+  SemanticRefreshRequiredError,
   buildLegalGraph,
   buildLegalPartyRegistry,
   corpusDocument,
@@ -1159,8 +1978,14 @@ module.exports = {
   legalGraphPaths,
   legalGraphStatus,
   legalTopology,
+  materializeLegalGraph,
   queryLegalGraph,
+  readPersistedLegalSemanticSnapshot,
+  rematerializeDeterministicLegalGraph,
   renderLegalGraphViewer,
   topologySignature,
+  topologySemanticBoundarySignature,
+  topologySemanticSignature,
+  topologyStaticSignature,
   writeLegalInputs,
 };
