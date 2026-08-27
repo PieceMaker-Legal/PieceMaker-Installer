@@ -23,16 +23,16 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
+const { structuredMarkdownCounterpart } = require('./case-folder-structure.cjs');
 
 const PROTECTION_DIR = '.piecemaker';
 const PROTECTION_FILE = 'protection.json';
 
 /**
- * Sous-dossier où le pipeline range les fichiers *produits* (Markdown converti
- * et `mapping_default.json`), pour que la racine du dossier juridique ne garde
- * que les originaux et les documents de travail. La constante vit ici parce que
- * le plugin est distribué seul : les hooks en dépendent et ne peuvent pas
- * requérir `websocket-server/`. `mapping.cjs` et `commits.cjs` l'importent.
+ * Sous-dossier technique historique et emplacement du `mapping_default.json`.
+ * Le Markdown courant vit dans les sous-dossiers de conversion de
+ * Correspondance et Data Room ; ce repli reste nécessaire aux anciens dossiers
+ * et aux espaces de travail OOXML. `mapping.cjs` et `commits.cjs` l'importent.
  */
 const WORKSPACE_SUBDIR = 'Fichiers convertis PieceMaker';
 
@@ -270,16 +270,17 @@ function isResourceFile(absolutePath, caseRoot, state = null) {
 }
 
 /**
- * Le Markdown à lire à la place d'une pièce protégée. Le pipeline écrit le `.md`
- * dans le sous-dossier `WORKSPACE_SUBDIR`, mais d'anciens dossiers l'ont encore à
- * la racine (ou à côté de la pièce). On regarde le sous-dossier d'abord, puis les
- * emplacements historiques, et à défaut on renvoie l'emplacement *attendu* (le
- * sous-dossier) pour que le message de refus reste actionnable.
+ * Le Markdown à lire à la place d'une pièce protégée. Les dossiers structurés
+ * l'écrivent dans la zone de conversion de Correspondance ou Data Room ; les
+ * anciens dossiers utilisent encore `WORKSPACE_SUBDIR`, la racine ou le dossier
+ * de la pièce. À défaut, le chemin attendu rend le refus actionnable.
  */
 function markdownCounterpart(absolutePath, caseRoot) {
   const stem = path.basename(absolutePath, path.extname(absolutePath));
+  const structured = structuredMarkdownCounterpart(absolutePath, caseRoot);
   const workspaceMarkdown = path.join(caseRoot, WORKSPACE_SUBDIR, `${stem}.md`);
   const candidates = [
+    ...(structured ? [structured.path] : []),
     workspaceMarkdown,
     path.join(path.dirname(absolutePath), `${stem}.md`),
     path.join(caseRoot, `${stem}.md`),
@@ -299,7 +300,7 @@ function markdownCounterpart(absolutePath, caseRoot) {
       // dossier illisible : on essaie l'emplacement suivant
     }
   }
-  return { path: workspaceMarkdown, exists: false };
+  return structured || { path: workspaceMarkdown, exists: false };
 }
 
 module.exports = {

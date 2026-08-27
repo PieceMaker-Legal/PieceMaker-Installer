@@ -141,7 +141,7 @@
                 </div>
                 <div id="originalsView" class="inline-detail originals-inline-view" hidden>
                   <div class="inline-detail-toolbar">
-                    <div><strong>Convertir &amp; anonymiser</strong><span>Sélectionnez les pièces à convertir en Markdown ou à analyser.</span></div>
+                    <div><strong>Convertir &amp; anonymiser</strong><span>Le traitement local porte uniquement sur Correspondance et Data Room.</span></div>
                     <span id="originalsViewCount" class="count-badge">0</span>
                   </div>
                   <div class="originals-toolbar">
@@ -421,6 +421,73 @@
             <div class="form-grid">
               <label>Port local<input id="port" name="port" type="number" min="1024" max="65535" required readonly><small>Le port 43098 est actuellement requis par le complément Word.</small></label>
               <label class="wide">Interpréteur Python<input id="pythonPath" name="pythonPath" placeholder="python3 ou chemin absolu"></label>
+            </div>
+          </article>
+
+          <article class="card form-card case-folder-structure-card">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">DOSSIERS JURIDIQUES</p>
+                <h2>Arborescence des nouveaux dossiers</h2>
+              </div>
+            </div>
+            <p class="muted case-folder-structure-intro">Personnalisez le nom de chaque dossier créé automatiquement. Ces changements ne renomment pas les dossiers existants : ils s’appliquent uniquement aux dossiers ajoutés ou créés ensuite.</p>
+            <div class="case-folder-tree" aria-label="Arborescence d’un dossier juridique">
+              <label class="case-folder-field case-folder-root">
+                <span><strong>Administratif et facturation</strong><small>Conventions d’honoraires, mandats, factures, provisions et temps passé.</small></span>
+                <input id="caseFolderAdministrative" name="caseFolderStructure.administrative" data-case-folder-key="administrative" value="00_ADMINISTRATIF_ET_FACTURATION" maxlength="120" pattern="[^/\\]+" title="Le nom ne peut pas contenir de barre oblique." required>
+              </label>
+
+              <div class="case-folder-branch">
+                <label class="case-folder-field case-folder-root">
+                  <span><strong>Correspondance</strong><small>Courriels et courriers classés selon leur destinataire.</small></span>
+                  <input id="caseFolderCorrespondence" name="caseFolderStructure.correspondence" data-case-folder-key="correspondence" value="01_CORRESPONDANCE" maxlength="120" pattern="[^/\\]+" title="Le nom ne peut pas contenir de barre oblique." required>
+                </label>
+                <div class="case-folder-children">
+                  <label class="case-folder-field">
+                    <span><strong>Client</strong><small>Échanges avec le client.</small></span>
+                    <input id="caseFolderCorrespondenceClient" name="caseFolderStructure.correspondenceClient" data-case-folder-key="correspondenceClient" value="01_Client" maxlength="120" pattern="[^/\\]+" title="Le nom ne peut pas contenir de barre oblique." required>
+                  </label>
+                  <label class="case-folder-field">
+                    <span><strong>Avocats adverses</strong><small>Échanges officiels ou confidentiels avec la partie adverse.</small></span>
+                    <input id="caseFolderCorrespondenceOpposingCounsel" name="caseFolderStructure.correspondenceOpposingCounsel" data-case-folder-key="correspondenceOpposingCounsel" value="02_Avocats_adverses" maxlength="120" pattern="[^/\\]+" title="Le nom ne peut pas contenir de barre oblique." required>
+                  </label>
+                  <label class="case-folder-field">
+                    <span><strong>Tiers</strong><small>Huissiers, experts, greffes et autres intervenants.</small></span>
+                    <input id="caseFolderCorrespondenceThirdParties" name="caseFolderStructure.correspondenceThirdParties" data-case-folder-key="correspondenceThirdParties" value="03_Tiers" maxlength="120" pattern="[^/\\]+" title="Le nom ne peut pas contenir de barre oblique." required>
+                  </label>
+                  <label class="case-folder-field markdown-folder-field">
+                    <span><strong>Courriels convertis en Markdown</strong><small>Zone utilisée par la conversion et l’anonymisation GLiNER.</small></span>
+                    <input id="caseFolderCorrespondenceMarkdown" name="caseFolderStructure.correspondenceMarkdown" data-case-folder-key="correspondenceMarkdown" value="00 - Emails convertis Md" maxlength="120" pattern="[^/\\]+" title="Le nom ne peut pas contenir de barre oblique." required>
+                  </label>
+                </div>
+              </div>
+
+              <div class="case-folder-branch">
+                <label class="case-folder-field case-folder-root">
+                  <span><strong>Data room</strong><small>Pièces justificatives originales fournies par le client ou trouvées sur le web.</small></span>
+                  <input id="caseFolderDataRoom" name="caseFolderStructure.dataRoom" data-case-folder-key="dataRoom" value="02_DATA_ROOM" maxlength="120" pattern="[^/\\]+" title="Le nom ne peut pas contenir de barre oblique." required>
+                </label>
+                <div class="case-folder-children">
+                  <label class="case-folder-field markdown-folder-field">
+                    <span><strong>Pièces converties en Markdown</strong><small>Zone utilisée par la conversion et l’anonymisation GLiNER.</small></span>
+                    <input id="caseFolderDataRoomMarkdown" name="caseFolderStructure.dataRoomMarkdown" data-case-folder-key="dataRoomMarkdown" value="00 - Pièces converties Md" maxlength="120" pattern="[^/\\]+" title="Le nom ne peut pas contenir de barre oblique." required>
+                  </label>
+                </div>
+              </div>
+
+              <label class="case-folder-field case-folder-root">
+                <span><strong>Projets</strong><small>Documents de travail en cours : assignations, conclusions ou contrats.</small></span>
+                <input id="caseFolderDrafts" name="caseFolderStructure.drafts" data-case-folder-key="drafts" value="03_PROJETS" maxlength="120" pattern="[^/\\]+" title="Le nom ne peut pas contenir de barre oblique." required>
+              </label>
+              <label class="case-folder-field case-folder-root">
+                <span><strong>Notes et recherches</strong><small>Synthèses, comptes-rendus, stratégies, jurisprudence et doctrine.</small></span>
+                <input id="caseFolderNotesAndResearch" name="caseFolderStructure.notesAndResearch" data-case-folder-key="notesAndResearch" value="04_NOTES_ET_RECHERCHES" maxlength="120" pattern="[^/\\]+" title="Le nom ne peut pas contenir de barre oblique." required>
+              </label>
+              <label class="case-folder-field case-folder-root">
+                <span><strong>Procédure</strong><small>Actes, pièces tamponnées et décisions ; ce dossier peut rester inutilisé en conseil.</small></span>
+                <input id="caseFolderProcedure" name="caseFolderStructure.procedure" data-case-folder-key="procedure" value="05_PROCEDURE" maxlength="120" pattern="[^/\\]+" title="Le nom ne peut pas contenir de barre oblique." required>
+              </label>
             </div>
           </article>
 
@@ -729,6 +796,7 @@
       <div class="plugin-dialog-tabs" role="tablist">
         <button id="pluginTabButtonLegal" class="plugin-dialog-tab active" type="button" role="tab" aria-selected="true" aria-controls="pluginTabLegal" data-plugin-tab="legal">Plugin legal Claude</button>
         <button id="pluginTabButtonOfficial" class="plugin-dialog-tab" type="button" role="tab" aria-selected="false" aria-controls="pluginTabOfficial" data-plugin-tab="official">Marketplace officiel</button>
+        <button id="pluginTabButtonMcp" class="plugin-dialog-tab" type="button" role="tab" aria-selected="false" aria-controls="pluginTabMcp" data-plugin-tab="mcp">MCP & Connecteurs</button>
       </div>
 
       <div id="pluginTabLegal" class="plugin-dialog-panel" role="tabpanel">
@@ -751,6 +819,12 @@
         <div class="actions">
           <button id="applyMarketplaceComponents" class="button primary" type="button">Installer la sélection</button>
         </div>
+      </div>
+
+      <div id="pluginTabMcp" class="plugin-dialog-panel" hidden role="tabpanel">
+        <p class="hint">Serveurs MCP configurés sur ce poste et connecteurs disponibles. Les serveurs MCP relient Claude Code aux outils locaux (Word, Légifrance…) et aux services distants.</p>
+        <p id="mcpTabStatus" class="muted">Chargement…</p>
+        <div id="mcpTabList" class="plugin-component-list mcp-server-list" aria-label="Serveurs MCP et connecteurs">Chargement…</div>
       </div>
 
       <span id="pluginComponentsMessage" class="message"></span>

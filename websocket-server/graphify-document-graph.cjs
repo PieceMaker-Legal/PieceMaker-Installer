@@ -32,9 +32,39 @@ const LLM_ENV_KEYS = [
   'ANTHROPIC_MODEL',
 ];
 
+let _cachedGraphifyPath;
+let _cachedGraphifyPathAt = 0;
+const CONFIG_CACHE_TTL_MS = 30_000;
+
+function configuredGraphifyPath() {
+  const now = Date.now();
+  if (_cachedGraphifyPath !== undefined && now - _cachedGraphifyPathAt < CONFIG_CACHE_TTL_MS) {
+    return _cachedGraphifyPath;
+  }
+  try {
+    const configFile = path.join(os.homedir(), '.piecemaker', 'config.json');
+    const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+    _cachedGraphifyPath = typeof config.graphifyPath === 'string' ? config.graphifyPath : null;
+  } catch {
+    _cachedGraphifyPath = null;
+  }
+  _cachedGraphifyPathAt = now;
+  return _cachedGraphifyPath;
+}
+
 function graphifyCommand() {
   if (process.env.GRAPHIFY_PATH) return process.env.GRAPHIFY_PATH;
-  const local = path.join(os.homedir(), '.local', 'bin', process.platform === 'win32' ? 'graphify.exe' : 'graphify');
+
+  const binName = process.platform === 'win32' ? 'graphify.exe' : 'graphify';
+
+  // Binaire géré par l'étape d'installation 03b-python-graphify (venv dédié).
+  const configured = configuredGraphifyPath();
+  if (configured && fs.existsSync(configured)) return configured;
+  const venvBinDir = process.platform === 'win32' ? 'Scripts' : 'bin';
+  const managed = path.join(os.homedir(), '.piecemaker', 'graphify-venv', venvBinDir, binName);
+  if (fs.existsSync(managed)) return managed;
+
+  const local = path.join(os.homedir(), '.local', 'bin', binName);
   return fs.existsSync(local) ? local : 'graphify';
 }
 
