@@ -1500,6 +1500,8 @@ function buildComponentTree(groups, selected, onSelectionChange) {
         onSelectionChange();
       });
       itemRows.push({ item, checkbox, row });
+      const icon = makeElement('span', 'plugin-item-icon');
+      icon.innerHTML = item.icon || pluginIconSvg(item.name);
       const body = makeElement('span', 'original-body');
       body.append(makeElement('strong', '', item.name), makeElement('span', '', item.description || item.id));
       const badges = makeElement('span', 'original-badges');
@@ -1508,7 +1510,7 @@ function buildComponentTree(groups, selected, onSelectionChange) {
         if (item.badgeTitle) span.title = item.badgeTitle;
         badges.append(span);
       }
-      row.append(checkbox, body, badges);
+      row.append(checkbox, icon, body, badges);
       children.append(row);
     }
 
@@ -1537,6 +1539,31 @@ const MARKETPLACE_BADGES = {
   active: { text: 'Actif', className: 'ok' },
   installed: { text: 'Installé · désactivé', className: 'warn' },
 };
+
+const PLUGIN_ICON_MAP = {
+  legal: '<svg viewBox="0 0 24 24"><path d="M12 3 2 7l10 4 10-4-10-4z"/><path d="M4 10v5c0 3 3.6 5 8 5s8-2 8-5v-5"/></svg>',
+  contract: '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>',
+  search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>',
+  data: '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>',
+  ai: '<svg viewBox="0 0 24 24"><path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/><path d="M6 21v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>',
+  tool: '<svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>',
+  cloud: '<svg viewBox="0 0 24 24"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>',
+  shield: '<svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/><path d="m9 12 2 2 4-4"/></svg>',
+  plug: '<svg viewBox="0 0 24 24"><path d="M12 22v-5"/><path d="M9 8V2M15 8V2"/><path d="M18 8v4a6 6 0 0 1-12 0V8z"/></svg>',
+};
+
+function pluginIconSvg(name) {
+  const lower = (name || '').toLowerCase();
+  if (/juri|legal|droit|loi|code\s?civil|procédure/.test(lower)) return PLUGIN_ICON_MAP.legal;
+  if (/contrat|contract|bail|mandat/.test(lower)) return PLUGIN_ICON_MAP.contract;
+  if (/search|cherch|find|requête|légifrance/.test(lower)) return PLUGIN_ICON_MAP.search;
+  if (/data|base|sql|csv|analytics/.test(lower)) return PLUGIN_ICON_MAP.data;
+  if (/ai|model|llm|gpt|claude|intel/.test(lower)) return PLUGIN_ICON_MAP.ai;
+  if (/secur|protect|guard|shield|auth/.test(lower)) return PLUGIN_ICON_MAP.shield;
+  if (/cloud|remote|api|web|http/.test(lower)) return PLUGIN_ICON_MAP.cloud;
+  if (/tool|util|helper|convert/.test(lower)) return PLUGIN_ICON_MAP.tool;
+  return PLUGIN_ICON_MAP.plug;
+}
 
 // Contrôleur générique d'un onglet marketplace du pop-up. Deux instances (voir
 // plus bas) : « legal » ↔ marketplace anthropics/claude-for-legal (plugins
@@ -1577,6 +1604,7 @@ function createMarketplaceController({ scope, ids, labels }) {
       description: plugin.description || (plugin.installCount ? `${plugin.installCount} installation(s)` : ''),
       disabled: false,
       hint: 'Installer/activer (ou désactiver) ce connecteur',
+      icon: pluginIconSvg(plugin.name),
       badge: plugin.installed ? (plugin.enabled ? MARKETPLACE_BADGES.active : MARKETPLACE_BADGES.installed) : null,
     };
   }
@@ -1729,23 +1757,86 @@ const officialMarketplace = createMarketplaceController({
   },
 });
 
+const MCP_ICONS = {
+  word: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 9l2 6 2-4 2 4 2-6"/></svg>',
+  legifrance: '<svg viewBox="0 0 24 24"><path d="M12 3 2 7l10 4 10-4-10-4z"/><path d="M4 10v5c0 3 3.6 5 8 5s8-2 8-5v-5"/></svg>',
+  server: '<svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="7" rx="2"/><rect x="2" y="14" width="20" height="7" rx="2"/><circle cx="6" cy="6.5" r="1"/><circle cx="6" cy="17.5" r="1"/></svg>',
+};
+
+let mcpTabLoaded = false;
+
+function mcpIconForName(name) {
+  const lower = (name || '').toLowerCase();
+  if (/word|document|edit_doc|taskpane/.test(lower)) return MCP_ICONS.word;
+  if (/légifrance|legifrance|juri|legal|piste/.test(lower)) return MCP_ICONS.legifrance;
+  return MCP_ICONS.server;
+}
+
+async function loadMcpTab() {
+  const container = byId('mcpTabList');
+  const status = byId('mcpTabStatus');
+  container.textContent = 'Chargement…';
+  status.textContent = 'Chargement de la configuration MCP…';
+  try {
+    const data = await api('/api/admin/configuration');
+    const mcp = data.components?.mcp || { items: [] };
+    const items = mcp.items || [];
+    container.textContent = '';
+
+    if (!items.length) {
+      container.append(createHistoryEmpty('Aucun serveur MCP configuré', 'Lancez l'installateur pour configurer les serveurs locaux.'));
+      status.textContent = 'Aucun serveur MCP détecté.';
+      return;
+    }
+
+    for (const item of items) {
+      const card = document.createElement('div');
+      card.className = 'mcp-server-card';
+      const iconContainer = document.createElement('span');
+      const ready = item.installed && item.configured !== false;
+      const warn = item.installed && item.configured === false;
+      iconContainer.className = `mcp-server-icon${!item.installed ? ' error' : warn ? ' warn' : ''}`;
+      iconContainer.innerHTML = mcpIconForName(item.name);
+      const body = document.createElement('span');
+      body.className = 'mcp-server-body';
+      body.append(makeElement('strong', '', item.name), makeElement('span', '', item.detail || ''));
+      const badge = makeElement('span', `asset-badge ${ready ? 'ok' : warn ? 'warn' : ''}`.trim(),
+        ready ? 'Prêt' : warn ? 'À configurer' : 'Absent');
+      card.append(iconContainer, body, badge);
+      container.append(card);
+    }
+
+    const readyCount = items.filter((item) => item.installed).length;
+    status.textContent = `${readyCount}/${items.length} serveur(s) MCP présent(s) sur ce poste.`;
+    mcpTabLoaded = true;
+  } catch (error) {
+    container.textContent = '';
+    status.textContent = error.message;
+  }
+}
+
 function switchPluginTab(tab) {
-  const isOfficial = tab === 'official';
-  byId('pluginTabButtonLegal').classList.toggle('active', !isOfficial);
-  byId('pluginTabButtonLegal').setAttribute('aria-selected', String(!isOfficial));
-  byId('pluginTabButtonOfficial').classList.toggle('active', isOfficial);
-  byId('pluginTabButtonOfficial').setAttribute('aria-selected', String(isOfficial));
-  byId('pluginTabLegal').hidden = isOfficial;
-  byId('pluginTabOfficial').hidden = !isOfficial;
+  for (const key of ['legal', 'official', 'mcp']) {
+    const button = byId(`pluginTabButton${key[0].toUpperCase() + key.slice(1)}`);
+    const panel = byId(`pluginTab${key[0].toUpperCase() + key.slice(1)}`);
+    if (button) {
+      button.classList.toggle('active', key === tab);
+      button.setAttribute('aria-selected', String(key === tab));
+    }
+    if (panel) panel.hidden = key !== tab;
+  }
   setMessage(byId('pluginComponentsMessage'));
-  (isOfficial ? officialMarketplace : legalMarketplace).ensureLoaded();
+  if (tab === 'legal') legalMarketplace.ensureLoaded();
+  else if (tab === 'official') officialMarketplace.ensureLoaded();
+  else if (tab === 'mcp' && !mcpTabLoaded) void loadMcpTab();
 }
 
 function openPluginComponentsDialog(tab = 'legal') {
   const dialog = byId('pluginComponentsDialog');
   legalMarketplace.reset();
   officialMarketplace.reset();
-  byId('pluginDialogStatus').textContent = 'Installez les plugins juridiques Claude ou parcourez le marketplace officiel.';
+  mcpTabLoaded = false;
+  byId('pluginDialogStatus').textContent = 'Installez les plugins juridiques Claude, parcourez le marketplace officiel ou consultez les serveurs MCP.';
   setMessage(byId('pluginComponentsMessage'));
   switchPluginTab(tab);
   dialog.showModal();

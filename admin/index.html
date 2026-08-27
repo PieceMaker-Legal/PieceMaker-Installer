@@ -796,6 +796,7 @@
       <div class="plugin-dialog-tabs" role="tablist">
         <button id="pluginTabButtonLegal" class="plugin-dialog-tab active" type="button" role="tab" aria-selected="true" aria-controls="pluginTabLegal" data-plugin-tab="legal">Plugin legal Claude</button>
         <button id="pluginTabButtonOfficial" class="plugin-dialog-tab" type="button" role="tab" aria-selected="false" aria-controls="pluginTabOfficial" data-plugin-tab="official">Marketplace officiel</button>
+        <button id="pluginTabButtonMcp" class="plugin-dialog-tab" type="button" role="tab" aria-selected="false" aria-controls="pluginTabMcp" data-plugin-tab="mcp">MCP & Connecteurs</button>
       </div>
 
       <div id="pluginTabLegal" class="plugin-dialog-panel" role="tabpanel">
@@ -818,6 +819,12 @@
         <div class="actions">
           <button id="applyMarketplaceComponents" class="button primary" type="button">Installer la sélection</button>
         </div>
+      </div>
+
+      <div id="pluginTabMcp" class="plugin-dialog-panel" hidden role="tabpanel">
+        <p class="hint">Serveurs MCP configurés sur ce poste et connecteurs disponibles. Les serveurs MCP relient Claude Code aux outils locaux (Word, Légifrance…) et aux services distants.</p>
+        <p id="mcpTabStatus" class="muted">Chargement…</p>
+        <div id="mcpTabList" class="plugin-component-list mcp-server-list" aria-label="Serveurs MCP et connecteurs">Chargement…</div>
       </div>
 
       <span id="pluginComponentsMessage" class="message"></span>
