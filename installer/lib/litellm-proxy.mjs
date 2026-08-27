@@ -571,7 +571,16 @@ export async function startLitellmProxy(options = {}) {
   const config = options.config || loadConfig();
   const current = await getLitellmStatus({ ...options, config });
   if (current.running) return { ...current, started: false };
-  if (!current.installed) throw new Error('LiteLLM n’est pas installé. Relancez le composant 16 — Proxy PII LiteLLM.');
+  if (!current.installed) throw new Error(‘LiteLLM n’est pas installé. Relancez le composant 16 — Proxy PII LiteLLM.’);
+
+  // Le processus tourne mais le health check a échoué (timeout réseau,
+  // démarrage en cours…) — on attend au lieu de tuer et relancer.
+  if (current.pid) {
+    if (await waitForProxy(config, current.pid, options.timeoutMs || 20_000)) {
+      return { ...await getLitellmStatus({ ...options, config }), started: false };
+    }
+    throw new Error(`LiteLLM tourne (PID ${current.pid}) mais ne répond pas au health check. Consultez ${litellmPaths({ ...options, config }).log}.`);
+  }
 
   const capture = options.runCapture || runCapture;
   const paths = litellmPaths({ ...options, config });
@@ -579,36 +588,36 @@ export async function startLitellmProxy(options = {}) {
   let expectedPid = null;
   if (IS_MAC && fs.existsSync(paths.launchAgent) && launchd.domain) {
     const result = launchd.loaded
-      ? capture('launchctl', ['kickstart', '-k', `${launchd.domain}/${LITELLM_LAUNCHD_LABEL}`])
-      : capture('launchctl', ['bootstrap', launchd.domain, paths.launchAgent]);
+      ? capture(‘launchctl’, [‘kickstart’, ‘-k’, `${launchd.domain}/${LITELLM_LAUNCHD_LABEL}`])
+      : capture(‘launchctl’, [‘bootstrap’, launchd.domain, paths.launchAgent]);
     if (result.code !== 0 || result.error) {
       throw new Error(`Démarrage LiteLLM impossible : ${result.stderr || result.stdout || result.error?.message}`);
     }
   } else {
     ensureDir(path.dirname(paths.log));
-    fs.appendFileSync(paths.log, `\n[${new Date().toISOString()}] Démarrage de LiteLLM\n`, 'utf8');
-    const logFd = fs.openSync(paths.log, 'a');
+    fs.appendFileSync(paths.log, `\n[${new Date().toISOString()}] Démarrage de LiteLLM\n`, ‘utf8’);
+    const logFd = fs.openSync(paths.log, ‘a’);
     let child;
     try {
       child = spawn(paths.python, [paths.entry], {
         cwd: paths.proxyDir,
         detached: true,
         windowsHide: true,
-        stdio: ['ignore', logFd, logFd],
+        stdio: [‘ignore’, logFd, logFd],
         env: directEnvironment(config, paths),
       });
     } finally {
       fs.closeSync(logFd);
     }
     await new Promise((resolve, reject) => {
-      child.once('spawn', resolve);
-      child.once('error', reject);
+      child.once(‘spawn’, resolve);
+      child.once(‘error’, reject);
     }).catch((error) => {
       throw new Error(`Lancement du processus LiteLLM impossible : ${error.message}`);
     });
     child.unref();
     expectedPid = child.pid;
-    fs.writeFileSync(paths.pid, `${child.pid}\n`, 'utf8');
+    fs.writeFileSync(paths.pid, `${child.pid}\n`, ‘utf8’);
   }
 
   if (!await waitForProxy(config, expectedPid, options.timeoutMs || 20_000)) {
