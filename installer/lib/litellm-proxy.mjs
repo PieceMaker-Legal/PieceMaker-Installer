@@ -571,7 +571,7 @@ export async function startLitellmProxy(options = {}) {
   const config = options.config || loadConfig();
   const current = await getLitellmStatus({ ...options, config });
   if (current.running) return { ...current, started: false };
-  if (!current.installed) throw new Error(‘LiteLLM n’est pas installé. Relancez le composant 16 — Proxy PII LiteLLM.’);
+  if (!current.installed) throw new Error("LiteLLM n’est pas installé. Relancez le composant 16 — Proxy PII LiteLLM.");
 
   // Le processus tourne mais le health check a échoué (timeout réseau,
   // démarrage en cours…) — on attend au lieu de tuer et relancer.
@@ -645,7 +645,7 @@ export async function stopLitellmProxy(options = {}) {
   const deadline = Date.now() + (options.timeoutMs || 8_000);
   while (Date.now() < deadline && await probeLitellm(config, 400)) await delay(200);
   const running = await probeLitellm(config, 400);
-  if (running) throw new Error('LiteLLM répond toujours après la demande d’arrêt.');
+  if (running) throw new Error("LiteLLM répond toujours après la demande d’arrêt.");
   try { fs.unlinkSync(paths.pid); } catch { /* absent */ }
   return { ...await getLitellmStatus({ ...options, config }), stopped: true, alreadyStopped };
 }
