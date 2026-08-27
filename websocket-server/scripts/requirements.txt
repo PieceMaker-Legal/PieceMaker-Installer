@@ -9,12 +9,11 @@ markitdown[all]>=0.1.4  # Markitdown with all optional dependencies
 pypdf>=6.6.2  # PDF text layer inspection (actively maintained fork of PyPDF2)
 
 # GLiNER2 entity extraction
-gliner2>=1.2.0
+gliner2>=2.0.0
 huggingface-hub>=0.20.0  # Required for model downloading with progress
 
-# Presidio + GLiNER integration (built-in GLiNERRecognizer in presidio-analyzer)
+# Presidio + GLiNER integration
 presidio-analyzer>=2.2.0
-gliner>=0.2.0
 spacy>=3.7.0
 
 # Accélération GPU de l'encodeur (macOS) — optionnelle : le runtime retombe sur

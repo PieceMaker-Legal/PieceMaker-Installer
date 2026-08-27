@@ -92,10 +92,10 @@ export async function install(ctx) {
     spin.succeed('pip à jour');
   }
 
-  // 3. Install requirements.txt (markitdown, pypdf, gliner2, presidio-analyzer, spacy...).
+  // 3. Install/upgrade requirements.txt (markitdown, pypdf, gliner2, presidio-analyzer, spacy...).
   {
     const spin = spinner('Installation des dépendances Python (requirements.txt)...');
-    const code = await run(vp.python, ['-m', 'pip', 'install', '-r', REQUIREMENTS], {
+    const code = await run(vp.python, ['-m', 'pip', 'install', '--upgrade', '-r', REQUIREMENTS], {
       onLine: (line) => spin.update(truncate(line)),
     });
     if (code !== 0) {
