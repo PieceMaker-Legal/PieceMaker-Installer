@@ -191,8 +191,12 @@ function identityAttemptForNode(node, boundary) {
     || isIdentityCategory(rawFileType);
   // Un concept utile doit porter un code tiers dans `context_entity_codes`,
   // jamais l'enfouir dans son libellé. Toute décoration d'un code identitaire
-  // est donc rejetée, même sans mot-indice ("témoin", "dirigeant", etc.).
-  const decoratedIdentity = mentionedCodes.length > 0;
+  // tiers est donc rejetée, même sans mot-indice ("témoin", "dirigeant", etc.).
+  // Un concept juridique peut légitimement nommer une partie autorisée
+  // (p. ex. « obligation de SAS_1 »). Seule la décoration d'une identité
+  // tierce constitue ici une tentative de créer une identité hors registre.
+  const decoratedCodes = mentionedCodes.filter((code) => !boundary.partyCodes.has(code));
+  const decoratedIdentity = decoratedCodes.length > 0;
   const reasons = [];
   if (exactCode) reasons.push('code_identite_exact');
   if (idCode) reasons.push('code_identite_comme_identifiant');
@@ -201,8 +205,8 @@ function identityAttemptForNode(node, boundary) {
   if (forbiddenFields.length) reasons.push('metadonnees_partie_forgees');
   if (!reasons.length) return null;
   return {
-    code: exactCode || idCode || mentionedCodes[0] || null,
-    codes: mentionedCodes,
+    code: exactCode || idCode || decoratedCodes[0] || null,
+    codes: decoratedCodes,
     forbiddenFields,
     reasons,
   };

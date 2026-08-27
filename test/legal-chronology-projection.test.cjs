@@ -107,6 +107,7 @@ function compositeGraph() {
         file_type: 'concept',
         legal_kind: 'demande',
         label: 'Demande de PERSONNE_PHYSIQUE_01',
+        citation: 'Demande formée par PERSONNE_PHYSIQUE_01',
         source_file: `${A}.md`,
       },
     ],
@@ -119,7 +120,15 @@ function compositeGraph() {
     hyperedges: [],
     input_tokens: 100,
     output_tokens: 20,
-    piecemaker: { semanticLegalNodes: 1 },
+    piecemaker: {
+      semanticLegalNodes: 1,
+      qualityFlags: [{
+        type: 'NON_PARTY_IDENTITY_ATTEMPT',
+        code: 'SAS_1',
+        reasons: ['type_identitaire'],
+      }],
+      selectedPartiesWithoutMention: ['SAS_1'],
+    },
   };
 }
 
@@ -255,7 +264,10 @@ test('la ré-identification touche seulement la vue cabinet en mémoire', () => 
   assert.equal(assignation.metadata.juridiction.effective, 'Tribunal saisi par Alice Martin');
   assert.equal(chronology.graph.nodes.find((node) => node.id === 'partie_alice').label, 'Alice Martin');
   assert.equal(chronology.graph.nodes.find((node) => node.id === 'demande').label, 'Demande de Alice Martin');
+  assert.equal(chronology.graph.nodes.find((node) => node.id === 'demande').citation, 'Demande formée par Alice Martin');
   assert.equal(chronology.graph.edges[0].context, 'Alice Martin saisit le tribunal');
+  assert.equal(chronology.graph.piecemaker.qualityFlags[0].code, 'BETA SAS');
+  assert.deepEqual(chronology.graph.piecemaker.selectedPartiesWithoutMention, ['BETA SAS']);
   assert.equal(graph.nodes.find((node) => node.id === 'partie_alice').label, 'PERSONNE_PHYSIQUE_01');
 });
 

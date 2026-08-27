@@ -17,7 +17,8 @@ const HUMAN_GRAPH_FIELDS = new Set([
   'label', 'title', 'name', 'description', 'summary', 'context', 'rationale',
   'evidence', 'quote', 'source_location', 'nature', 'juridiction', 'jurisdiction',
   'fields', 'custom_fields', 'metadata', 'quality_flags', 'qualityFlags',
-  'review_reasons', 'reviewReasons',
+  'review_reasons', 'reviewReasons', 'citation', 'context_entity_codes',
+  'contradictions',
 ]);
 
 function hasOwn(value, key) {
@@ -180,6 +181,11 @@ function graphForCabinet(graph, reverseMapping, deanonymize) {
       for (const key of HUMAN_GRAPH_FIELDS) {
         if (hasOwn(record, key)) record[key] = humanValue(record[key], reverseMapping);
       }
+    }
+  }
+  for (const key of ['qualityFlags', 'selectedPartiesWithoutMention']) {
+    if (hasOwn(copy.piecemaker, key)) {
+      copy.piecemaker[key] = humanValue(copy.piecemaker[key], reverseMapping);
     }
   }
   return copy;

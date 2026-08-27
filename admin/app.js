@@ -15,6 +15,7 @@ import {
 } from './mapping-model.mjs';
 import {
   chronologyDocumentFlags,
+  chronologyGraphFlags,
   chronologyStateModel,
   detectedDocumentEntityCodes,
   effectiveDocumentEntityCodes,
@@ -4045,12 +4046,20 @@ function renderChronologyGraph(data) {
   const flaggedDocuments = (data.documents || [])
     .map((document) => ({ document, flags: chronologyDocumentFlags(document) }))
     .filter((entry) => entry.flags.length);
-  if (flaggedDocuments.length) {
+  const graphFlags = chronologyGraphFlags(data);
+  if (graphFlags.length || flaggedDocuments.length) {
     const quality = document.createElement('div');
     quality.className = 'chronology-graph-quality';
     const title = document.createElement('strong');
-    title.textContent = `Points à vérifier dans le graphe (${flaggedDocuments.length})`;
+    const flagCount = graphFlags.length
+      + flaggedDocuments.reduce((total, entry) => total + entry.flags.length, 0);
+    title.textContent = `Points à vérifier dans le graphe (${flagCount})`;
     const list = document.createElement('ul');
+    for (const flag of graphFlags) {
+      const item = document.createElement('li');
+      item.textContent = `Graphe — ${flag.label}${flag.detail ? ` · ${flag.detail}` : ''}`;
+      list.append(item);
+    }
     for (const { document: flaggedDocument, flags } of flaggedDocuments) {
       const item = document.createElement('li');
       item.textContent = `${flaggedDocument.name} — ${flags.map((flag) => flag.label).join(' · ')}`;

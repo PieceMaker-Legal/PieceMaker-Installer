@@ -50,12 +50,12 @@ const {
 const LEGAL_GRAPH_RELATIVE = '.piecemaker/graphify/legal';
 const LEGAL_PROMPT_FILE = path.join(__dirname, 'legal-graph-prompt.txt');
 const LEGAL_SITECUSTOMIZE_FILE = path.join(__dirname, 'scripts', 'graphify-legal-sitecustomize.py');
-const LEGAL_PROMPT_VERSION = 2;
+const LEGAL_PROMPT_VERSION = 3;
 // Ces versions évoluent indépendamment : le prompt décrit le contrat remis au
 // LLM, l'intégration décrit la couture Graphify↔PieceMaker et le finalizer
 // constitue la frontière de confiance juridique déterministe.
-const LEGAL_INTEGRATION_VERSION = 2;
-const LEGAL_FINALIZER_VERSION = 2;
+const LEGAL_INTEGRATION_VERSION = 3;
+const LEGAL_FINALIZER_VERSION = 3;
 const LEGAL_GRAPH_TIMEOUT_MS = 30 * 60 * 1000;
 const LEGAL_QUERY_TIMEOUT_MS = 2 * 60 * 1000;
 const LEGAL_FRAMEWORK_FILE = 'cadre_juridique_francais.md';
@@ -431,6 +431,7 @@ function corpusDocument(document, parties) {
 - document_id: PIECE_${document.key.slice(0, 12).toUpperCase()}
 - date_indexee: ${document.dateIso || 'inconnue'}
 - nature_indexee: ${document.nature || 'inconnue'}
+- juridiction_indexee: ${document.juridiction || 'inconnue'}
 - parties_explicites: ${explicit}
 - contenu_anonymise_disponible: ${document.analyzable ? 'oui' : 'non'}
 
@@ -1365,15 +1366,37 @@ function manifestVersions() {
 }
 
 function statefulGraph(graph, manifest) {
+  const semanticStaleReasons = normalizeSemanticReasons(manifest.semanticStaleReasons);
+  const semanticLayerStale = manifest.semanticBaseRevision != null
+    && (manifest.semanticState !== 'current' || Boolean(manifest.semanticQuarantined));
+  const nodes = (graph.nodes || []).map((node) => {
+    const qualityField = Object.prototype.hasOwnProperty.call(node, 'quality_flags')
+      ? 'quality_flags'
+      : (Object.prototype.hasOwnProperty.call(node, 'qualityFlags') ? 'qualityFlags' : null);
+    if (!qualityField) return node;
+    const qualityFlags = (Array.isArray(node[qualityField]) ? node[qualityField] : [])
+      .filter((flag) => (typeof flag === 'string' ? flag : flag?.type)
+        !== 'SEMANTIC_LAYER_STALE_AFTER_EDIT');
+    const hasManualOverride = qualityFlags.some((flag) =>
+      (typeof flag === 'string' ? flag : flag?.type) === 'MANUAL_OVERRIDE_DIFFERS_FROM_DETECTION');
+    if (semanticLayerStale && hasManualOverride) {
+      qualityFlags.push({
+        type: 'SEMANTIC_LAYER_STALE_AFTER_EDIT',
+        semanticStaleReasons,
+      });
+    }
+    return { ...node, [qualityField]: qualityFlags };
+  });
   return {
     ...graph,
+    nodes,
     piecemaker: {
       ...(graph.piecemaker || {}),
       staticState: manifest.staticState,
       semanticState: manifest.semanticState,
       staticRevision: manifest.staticRevision,
       semanticBaseRevision: manifest.semanticBaseRevision,
-      semanticStaleReasons: manifest.semanticStaleReasons,
+      semanticStaleReasons,
       semanticQuarantined: Boolean(manifest.semanticQuarantined),
     },
   };

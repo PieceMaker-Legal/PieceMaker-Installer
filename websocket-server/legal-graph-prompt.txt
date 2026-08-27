@@ -90,7 +90,10 @@ Utilise des arêtes orientées parmi :
 
 MODÉLISATION OBLIGATOIRE
 
-1. Crée un nœud document pour chaque fichier analysé.
+1. Crée un nœud document pour chaque fichier analysé. Sur ce nœud seulement,
+   recopie strictement `date_indexee`, `nature_indexee` et
+   `juridiction_indexee` dans `date_iso`, `nature` et `juridiction`. N'infère
+   jamais une autre valeur depuis le corps de la pièce.
 2. Relie le document uniquement aux codes de `parties_explicites` réellement
    mentionnés. Un tiers contextuel n'est jamais la cible de ce lien.
 3. Ne représente pas une obligation importante par une seule arête A→B.
@@ -99,9 +102,11 @@ MODÉLISATION OBLIGATOIRE
 4. Crée des nœuds distincts pour le contrat, l'inexécution, l'assignation, les
    demandes, les arguments de défense, les normes invoquées et la décision.
 5. Toute relation juridique doit pouvoir remonter à au moins un document et à
-   au moins une partie autorisée du dossier. Si aucune partie autorisée ne peut
-   être établie, conserve le concept avec assertion_status="A_VERIFIER" et les
-   éventuels `context_entity_codes`, sans inventer d'identité ni d'arête.
+   au moins une partie autorisée du dossier. Ne crée ni ne conserve de fragment
+   juridique isolé lorsqu'aucun rattachement à une partie autorisée ne peut être
+   établi. Une information relative à un tiers contextuel ne peut être portée
+   que par un concept également relié, avec sa pièce source, à une partie
+   autorisée ; `context_entity_codes` ne remplace jamais ce rattachement.
 6. Un moyen de nullité est une prétention : il ne rend pas le contrat nul tant
    qu'une décision ou un accord des parties ne le constate pas.
 
@@ -147,4 +152,4 @@ d'identifiant aléatoire ou dépendant du numéro de lot.
 
 SCHÉMA JSON EXACT
 
-{"nodes":[{"id":"piece_contrat","label":"Contrat du 3 janvier 2024","file_type":"document|concept|rationale|code|paper|image","legal_kind":"document|personne|contrat|acte_juridique|obligation|prestation|execution|inexecution|dommage|demande|sanction|procedure|pretention|argument|contestation|question_juridique|norme|decision|fait|preuve","source_file":"chemin/relatif.md","source_location":null,"assertion_status":"CONSTATE_DANS_PIECE|ETABLI_PAR_ACTE|ALLEGUE|CONTESTE|RECONNU|JUGE|INFERRE|A_VERIFIER","authority_level":null,"mandatory_character":null,"citation":null,"validity_status":null,"rationale":null,"context_entity_codes":[]}],"edges":[{"source":"node_id","target":"node_id","relation":"relation_autorisee","confidence":"EXTRACTED|INFERRED|AMBIGUOUS","confidence_score":1.0,"assertion_status":"CONSTATE_DANS_PIECE|ETABLI_PAR_ACTE|ALLEGUE|CONTESTE|RECONNU|JUGE|INFERRE|A_VERIFIER","source_file":"chemin/relatif.md","source_location":null,"weight":1.0}],"hyperedges":[{"id":"question_juridique_id","label":"Question juridique","nodes":["node_1","node_2","node_3"],"relation":"forme_question_juridique","confidence":"EXTRACTED|INFERRED","confidence_score":0.75,"source_file":"chemin/relatif.md"}],"input_tokens":0,"output_tokens":0}
+{"nodes":[{"id":"piece_contrat","label":"Contrat du 3 janvier 2024","file_type":"document|concept|rationale|code|paper|image","legal_kind":"document|personne|contrat|acte_juridique|obligation|prestation|execution|inexecution|dommage|demande|sanction|procedure|pretention|argument|contestation|question_juridique|norme|decision|fait|preuve","source_file":"chemin/relatif.md","source_location":null,"date_iso":null,"nature":null,"juridiction":null,"assertion_status":"CONSTATE_DANS_PIECE|ETABLI_PAR_ACTE|ALLEGUE|CONTESTE|RECONNU|JUGE|INFERRE|A_VERIFIER","authority_level":null,"mandatory_character":null,"citation":null,"validity_status":null,"rationale":null,"context_entity_codes":[]}],"edges":[{"source":"node_id","target":"node_id","relation":"relation_autorisee","confidence":"EXTRACTED|INFERRED|AMBIGUOUS","confidence_score":1.0,"assertion_status":"CONSTATE_DANS_PIECE|ETABLI_PAR_ACTE|ALLEGUE|CONTESTE|RECONNU|JUGE|INFERRE|A_VERIFIER","source_file":"chemin/relatif.md","source_location":null,"weight":1.0}],"hyperedges":[{"id":"question_juridique_id","label":"Question juridique","nodes":["node_1","node_2","node_3"],"relation":"forme_question_juridique","confidence":"EXTRACTED|INFERRED","confidence_score":0.75,"source_file":"chemin/relatif.md"}],"input_tokens":0,"output_tokens":0}

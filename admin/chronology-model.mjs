@@ -29,6 +29,7 @@ const FLAG_LABELS = {
   MANUAL_OVERRIDE_DIFFERS_FROM_DETECTION: ['Correction manuelle différente de la détection', 'warning'],
   SEMANTIC_LAYER_STALE_AFTER_EDIT: ['Analyse juridique antérieure à la correction', 'warning'],
   LLM_CONTRADICTS_MANUAL_FACT: ['L’analyse contredit une valeur validée par le cabinet', 'error'],
+  NON_PARTY_IDENTITY_ATTEMPT: ['Tentative d’identité tierce rejetée', 'warning'],
 };
 
 const REVIEW_LABELS = {
@@ -88,24 +89,49 @@ function flagValue(value) {
   return serialized.length > 140 ? `${serialized.slice(0, 137)}…` : serialized;
 }
 
-/** Flags de qualité, contradictions et motifs de revue d'une pièce. */
-export function chronologyDocumentFlags(document = {}) {
+function qualityFlagModels(rawFlags = []) {
   const flags = [];
-  const rawFlags = [
-    ...(document.qualityFlags || document.quality_flags || []),
-    ...(document.contradictions || document.contradictionFlags || document.contradiction_flags || []),
-  ];
   for (const raw of rawFlags) {
     const flag = typeof raw === 'string' ? { type: raw } : (raw || {});
     const type = String(flag.type || flag.code || 'QUALITY_REVIEW_REQUIRED');
     const [label, severity] = FLAG_LABELS[type]
       || [type.replaceAll('_', ' '), type.includes('CONTRADICT') ? 'error' : 'warning'];
     const field = flag.field ? ` · ${flag.field}` : '';
-    const comparison = Object.hasOwn(flag, 'detectedValue') || Object.hasOwn(flag, 'effectiveValue')
-      ? `Détecté : ${flagValue(flag.detectedValue)} · Retenu : ${flagValue(flag.effectiveValue)}`
-      : String(flag.detail || flag.message || '');
+    let comparison = String(flag.detail || flag.message || '');
+    if (Object.hasOwn(flag, 'detectedValue') || Object.hasOwn(flag, 'effectiveValue')) {
+      comparison = `Détecté : ${flagValue(flag.detectedValue)} · Retenu : ${flagValue(flag.effectiveValue)}`;
+    } else if (Object.hasOwn(flag, 'semanticValue') || Object.hasOwn(flag, 'manualValue')) {
+      comparison = `Analyse : ${flagValue(flag.semanticValue)} · Retenu par le cabinet : ${flagValue(flag.manualValue)}`;
+    } else if (!comparison) {
+      comparison = [
+        flag.code ? `Entité : ${flagValue(flag.code)}` : '',
+        flag.source_file ? `Source : ${flagValue(flag.source_file)}` : '',
+        Array.isArray(flag.reasons) && flag.reasons.length
+          ? `Motifs : ${flag.reasons.map(readableReason).join(', ')}` : '',
+      ].filter(Boolean).join(' · ');
+    }
     flags.push({ type, severity, label: `${label}${field}`, detail: comparison });
   }
+  return flags;
+}
+
+/** Flags de qualité globaux portés par le graphe matérialisé. */
+export function chronologyGraphFlags(data = {}) {
+  const graph = data.graph && typeof data.graph === 'object' ? data.graph : data;
+  const rawFlags = graph?.piecemaker?.qualityFlags
+    || graph?.piecemaker?.quality_flags
+    || graph?.qualityFlags
+    || graph?.quality_flags
+    || [];
+  return qualityFlagModels(rawFlags);
+}
+
+/** Flags de qualité, contradictions et motifs de revue d'une pièce. */
+export function chronologyDocumentFlags(document = {}) {
+  const flags = qualityFlagModels([
+    ...(document.qualityFlags || document.quality_flags || []),
+    ...(document.contradictions || document.contradictionFlags || document.contradiction_flags || []),
+  ]);
   for (const reason of document.reviewReasons || document.review_reasons || []) {
     const type = `REVIEW_${String(reason).toUpperCase()}`;
     flags.push({

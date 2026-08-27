@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   chronologyDocumentFlags,
+  chronologyGraphFlags,
   chronologyStateModel,
   entityDecisionsForSelection,
   sameEntityDecisions,
@@ -47,7 +48,12 @@ test('les corrections, contradictions et revues deviennent des flags lisibles', 
       detectedValue: '2024-01-01',
       effectiveValue: '2024-01-02',
     }],
-    contradictions: [{ type: 'LLM_CONTRADICTS_MANUAL_FACT', field: 'nature' }],
+    contradictions: [{
+      type: 'LLM_CONTRADICTS_MANUAL_FACT',
+      field: 'nature',
+      semanticValue: 'assignation',
+      manualValue: 'requête',
+    }],
     reviewReasons: ['piece_non_analysee'],
   });
 
@@ -57,6 +63,25 @@ test('les corrections, contradictions et revues deviennent des flags lisibles', 
     { type: 'REVIEW_PIECE_NON_ANALYSEE', severity: 'info' },
   ]);
   assert.match(flags[0].detail, /2024-01-01.*2024-01-02/);
+  assert.match(flags[1].detail, /assignation.*requête/);
+});
+
+test('les alertes globales de frontière des parties sont lisibles dans la vue graphe', () => {
+  const flags = chronologyGraphFlags({
+    graph: {
+      piecemaker: {
+        qualityFlags: [{
+          type: 'NON_PARTY_IDENTITY_ATTEMPT',
+          code: 'PERSONNE_PHYSIQUE_09',
+          source_file: 'piece.md',
+          reasons: ['type_identitaire'],
+        }],
+      },
+    },
+  });
+  assert.equal(flags.length, 1);
+  assert.equal(flags[0].label, 'Tentative d’identité tierce rejetée');
+  assert.match(flags[0].detail, /PERSONNE_PHYSIQUE_09.*piece\.md.*type identitaire/);
 });
 
 test('les ajouts et exclusions restent des décisions propres à la pièce', () => {

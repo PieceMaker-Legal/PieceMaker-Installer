@@ -182,6 +182,9 @@ test('la rematérialisation réutilise le snapshot et met date, précédence et 
   assert.equal(node.juridiction, 'Tribunal judiciaire de Paris');
   assert.equal(node.edit_revision, 4);
   assert.ok(node.quality_flags.some((flag) => flag.field === 'dateIso'));
+  assert.ok(node.quality_flags.some((flag) =>
+    flag.type === 'SEMANTIC_LAYER_STALE_AFTER_EDIT'
+    && flag.semanticStaleReasons.includes('date_changed')));
   assert.ok(graph.edges.some((edge) =>
     edge.relation === 'precede'
     && edge.source === `piece_${stateKey(secondRelativePath)}`
@@ -190,6 +193,44 @@ test('la rematérialisation réutilise le snapshot et met date, précédence et 
   assert.equal(manifest.staticState, 'current');
   assert.equal(manifest.semanticState, 'stale');
   assert.ok(manifest.semanticSnapshot);
+});
+
+test('une analyse fraîche qui contredit la valeur cabinet est signalée sans écraser la couche statique', async (t) => {
+  const data = fixture();
+  t.after(() => fs.rmSync(data.caseRoot, { recursive: true, force: true }));
+  applyDocumentIndexCorrection(data.caseRoot, data.relativePath, {
+    dateIso: '2024-03-04',
+    nature: 'mise en demeure',
+  });
+
+  await buildLegalGraph(data.caseRoot, {
+    command: 'graphify-test',
+    runner: async (_command, args, options) => {
+      attestPrompt(options);
+      const corpus = args[1];
+      const sourceFile = fs.readdirSync(corpus).find((file) => /^[a-f0-9]{64}\.md$/.test(file));
+      const output = args[args.indexOf('--out') + 1];
+      writeJson(path.join(output, 'graphify-out', 'graph.json'), {
+        nodes: [{
+          id: 'document_brut',
+          label: 'Document',
+          file_type: 'document',
+          source_file: sourceFile,
+          date_iso: '2024-01-02',
+          nature: 'assignation',
+        }],
+        edges: [],
+        hyperedges: [],
+      });
+    },
+  });
+
+  const graph = JSON.parse(fs.readFileSync(legalGraphPaths(data.caseRoot).graph, 'utf8'));
+  const node = graph.nodes.find((entry) => entry.document_key === stateKey(data.relativePath));
+  assert.equal(node.date_iso, '2024-03-04');
+  assert.equal(node.nature, 'mise en demeure');
+  assert.deepEqual(node.contradictions.map((flag) => flag.field).sort(), ['dateIso', 'nature']);
+  assert.ok(node.contradictions.every((flag) => flag.type === 'LLM_CONTRADICTS_MANUAL_FACT'));
 });
 
 test('la couture admin persiste, rematérialise puis écrit un historique ciblé', async () => {

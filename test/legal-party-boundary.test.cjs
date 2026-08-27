@@ -10,6 +10,7 @@ const {
   finalizeLegalGraph,
 } = require('../websocket-server/legal-graph.cjs');
 const {
+  buildLegalIdentityBoundary,
   canonicalPartyId,
 } = require('../websocket-server/legal-identity-boundary.cjs');
 
@@ -29,6 +30,7 @@ function mappingFixture() {
       'Autre pièce': 'OTHER_DOC_X',
       'Code physique opaque': 'P2',
       'Code société opaque': 'S2',
+      'Adresse de notification': 'ADRESSE_X',
     },
     reverse_mapping: {
       P1: ['Partie physique'],
@@ -41,10 +43,11 @@ function mappingFixture() {
       OTHER_DOC_X: ['Autre pièce'],
       P2: ['Code physique opaque'],
       S2: ['Code société opaque'],
+      ADRESSE_X: ['Adresse de notification'],
     },
     extracted_data: {
-      personnes_physiques: { P1: {}, PHYS_X: {} },
-      societes: { S1: {}, FRCO_X: {}, FOREIGN_X: {} },
+      personnes_physiques: { P1: {}, PHYS_X: {}, P2: {} },
+      societes: { S1: {}, FRCO_X: {}, FOREIGN_X: {}, S2: {} },
     },
     entity_metadata: {
       DIR_X: { entity_type: 'dirigeant' },
@@ -218,15 +221,22 @@ function adversarialRawGraph() {
 
 test('le prompt pose parties_explicites comme frontière autoritative sans ancien ordre contradictoire', () => {
   const prompt = fs.readFileSync(path.join(__dirname, '..', 'websocket-server', 'legal-graph-prompt.txt'), 'utf8');
-  assert.equal(LEGAL_PROMPT_VERSION, 2);
-  assert.equal(LEGAL_INTEGRATION_VERSION, 2);
-  assert.equal(LEGAL_FINALIZER_VERSION, 2);
+  assert.equal(LEGAL_PROMPT_VERSION, 3);
+  assert.equal(LEGAL_INTEGRATION_VERSION, 3);
+  assert.equal(LEGAL_FINALIZER_VERSION, 3);
   assert.match(prompt, /PÉRIMÈTRE AUTORITATIF DES PARTIES/);
   assert.match(prompt, /Seuls les\s+codes EXACTEMENT énumérés/);
   assert.match(prompt, /tiers\s+contextuel/);
   assert.match(prompt, /Ne produis jamais les propriétés `entity_type`, `side`, `procedural_role` ou\s+`is_key_party`/);
   assert.match(prompt, /Relie le document uniquement aux codes de `parties_explicites` réellement/);
   assert.doesNotMatch(prompt, /Relie le document à chaque personne explicitement mentionnée/);
+  assert.doesNotMatch(prompt, /conserve le concept avec assertion_status="A_VERIFIER"/);
+});
+
+test('un code de mapping non identitaire ne franchit pas la frontière des parties', () => {
+  const boundary = buildLegalIdentityBoundary(mappingFixture(), topologyFixture());
+  assert.equal(boundary.mappedCodes.has('ADRESSE_X'), true);
+  assert.equal(boundary.identityCodes.has('ADRESSE_X'), false);
 });
 
 test('le finalizer canonise les seules parties et rejette toutes les identités tierces adversariales', () => {
