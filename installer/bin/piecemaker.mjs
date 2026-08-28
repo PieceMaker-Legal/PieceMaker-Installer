@@ -12,6 +12,7 @@
  *   piecemaker start|stop|restart gère le serveur local
  *   piecemaker status|logs     affiche l'état ou les journaux
  *   piecemaker chronology      affiche la chronologie du dossier courant
+ *   piecemaker conversion      convertit et pseudonymise les pièces manquantes
  *   piecemaker graph build     construit le graphe juridique riche du dossier
  *   piecemaker graph query     interroge le graphe juridique riche du dossier
  *   piecemaker proxy bypass    rétablit l'accès direct à Claude et Codex
@@ -33,7 +34,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { banner, title, log, write, blank, summary, spinner, badge, c } from '../lib/ui.mjs';
 import { select, confirm, multiSelect, pause, nonInteractive } from '../lib/prompt.mjs';
-import { REPO_ROOT, commandExists, findPython } from '../lib/platform.mjs';
+import { HOME_DIR, REPO_ROOT, commandExists, findPython, venvPaths } from '../lib/platform.mjs';
 import { loadConfig, readEnv, markStep, loadState, CONFIG_FILE } from '../lib/state.mjs';
 import {
   bypassLlmClients,
@@ -62,6 +63,7 @@ const CENTRAL_MAPPING_MODULE = path.resolve(path.dirname(fileURLToPath(import.me
 const ASSISTANT_CHRONOLOGY_MODULE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../websocket-server/assistant-chronology.cjs');
 const CASE_INSTRUCTIONS_MODULE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../websocket-server/case-instructions.cjs');
 const LEGAL_GRAPH_MODULE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../websocket-server/legal-graph.cjs');
+const ORIGINALS_PIPELINE_MODULE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../websocket-server/originals-pipeline.cjs');
 
 /**
  * The bootstrap/update command is also distributed as an installer-only
@@ -145,7 +147,7 @@ async function refreshDesktopApplicationAfterUpdate() {
 }
 
 const STEPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'steps');
-const COMMANDS = new Set(['open', 'start', 'stop', 'restart', 'status', 'logs', 'chronology', 'graph', 'proxy', 'install', 'doctor', 'check', 'update']);
+const COMMANDS = new Set(['open', 'start', 'stop', 'restart', 'status', 'logs', 'chronology', 'conversion', 'graph', 'proxy', 'install', 'doctor', 'check', 'update']);
 const GRAPH_ACTIONS = new Set(['build', 'query', 'status']);
 const PROXY_ACTIONS = new Set(['bypass']);
 const GRAPHIFY_ENV_KEYS = new Set([
@@ -175,6 +177,7 @@ function parseArgs(argv) {
     caseTarget: null,
     check: false,
     dryRun: false,
+    conversionDocuments: [],
     force: false,
     graphAction: null,
     graphQuestion: [],
@@ -189,6 +192,7 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (!arg.startsWith('-') && !flags.command && COMMANDS.has(arg)) flags.command = arg;
     else if (!arg.startsWith('-') && flags.command === 'chronology' && !flags.caseTarget) flags.caseTarget = arg;
+    else if (!arg.startsWith('-') && flags.command === 'conversion') flags.conversionDocuments.push(arg);
     else if (!arg.startsWith('-') && flags.command === 'graph' && !flags.graphAction && GRAPH_ACTIONS.has(arg)) flags.graphAction = arg;
     else if (!arg.startsWith('-') && flags.command === 'graph' && flags.graphAction === 'query') flags.graphQuestion.push(arg);
     else if (!arg.startsWith('-') && flags.command === 'proxy' && !flags.proxyAction && PROXY_ACTIONS.has(arg)) flags.proxyAction = arg;
@@ -358,6 +362,7 @@ function printHelp() {
   write('  status          affiche l’état du serveur');
   write('  logs            affiche les dernières lignes du journal');
   write('  chronology      affiche la chronologie pseudonymisée du dossier courant');
+  write('  conversion [pièce…] convertit et pseudonymise les pièces manquantes ou indiquées');
   write('  graph build     construit ou actualise le graphe juridique riche');
   write('  graph query     interroge les liens de droit du dossier');
   write('  graph status    indique si le graphe juridique est à jour');
@@ -367,12 +372,12 @@ function printHelp() {
   write('  update          met à jour PieceMaker');
   blank();
   write('  --all           installe tout sans menu');
-  write('  --case <chemin> cible un dossier enregistré (chronology/graph)');
+  write('  --case <chemin> cible un dossier enregistré (chronology/conversion/graph)');
   write('  --backend <nom> choisit le backend Graphify (graph build/query)');
   write('  --model <nom>   choisit le modèle d’extraction (graph build/query)');
-  write('  --force         reconstruit le graphe même si les pièces sont inchangées');
+  write('  --force         retraite les pièces ou reconstruit le graphe');
   write('  --budget <n>    limite le contexte retourné par graph query (défaut 4000)');
-  write('  --json          produit une sortie JSON sans décor (chronology/graph)');
+  write('  --json          produit une sortie JSON sans décor (chronology/conversion/graph)');
   write('  --check         diagnostic seul, n\'installe rien');
   write('  --step <id>     rejoue une seule étape');
   write('  --dry-run       montre les actions sans les exécuter');
@@ -475,6 +480,129 @@ async function runChronologyCommand(flags) {
   return 0;
 }
 
+function normalizedConversionRequest(value, caseRoot) {
+  const raw = String(value || '').trim();
+  if (!raw) throw new Error('Nom de pièce vide.');
+  if (!path.isAbsolute(raw)) return raw.replaceAll('\\', '/').replace(/^\.\/+/, '');
+  const relative = path.relative(caseRoot, path.resolve(raw));
+  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error('La pièce indiquée est hors du dossier juridique.');
+  }
+  return relative.split(path.sep).join('/');
+}
+
+function resolveConversionFiles(originals, requests, caseRoot) {
+  const selected = [];
+  const seen = new Set();
+  for (const request of requests) {
+    const normalized = normalizedConversionRequest(request, caseRoot);
+    let matches = originals.filter((file) => file.path === normalized);
+    if (!matches.length && !normalized.includes('/')) {
+      matches = originals.filter((file) => file.name === normalized);
+    }
+    if (!matches.length) throw new Error(`Aucune pièce ne correspond à « ${normalized} » dans ce dossier.`);
+    if (matches.length > 1) {
+      throw new Error(`Plusieurs pièces portent le nom « ${normalized} » ; indiquez leur chemin relatif.`);
+    }
+    if (!seen.has(matches[0].path)) {
+      seen.add(matches[0].path);
+      selected.push(matches[0].path);
+    }
+  }
+  return selected;
+}
+
+function publicConversionResult(job) {
+  const result = job?.result || {};
+  return {
+    id: job?.id || null,
+    state: job?.state || 'error',
+    processed: Number(job?.processed) || 0,
+    total: Number(job?.total) || 0,
+    skipped: Number(job?.skipped) || 0,
+    result: {
+      converted: Number(result.converted) || 0,
+      scanned: Number(result.scanned) || 0,
+      ...(Number.isFinite(result.mappingAdded) ? { mappingAdded: result.mappingAdded } : {}),
+      ...(Number.isFinite(result.mappingTotal) ? { mappingTotal: result.mappingTotal } : {}),
+      ...(result.upToDate ? { upToDate: true } : {}),
+      ...(result.commit ? {
+        commitCreated: Boolean(result.commit.created),
+        commit: result.commit.hash || null,
+      } : {}),
+    },
+  };
+}
+
+async function waitForConversionJob(initialJob, getJob, { json = false } = {}) {
+  let job = initialJob;
+  let reportedState = '';
+  let reportedPercent = -10;
+  while (job && ['queued', 'running'].includes(job.state)) {
+    if (!json && (job.state !== reportedState || job.percent >= reportedPercent + 10)) {
+      if (job.state === 'queued') log.info('Conversion en attente d’une place dans la file de traitement.');
+      else log.info(`Conversion et analyse PII : ${job.percent || 0} % (${job.processed || 0}/${job.total || 0})`);
+      reportedState = job.state;
+      reportedPercent = job.percent || 0;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    job = getJob(job.id);
+  }
+  if (!job) throw new Error('Le travail de conversion a expiré avant sa fin.');
+  if (job.state === 'error') throw new Error(job.error || 'La conversion a échoué.');
+  return job;
+}
+
+async function runConversionCommand(flags) {
+  if (!fs.existsSync(ORIGINALS_PIPELINE_MODULE)) {
+    throw new Error('Le module de conversion PieceMaker est introuvable.');
+  }
+  const config = loadConfig();
+  const { locateConfiguredCase } = require('../../piecemaker-plugin/scripts/lib/case-folders.cjs');
+  const located = locateConfiguredCase(config, flags.caseTarget || process.cwd());
+  if (!located) {
+    throw new Error('Lancez la commande depuis un dossier juridique enregistré ou passez --case <chemin>.');
+  }
+
+  // Le serveur choisit habituellement l’interpréteur au démarrage. La commande
+  // autonome reproduit ce choix sans exiger que le serveur PieceMaker tourne.
+  const configuredVenv = venvPaths(config.venvPath);
+  const python = process.env.PYTHON_PATH
+    || readEnv().PYTHON_PATH
+    || config.pythonPath
+    || (configuredVenv.exists ? configuredVenv.python : null)
+    || findPython()?.command;
+  if (!python) throw new Error('Aucun interpréteur Python 3.10+ n’est disponible pour la conversion.');
+  process.env.PYTHON_PATH = python;
+
+  const { getJob, listOriginals, startOriginalsJob } = require(ORIGINALS_PIPELINE_MODULE);
+  const originals = await listOriginals(located.caseRoot);
+  const requestedFiles = resolveConversionFiles(
+    originals,
+    flags.conversionDocuments || [],
+    located.caseRoot,
+  );
+  if (!flags.json) {
+    log.info(requestedFiles.length
+      ? `Conversion et pseudonymisation de ${requestedFiles.length} pièce(s) sélectionnée(s).`
+      : 'Conversion et pseudonymisation des pièces qui ne sont pas encore prêtes.');
+  }
+  const initialJob = await startOriginalsJob({
+    casesRoot: located.casesRoot,
+    caseName: located.caseName,
+    homeDir: HOME_DIR,
+    action: 'anonymize',
+    files: requestedFiles,
+    options: { force: flags.force },
+  });
+  const job = await waitForConversionJob(initialJob, getJob, { json: flags.json });
+  const result = publicConversionResult(job);
+  if (flags.json) process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  else if (result.result.upToDate) log.ok('Toutes les pièces sont déjà converties et pseudonymisées.');
+  else log.ok(`Conversion et pseudonymisation terminées : ${result.result.scanned} pièce(s).`);
+  return 0;
+}
+
 async function runGraphCommand(flags) {
   if (!fs.existsSync(LEGAL_GRAPH_MODULE)) throw new Error('Le module de graphe juridique PieceMaker est introuvable.');
   if (!flags.graphAction) throw new Error('Action manquante : utilisez « piecemaker graph build|query|status ».');
@@ -527,6 +655,7 @@ async function runGraphCommand(flags) {
 
 async function runOperationalCommand(command, knownUpdate = null, flags = {}) {
   if (command === 'chronology') return runChronologyCommand(flags);
+  if (command === 'conversion') return runConversionCommand(flags);
   if (command === 'graph') return runGraphCommand(flags);
   if (command === 'proxy') {
     if (flags.proxyAction !== 'bypass') {
@@ -797,9 +926,9 @@ async function main() {
     return 1;
   }
 
-  if (!['chronology', 'graph'].includes(flags.command) && (flags.caseTarget || flags.json)) {
+  if (!['chronology', 'conversion', 'graph'].includes(flags.command) && (flags.caseTarget || flags.json)) {
     banner();
-    log.error('Les options --case et --json sont réservées aux commandes chronology et graph.');
+    log.error('Les options --case et --json sont réservées aux commandes chronology, conversion et graph.');
     return 1;
   }
 
@@ -811,7 +940,8 @@ async function main() {
   // Les sorties JSON et les sous-graphes sont directement consommés par les
   // assistants : aucun bandeau PieceMaker ne doit les polluer.
   if ((flags.command === 'chronology' && flags.json)
-      || (flags.command === 'graph' && (flags.graphAction === 'query' || flags.json))) {
+      || (flags.command === 'graph' && (flags.graphAction === 'query' || flags.json))
+      || (flags.command === 'conversion' && flags.json)) {
     return runOperationalCommand(flags.command, null, flags);
   }
 

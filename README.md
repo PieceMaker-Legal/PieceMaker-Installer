@@ -195,6 +195,8 @@ piecemaker stop
 piecemaker restart
 piecemaker status
 piecemaker logs
+piecemaker conversion "nom de la pièce.pdf" # convertit et pseudonymise cette pièce
+piecemaker conversion                       # traite seulement les pièces manquantes
 piecemaker graph query "Montre-moi la chronologie et les liens de droit du dossier"
 piecemaker graph build     # prépare explicitement le graphe juridique riche
 piecemaker graph status    # vérifie s'il doit être actualisé
@@ -203,8 +205,14 @@ piecemaker install        # installation ou réparation
 piecemaker update
 ```
 
-Les commandes `graph` se lancent depuis un dossier juridique enregistré (ou
-avec `--case <chemin>`). La première requête construit le graphe riche avec le
+Les commandes `conversion` et `graph` se lancent depuis un dossier juridique
+enregistré (ou avec `--case <chemin>`). `piecemaker conversion` enchaîne la
+conversion Markdown et le scan PII afin de produire un contenu pseudonymisé
+directement exploitable par Graphify. Un ou plusieurs noms ou chemins relatifs
+peuvent être indiqués ; sans nom, seules les pièces dont la conversion ou le
+scan manque sont traitées.
+
+La première requête `graph` construit le graphe riche avec le
 backend LLM configuré pour Graphify ; les suivantes réutilisent le cache tant
 que les pièces, leur index ou le prompt juridique n'ont pas changé. Chaque
 pièce est reliée aux personnes physiques ou morales détectées, puis aux
