@@ -3,25 +3,33 @@
  * SessionStart hook — sentinelle du proxy PII LiteLLM.
  *
  * Claude Code n'est protégé (anonymisation avant envoi au fournisseur) que si
- * deux conditions tiennent à la fois : `~/.claude/settings.json` route bien
- * `ANTHROPIC_BASE_URL` vers le proxy local (`installer/lib/litellm-proxy.mjs
- * configureClaudeCodeProxy()`), et ce proxy répond. Sans autostart hors macOS
- * (launchd seulement, voir `installLitellmLaunchAgent`), un proxy arrêté
- * plantait la session avec une erreur réseau opaque au premier appel modèle.
+ * deux conditions tiennent ensemble : `~/.claude/settings.json` route
+ * `ANTHROPIC_BASE_URL` vers le proxy local, et ce proxy répond.
  *
- * Ce hook, à chaque démarrage/reprise de session :
- *  1. constate le routage (lecture directe de settings.json — aucune
- *     dépendance à installer/lib pour cette partie-là) ;
- *  2. sonde le proxy (node:http, jamais de throw) ;
- *  3. si routé mais arrêté, tente UN démarrage via un import dynamique de
- *     installer/lib/litellm-proxy.mjs, puis re-sonde ;
- *  4. informe l'utilisateur (systemMessage) et le modèle
- *     (hookSpecificOutput.additionalContext) de l'état constaté ;
- *  5. journalise chaque exécution, y compris les échecs, dans
- *     ~/.piecemaker/proxy-guard.log (JSONL, tronqué au-delà de ~512 Ko).
+ * Deux états d'arrêt existent, et ils ne se ressemblent pas :
+ *  - `piecemaker stop` (et `piecemaker proxy bypass`) retirent volontairement
+ *    le routage — `bypassClaudeCodeProxy()` supprime la variable — pour que les
+ *    sessions continuent en accès direct plutôt que d'échouer. « Proxy arrêté »
+ *    et « non routé » sont alors le même état.
+ *  - un proxy mort sans passer par la CLI (crash, redémarrage machine) laisse
+ *    le routage en place : les requêtes échouent avec une erreur réseau opaque.
  *
- * Fail open partout : aucune exception ne doit remonter, aucun exit ≠ 0. Ce
- * hook ne fait jamais échouer une session — il informe, au pire silencieusement.
+ * Ce hook couvre les deux : il sonde, relance si besoin, rétablit le routage,
+ * et dit la vérité sur ce que la session en cours peut réellement attendre.
+ *
+ * Limite structurelle assumée : un hook est un processus enfant. Il ne peut pas
+ * modifier l'environnement de Claude Code déjà lancé. Rétablir le routage
+ * profite donc aux sessions suivantes, jamais à celle qui démarre — le message
+ * le dit explicitement au lieu de laisser croire à une protection acquise.
+ *
+ * Deuxième limite : un démarrage à froid de LiteLLM dispose de 120 s
+ * (`LITELLM_START_TIMEOUT_MS`). Une session ne peut pas attendre cela. Le hook
+ * donne donc un « coup de pied » borné à `AUTOSTART_BUDGET_MS` : le processus
+ * est lancé en détaché et poursuit son démarrage même quand le hook a rendu la
+ * main. Un budget épuisé n'est pas un échec — c'est un démarrage en cours, et
+ * le hook se garde bien de retirer le routage dans ce cas.
+ *
+ * Fail open partout : aucune exception ne remonte, aucun exit ≠ 0.
  */
 
 import fs from 'node:fs';
@@ -43,8 +51,8 @@ const LOG_FILE = path.join(HOME_DIR, 'proxy-guard.log');
 const MAX_LOG_BYTES = 512 * 1024;
 const DEFAULT_PORT = 4000;
 const PROBE_TIMEOUT_MS = 1500;
-const AUTOSTART_TIMEOUT_MS = 20000;
-const HOOK_TIMEOUT_MS = 30000;
+const AUTOSTART_BUDGET_MS = 10000;
+const HOOK_TIMEOUT_MS = 25000;
 
 const SETTINGS_FILE = path.join(os.homedir(), '.claude', 'settings.json');
 
@@ -63,7 +71,7 @@ function truncateLogIfNeeded() {
   }
 }
 
-/** Ligne JSONL de traçabilité. Le point clé de la demande : ne jamais échouer en silence. */
+/** Ligne JSONL de traçabilité. Le point clé : ne jamais échouer en silence. */
 function logLine(entry) {
   try {
     ensureDirSafe(HOME_DIR);
@@ -77,7 +85,7 @@ function logLine(entry) {
 /**
  * Claude Code est-il routé vers le proxy local ? Lecture directe de
  * settings.json, sans dépendre de installer/lib — cette partie doit rester
- * indépendante de l'installateur, contrairement à l'autostart (étape 5).
+ * lisible même sur une installation cassée.
  */
 function readRouting() {
   try {
@@ -123,20 +131,70 @@ function probe(port, timeoutMs = PROBE_TIMEOUT_MS) {
 }
 
 /**
- * Un unique essai de démarrage, par import dynamique de
- * installer/lib/litellm-proxy.mjs (chemin résolu depuis import.meta.url, donc
- * indépendant du cwd d'appel). pathToFileURL est indispensable sous Windows,
- * où un chemin brut (`C:\...`) n'est pas un spécificateur de module valide.
+ * Charge installer/lib/litellm-proxy.mjs. Le chemin est résolu depuis
+ * import.meta.url, donc indépendant du cwd d'appel ; pathToFileURL est
+ * indispensable sous Windows, où `C:\...` n'est pas un spécificateur valide.
+ */
+function loadProxyLib() {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const modulePath = path.join(here, '..', '..', 'installer', 'lib', 'litellm-proxy.mjs');
+  return import(pathToFileURL(modulePath).href);
+}
+
+/** Le venv LiteLLM existe-t-il ? Vérification sans sous-processus, contrairement
+ *  à litellmDependenciesStatus() qui lance Python deux fois — trop cher ici. */
+function venvPresent(config) {
+  try {
+    const venv = config.litellmVenvPath || path.join(HOME_DIR, 'litellm-venv');
+    return fs.existsSync(venv);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Le processus LiteLLM est-il vivant ? Lecture du fichier PID écrit par
+ * `startLitellmProxy`, puis signal 0 — qui ne tue rien et fonctionne aussi sous
+ * Windows. C'est ce qui distingue « démarrage en cours » de « échec » sans
+ * dépendre du texte d'un message d'erreur : les libellés changent, un PID
+ * vivant ne ment pas.
+ */
+function proxyProcessAlive() {
+  try {
+    const pid = Number(fs.readFileSync(path.join(HOME_DIR, 'litellm.pid'), 'utf8').trim());
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Un unique coup de pied au proxy, borné. `startLitellmProxy` lance le
+ * processus en détaché puis attend le health check ; passé le budget il lève,
+ * mais le processus, lui, continue de démarrer. On distingue donc « lancé,
+ * démarrage en cours » de « impossible à lancer ».
  */
 async function attemptAutostart() {
   try {
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    const modulePath = path.join(here, '..', '..', 'installer', 'lib', 'litellm-proxy.mjs');
-    const { startLitellmProxy } = await import(pathToFileURL(modulePath).href);
-    await startLitellmProxy({ timeoutMs: AUTOSTART_TIMEOUT_MS });
+    const { startLitellmProxy } = await loadProxyLib();
+    await startLitellmProxy({ timeoutMs: AUTOSTART_BUDGET_MS });
     return { status: 'réussi', error: null };
   } catch (error) {
-    return { status: 'échoué', error: error?.message || String(error) };
+    const message = error?.message || String(error);
+    return { status: proxyProcessAlive() ? 'en-cours' : 'échoué', error: message };
+  }
+}
+
+/** Rétablit le routage Claude Code + Codex, comme le fait `piecemaker start`. */
+async function restoreRouting() {
+  try {
+    const { configureLlmClients } = await loadProxyLib();
+    const clients = configureLlmClients({ userHome: os.homedir() });
+    return { ok: Boolean(clients?.claude?.configured), reason: clients?.claude?.reason || null };
+  } catch (error) {
+    return { ok: false, reason: error?.message || String(error) };
   }
 }
 
@@ -160,6 +218,7 @@ async function main() {
       probe: { ok: false, latencyMs: null },
       autostart: { status: 'skipped', error: null },
       probeApres: { ok: false, latencyMs: null },
+      routageRetabli: null,
       verdict: 'payload-illisible',
       dureeMs: Date.now() - startedAt,
     });
@@ -170,33 +229,52 @@ async function main() {
     const config = loadPieceMakerConfig();
     const port = validPort(config.litellmPort);
     const routing = readRouting();
+    const installe = venvPresent(config);
 
     const before = await probe(port);
     let autostart = { status: 'skipped', error: null };
     let after = before;
 
-    if (routing.routed && !before.ok) {
-      const result = await attemptAutostart();
-      autostart = result;
+    // Le proxy ne répond pas : on tente de le relancer, que le routage soit
+    // encore en place (crash) ou déjà retiré (piecemaker stop).
+    if (!before.ok && installe) {
+      autostart = await attemptAutostart();
       after = await probe(port);
     }
 
+    let routageRetabli = null;
     let verdict;
     let systemMessage;
     let additionalContext;
 
-    if (routing.routed && after.ok) {
+    if (after.ok && routing.routed) {
       verdict = 'actif';
-      systemMessage = '🔒 Protection PieceMaker active ✓';
+      const relance = autostart.status === 'réussi' ? ' — proxy PII redémarré automatiquement.' : '';
+      systemMessage = `🔒 Protection PieceMaker active ✓${relance}`;
       additionalContext = `Le proxy PII LiteLLM répond sur le port ${port} et Claude Code y est routé (ANTHROPIC_BASE_URL). Les échanges avec le fournisseur sont anonymisés puis ré-identifiés localement.`;
-    } else if (routing.routed && !after.ok) {
-      verdict = 'arrete';
-      systemMessage = `⚠️ [PieceMaker] Protection inactive : le proxy PII LiteLLM (port ${port}) ne répond pas alors que Claude Code y est routé. Les requêtes vers le fournisseur vont échouer. Lancez « piecemaker start », puis consultez le journal : ${path.join(HOME_DIR, 'litellm.log')}.`;
-      additionalContext = `Le proxy PII LiteLLM (port ${port}) ne répond toujours pas après une tentative de démarrage automatique (${autostart.status}). Claude Code y est routé mais aucune requête ne peut aboutir tant qu'il n'est pas relancé.`;
+    } else if (after.ok && !routing.routed) {
+      // Proxy debout mais routage absent : c'est l'état laissé par
+      // « piecemaker stop ». On le rétablit pour la suite, sans prétendre
+      // protéger la session en cours, dont l'environnement est déjà figé.
+      const restored = await restoreRouting();
+      routageRetabli = restored.ok;
+      verdict = restored.ok ? 'restaure' : 'restauration-echouee';
+      systemMessage = restored.ok
+        ? "⚠️ [PieceMaker] Cette session a démarré en accès direct : elle n'est pas anonymisée. Le proxy PII tourne et le routage vient d'être rétabli — fermez cette session et rouvrez-en une pour activer la protection."
+        : `⚠️ [PieceMaker] Le proxy PII tourne mais le routage de Claude Code n'a pas pu être rétabli (${restored.reason || 'raison inconnue'}). Accès direct au fournisseur, sans anonymisation. Rejouez « piecemaker --step 16-litellm-proxy ».`;
+      additionalContext = `Le proxy PII répond sur le port ${port} mais ANTHROPIC_BASE_URL était absent au démarrage de cette session : les échanges de la session en cours ne sont pas anonymisés.${restored.ok ? ' Le routage a été rétabli pour les sessions suivantes.' : ''}`;
+    } else if (!installe) {
+      verdict = 'non-installe';
+      systemMessage = "⚠️ [PieceMaker] Proxy PII LiteLLM non installé : accès direct au fournisseur, sans anonymisation. Rejouez « piecemaker --step 16-litellm-proxy ».";
+      additionalContext = `Aucun environnement LiteLLM n'est installé sur cette machine. Les échanges Claude Code ne sont pas anonymisés.`;
+    } else if (autostart.status === 'en-cours') {
+      verdict = 'demarrage';
+      systemMessage = `⏳ [PieceMaker] Proxy PII en cours de démarrage (jusqu'à 2 min à froid). Cette session n'est pas protégée${routing.routed ? ' et ses requêtes vont échouer tant que le proxy ne répond pas' : ''} — rouvrez-en une dans un moment.`;
+      additionalContext = `Le proxy PII a été relancé mais ne répondait pas encore au bout de ${Math.round(AUTOSTART_BUDGET_MS / 1000)} s ; son démarrage se poursuit en arrière-plan. Journal : ${path.join(HOME_DIR, 'litellm.log')}.`;
     } else {
-      verdict = 'non-route';
-      systemMessage = "⚠️ [PieceMaker] Claude Code n'est pas routé par le proxy PII local : accès direct au fournisseur, sans anonymisation. Rejouez « piecemaker --step 16-litellm-proxy » pour reconfigurer le routage.";
-      additionalContext = `ANTHROPIC_BASE_URL (${routing.value || 'absent'}) ne pointe pas vers le proxy PII PieceMaker sur le port ${port}. Aucune anonymisation n'est appliquée aux échanges Claude Code tant que le routage n'est pas rétabli.`;
+      verdict = 'arrete';
+      systemMessage = `⚠️ [PieceMaker] Protection inactive : le proxy PII (port ${port}) n'a pas pu démarrer. Lancez « piecemaker start », puis consultez ${path.join(HOME_DIR, 'litellm.log')}.`;
+      additionalContext = `Le proxy PII (port ${port}) ne répond pas et sa relance automatique a échoué (${autostart.error || 'raison inconnue'}). ${routing.routed ? 'Claude Code y est routé : aucune requête ne peut aboutir.' : 'Les échanges Claude Code ne sont pas anonymisés.'}`;
     }
 
     logLine({
@@ -205,10 +283,12 @@ async function main() {
       source: payload.source ?? null,
       sessionId: payload.session_id || null,
       port,
+      installe,
       route: { routed: routing.routed, value: routing.value },
       probe: { ok: before.ok, latencyMs: before.latencyMs },
       autostart,
       probeApres: { ok: after.ok, latencyMs: after.latencyMs },
+      routageRetabli,
       verdict,
       dureeMs: Date.now() - startedAt,
     });
@@ -231,6 +311,7 @@ async function main() {
       probe: { ok: false, latencyMs: null },
       autostart: { status: 'skipped', error: null },
       probeApres: { ok: false, latencyMs: null },
+      routageRetabli: null,
       verdict: 'exception',
       erreur: error?.message || String(error),
       dureeMs: Date.now() - startedAt,
