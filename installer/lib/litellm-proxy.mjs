@@ -557,6 +557,15 @@ function directEnvironment(config, paths) {
   };
 }
 
+// Le démarrage de LiteLLM est lent et très variable : import du paquet
+// (~5 s à chaud, bien plus après une mise à jour qui vide le cache disque)
+// puis préparation de l'UI empaquetée. Un budget de 20 s expirait alors que
+// le proxy devenait sain quelques secondes plus tard — la mise à jour
+// rétablissait alors l'accès direct, sans anonymisation, sur un proxy en
+// réalité fonctionnel. On attend donc largement, en sortant tôt dès que le
+// processus attendu meurt (échec réel, pas démarrage lent).
+const LITELLM_START_TIMEOUT_MS = 120_000;
+
 async function waitForProxy(config, expected, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -576,7 +585,7 @@ export async function startLitellmProxy(options = {}) {
   // Le processus tourne mais le health check a échoué (timeout réseau,
   // démarrage en cours…) — on attend au lieu de tuer et relancer.
   if (current.pid) {
-    if (await waitForProxy(config, current.pid, options.timeoutMs || 20_000)) {
+    if (await waitForProxy(config, current.pid, options.timeoutMs || LITELLM_START_TIMEOUT_MS)) {
       return { ...await getLitellmStatus({ ...options, config }), started: false };
     }
     throw new Error(`LiteLLM tourne (PID ${current.pid}) mais ne répond pas au health check. Consultez ${litellmPaths({ ...options, config }).log}.`);
@@ -620,7 +629,7 @@ export async function startLitellmProxy(options = {}) {
     fs.writeFileSync(paths.pid, `${child.pid}\n`, 'utf8');
   }
 
-  if (!await waitForProxy(config, expectedPid, options.timeoutMs || 20_000)) {
+  if (!await waitForProxy(config, expectedPid, options.timeoutMs || LITELLM_START_TIMEOUT_MS)) {
     throw new Error(`LiteLLM n’a pas démarré. Consultez ${paths.log}.`);
   }
   return { ...await getLitellmStatus({ ...options, config }), started: true };
