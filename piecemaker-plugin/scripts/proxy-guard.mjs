@@ -153,18 +153,20 @@ function venvPresent(config) {
 }
 
 /**
- * Le processus LiteLLM est-il vivant ? Lecture du fichier PID écrit par
- * `startLitellmProxy`, puis signal 0 — qui ne tue rien et fonctionne aussi sous
- * Windows. C'est ce qui distingue « démarrage en cours » de « échec » sans
- * dépendre du texte d'un message d'erreur : les libellés changent, un PID
- * vivant ne ment pas.
+ * Le processus LiteLLM est-il vivant ? C'est ce qui distingue « démarrage en
+ * cours » de « échec » sans dépendre du texte d'un message d'erreur : les
+ * libellés changent, un PID vivant ne ment pas.
+ *
+ * La question est déléguée à `litellmProcessPid()`, qui couvre les deux modes
+ * de gestion. Lire seulement `litellm.pid` ne suffit pas : sous launchd — le
+ * mode nominal sur macOS — ce fichier n'existe jamais, et un proxy en plein
+ * démarrage à froid était alors déclaré mort, déclenchant une fausse alerte
+ * « le proxy n'a pas pu démarrer » sur une session qui n'avait qu'à attendre.
  */
-function proxyProcessAlive() {
+async function proxyProcessAlive() {
   try {
-    const pid = Number(fs.readFileSync(path.join(HOME_DIR, 'litellm.pid'), 'utf8').trim());
-    if (!Number.isInteger(pid) || pid <= 0) return false;
-    process.kill(pid, 0);
-    return true;
+    const { litellmProcessPid } = await loadProxyLib();
+    return litellmProcessPid() !== null;
   } catch {
     return false;
   }
@@ -183,7 +185,7 @@ async function attemptAutostart() {
     return { status: 'réussi', error: null };
   } catch (error) {
     const message = error?.message || String(error);
-    return { status: proxyProcessAlive() ? 'en-cours' : 'échoué', error: message };
+    return { status: (await proxyProcessAlive()) ? 'en-cours' : 'échoué', error: message };
   }
 }
 

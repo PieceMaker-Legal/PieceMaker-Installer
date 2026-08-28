@@ -522,23 +522,42 @@ export function probeLitellm(config = loadConfig(), timeoutMs = 1200) {
   });
 }
 
+/**
+ * PID du processus LiteLLM vivant, ou `null`. Les deux modes de gestion ne
+ * laissent pas la même trace : sous launchd (macOS) le PID ne s'obtient que de
+ * `launchctl print` — aucun fichier PID n'est écrit —, tandis qu'un lancement
+ * direct n'a que `litellm.pid`. Interroger une seule des deux sources fait
+ * conclure à tort qu'aucun processus ne tourne.
+ *
+ * Contrairement à `getLitellmStatus()`, cette fonction ne sonde ni le réseau
+ * ni les dépendances Python : elle répond à la seule question « un processus
+ * existe-t-il ? », ce qui distingue un démarrage en cours d'un échec.
+ * Un fichier PID périmé est nettoyé au passage.
+ */
+export function litellmProcessPid(options = {}) {
+  const launchd = options.launchdState || launchAgentState(options.runCapture || runCapture);
+  if (launchd.pid && processRunning(launchd.pid)) return launchd.pid;
+  const pidFile = litellmPaths(options).pid;
+  const directPid = readPid(pidFile);
+  if (!directPid) return null;
+  if (processRunning(directPid)) return directPid;
+  try { fs.unlinkSync(pidFile); } catch { /* déjà absent */ }
+  return null;
+}
+
 export async function getLitellmStatus(options = {}) {
   const config = options.config || loadConfig();
   const userHome = options.userHome || os.homedir();
   const paths = litellmPaths({ ...options, config });
   const dependencies = litellmDependenciesStatus({ ...options, config });
   const launchd = launchAgentState(options.runCapture || runCapture);
-  const directPid = readPid(paths.pid);
-  const directRunning = processRunning(directPid);
-  if (directPid && !directRunning) {
-    try { fs.unlinkSync(paths.pid); } catch { /* déjà absent */ }
-  }
+  const pid = litellmProcessPid({ ...options, config, launchdState: launchd });
   return {
     installed: dependencies.installed,
     version: dependencies.version,
     running: await probeLitellm(config, options.timeoutMs),
-    pid: launchd.pid || (directRunning ? directPid : null),
-    managed: launchd.loaded || directRunning,
+    pid,
+    managed: launchd.loaded || pid !== null,
     autoStart: fs.existsSync(paths.launchAgent),
     routing: llmClientProxyStatus({ config, userHome }),
     logFile: paths.log,
