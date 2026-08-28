@@ -21,7 +21,12 @@ import { REPO_ROOT, HOME_DIR, runCapture, ensureDir } from '../lib/platform.mjs'
 import { updateConfig } from '../lib/state.mjs';
 
 const require = createRequire(import.meta.url);
-const { claudeHooksStatus, installClaudeHooks } = require('../../websocket-server/claude-hooks.cjs');
+const {
+  claudeHooksStatus,
+  claudeStatusLineStatus,
+  installClaudeHooks,
+  installClaudeStatusLine,
+} = require('../../websocket-server/claude-hooks.cjs');
 
 export const meta = {
   id: '06-hooks',
@@ -39,6 +44,8 @@ const HOOK_SCRIPTS = {
   protect: path.join(SCRIPTS_DIR, 'protect-originals.mjs'),
   commit: path.join(SCRIPTS_DIR, 'commit-track.mjs'),
   billing: path.join(SCRIPTS_DIR, 'billing-track.mjs'),
+  proxyGuard: path.join(SCRIPTS_DIR, 'proxy-guard.mjs'),
+  statusline: path.join(SCRIPTS_DIR, 'statusline.mjs'),
 };
 
 /** Run one hook script exactly like Claude Code would: JSON payload on stdin, JSON (or nothing) on stdout, exit 0 expected. */
@@ -184,6 +191,16 @@ export async function install(ctx) {
       + (registration.cleanup.deletedFile ? ', script global supprimé.' : '.'));
   }
   log.ok(`${registration.registered} hook(s) PieceMaker ${registration.changed ? 'enregistré(s)' : 'déjà enregistré(s)'} directement dans ~/.claude/settings.json.`);
+
+  const statusLine = installClaudeStatusLine(REPO_ROOT, os.homedir());
+  if (statusLine.conflict) {
+    log.warn(`statusLine Claude Code personnelle détectée — laissée telle quelle (${statusLine.reason}). Bandeau d'état PieceMaker non installé.`);
+  } else if (!statusLine.ok) {
+    log.warn(`statusLine Claude Code non installée : ${statusLine.reason}.`);
+  } else {
+    log.ok(`statusLine Claude Code ${statusLine.changed ? 'installée' : 'déjà à jour'} (${statusLine.command}).`);
+  }
+
   return { status: 'done', note: '' };
 }
 
@@ -194,12 +211,17 @@ export async function check(ctx) {
   const cfg = ctx.config || {};
   const configOk = Boolean(cfg.commits && cfg.billing);
   const hooksRegistered = claudeHooksStatus(REPO_ROOT, os.homedir()).ok;
+  const statusLine = claudeStatusLineStatus(REPO_ROOT, os.homedir());
+  const statusLineOk = statusLine.ok || statusLine.conflict; // une statusLine personnelle n'est pas une anomalie
 
   if (!scriptsExist || !hooksJsonExists) {
     return { status: 'failed', note: 'Fichiers du plugin manquants (scripts ou hooks.json) — réinstallez piecemaker-plugin/.' };
   }
   if (!dirsExist || !configOk || !hooksRegistered) {
     return { status: 'partial', note: 'Scripts présents mais configuration, enregistrement Claude ou répertoires de facturation incomplets — relancez cette étape.' };
+  }
+  if (!statusLineOk) {
+    return { status: 'partial', note: `statusLine Claude Code absente ou périmée (${statusLine.reason}) — relancez cette étape.` };
   }
   return { status: 'done', note: '' };
 }

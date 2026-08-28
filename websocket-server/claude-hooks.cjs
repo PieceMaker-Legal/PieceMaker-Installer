@@ -128,7 +128,13 @@ function expectedCommands(repoRoot) {
   return Object.entries(groups).flatMap(([event, entries]) => entries.flatMap((group) =>
     group.hooks
       .filter((hook) => typeof hook?.command === 'string' && commandScriptName(hook.command))
-      .map((hook) => ({ event, matcher: group.matcher, command: hook.command, script: commandScriptName(hook.command) })),
+      .map((hook) => ({
+        event,
+        matcher: group.matcher,
+        command: hook.command,
+        script: commandScriptName(hook.command),
+        timeout: hook.timeout,
+      })),
   ));
 }
 
@@ -151,7 +157,8 @@ function claudeHooksStatus(repoRoot, userHome) {
     const current = findHook(settings, entry.event, entry.script);
     return current?.hook.command !== entry.command
       || current?.hook.type !== 'command'
-      || current?.group.matcher !== entry.matcher;
+      || current?.group.matcher !== entry.matcher
+      || current?.hook.timeout !== entry.timeout;
   });
   return { ok: missing.length === 0 && deprecated.length === 0, expected: expected.length, missing, deprecated };
 }
@@ -194,12 +201,19 @@ function installClaudeHooks(repoRoot, userHome) {
         current.group.matcher = entry.matcher;
         changed = true;
       }
+      if (current.hook.timeout !== entry.timeout) {
+        if (entry.timeout === undefined) delete current.hook.timeout;
+        else current.hook.timeout = entry.timeout;
+        changed = true;
+      }
       registered += 1;
       continue;
     }
+    const newHook = { type: 'command', command: entry.command };
+    if (entry.timeout !== undefined) newHook.timeout = entry.timeout;
     settings.hooks[entry.event].push({
       matcher: entry.matcher,
-      hooks: [{ type: 'command', command: entry.command }],
+      hooks: [newHook],
     });
     changed = true;
     registered += 1;
@@ -212,10 +226,82 @@ function installClaudeHooks(repoRoot, userHome) {
   return { ok: true, changed: changed || cleanup.changed, registered, settings: target, cleanup };
 }
 
+/**
+ * statusLine Claude Code — même logique de matérialisation que les hooks,
+ * mais pour une clé unique de settings.json (`statusLine`) plutôt qu'un
+ * tableau. Une statusLine personnelle (non-PieceMaker) n'est jamais touchée.
+ */
+function statusLineScriptPath(repoRoot) {
+  return path.join(repoRoot, 'piecemaker-plugin', 'scripts', 'statusline.mjs');
+}
+
+function statusLineCommand(repoRoot) {
+  return `node "${statusLineScriptPath(repoRoot).replaceAll('"', '\\"')}"`;
+}
+
+/** Une statusLine nous appartient si sa commande cite bien notre script. */
+function isOwnStatusLine(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+    && typeof value.command === 'string'
+    && value.command.includes('piecemaker-plugin')
+    && value.command.includes('statusline.mjs');
+}
+
+function claudeStatusLineStatus(repoRoot, userHome) {
+  const command = statusLineCommand(repoRoot);
+  const target = settingsPath(userHome);
+  if (!fs.existsSync(target)) {
+    return { ok: false, installed: false, conflict: false, reason: 'settings-absent', command };
+  }
+  const settings = readJson(target);
+  if (!settings) {
+    return { ok: false, installed: false, conflict: false, reason: 'settings-invalid', command };
+  }
+  const current = settings.statusLine;
+  if (current === undefined) {
+    return { ok: false, installed: false, conflict: false, reason: 'absent', command };
+  }
+  if (!isOwnStatusLine(current)) {
+    return { ok: false, installed: false, conflict: true, reason: 'statusline-etrangere', command };
+  }
+  const upToDate = current.type === 'command' && current.command === command;
+  return { ok: upToDate, installed: true, conflict: false, reason: upToDate ? '' : 'chemin-perime', command };
+}
+
+function installClaudeStatusLine(repoRoot, userHome) {
+  const command = statusLineCommand(repoRoot);
+  const target = settingsPath(userHome);
+
+  let settings = {};
+  if (fs.existsSync(target)) {
+    settings = readJson(target);
+    if (!settings) {
+      return { ok: false, changed: false, conflict: false, reason: 'settings-invalid', command, settings: target };
+    }
+  }
+
+  const current = settings.statusLine;
+  if (current !== undefined && !isOwnStatusLine(current)) {
+    return { ok: true, changed: false, conflict: true, reason: 'statusline-etrangere', command, settings: target };
+  }
+
+  const desired = { type: 'command', command };
+  if (current && current.type === desired.type && current.command === desired.command) {
+    return { ok: true, changed: false, conflict: false, reason: '', command, settings: target };
+  }
+
+  settings.statusLine = desired;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
+  return { ok: true, changed: true, conflict: false, reason: '', command, settings: target };
+}
+
 module.exports = {
   claudeHooksStatus,
+  claudeStatusLineStatus,
   directHookGroups,
   installClaudeHooks,
+  installClaudeStatusLine,
   removeDeprecatedMappingHooks,
   settingsPath,
 };
