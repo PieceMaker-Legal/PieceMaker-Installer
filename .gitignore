@@ -1,5 +1,7 @@
 # Documentation locale (audits, notes, recherches)
 docs/
+# Diagnostic local contenant des métadonnées propres au dossier analysé
+docs/DIAGNOSTIC-Chronologie-entite-GLiNER.md
 # Forks tiers (sous-projets avec leur propre .git)
 eidolon/
 aegis-gate/
