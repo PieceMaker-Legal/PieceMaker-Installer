@@ -14,6 +14,7 @@ import {
 import path from 'node:path';
 import { z } from 'zod';
 import {
+  DOC_STYLES_TOOL,
   EDIT_DOC_TOOL,
   READ_DOC_TOOL,
   TEMPLATE_TOOL,
@@ -59,6 +60,7 @@ const LOCAL_TOOLS = [
         READ_DOC_TOOL,
         EDIT_DOC_TOOL,
         TEMPLATE_TOOL,
+        DOC_STYLES_TOOL,
         {
             name: 'read_case',
             description: `Recherche et gestion des pièces du dossier juridique.
@@ -313,7 +315,7 @@ Use it if analysis is empty`,
 // Les autres outils restent implémentés et validés ci-dessous, mais ne sont
 // plus annoncés ni exécutables par le modèle. Réactivation volontaire = ajouter
 // leur nom ici, sans restaurer de code supprimé.
-const ENABLED_TOOL_NAMES = new Set(['open_doc', 'read_doc', 'edit_doc', 'template']);
+const ENABLED_TOOL_NAMES = new Set(['open_doc', 'read_doc', 'edit_doc', 'template', 'doc_styles']);
 const ENABLED_TOOLS = LOCAL_TOOLS.filter((tool) => ENABLED_TOOL_NAMES.has(tool.name));
 
 // Schémas Zod pour validation des arguments
@@ -461,6 +463,68 @@ const TemplateSchema = z.object({
   )
 }).strict();
 
+const StyleFontSchema = z.object({
+  name: z.string().min(1).optional(),
+  size: z.number().min(1).max(1638).optional(),
+  color: z.string().min(1).optional(),
+  highlightColor: z.string().min(1).optional(),
+  bold: z.boolean().optional(),
+  italic: z.boolean().optional(),
+  underline: z.enum(['None', 'Single', 'Double', 'Thick', 'Dotted', 'DashLine', 'Wave']).optional(),
+  strikeThrough: z.boolean().optional(),
+  allCaps: z.boolean().optional(),
+  smallCaps: z.boolean().optional()
+}).strict();
+
+const StyleParagraphFormatSchema = z.object({
+  alignment: z.enum(['Left', 'Centered', 'Right', 'Justified']).optional(),
+  leftIndent: z.number().optional(),
+  rightIndent: z.number().optional(),
+  firstLineIndent: z.number().optional(),
+  spaceBefore: z.number().nonnegative().optional(),
+  spaceAfter: z.number().nonnegative().optional(),
+  lineSpacing: z.number().nonnegative().optional(),
+  lineUnitBefore: z.number().nonnegative().optional(),
+  lineUnitAfter: z.number().nonnegative().optional(),
+  outlineLevel: z.enum([
+    'OutlineLevel1', 'OutlineLevel2', 'OutlineLevel3', 'OutlineLevel4', 'OutlineLevel5',
+    'OutlineLevel6', 'OutlineLevel7', 'OutlineLevel8', 'OutlineLevel9', 'OutlineLevelBodyText'
+  ]).optional(),
+  keepTogether: z.boolean().optional(),
+  keepWithNext: z.boolean().optional(),
+  widowControl: z.boolean().optional()
+}).strict();
+
+const StyleUpdateSchema = z.object({
+  name: z.string().min(1),
+  font: StyleFontSchema.optional(),
+  paragraphFormat: StyleParagraphFormatSchema.optional()
+}).strict().refine(
+  (value) => value.font !== undefined || value.paragraphFormat !== undefined,
+  { message: 'Chaque style exige font ou paragraphFormat.' }
+);
+
+const DocStylesSchema = z.object({
+  paneId: PaneIdSchema,
+  action: z.enum(['get', 'set']),
+  names: z.array(z.string().min(1)).min(1).max(60).optional(),
+  scope: z.enum(['used', 'all']).optional(),
+  styles: z.array(StyleUpdateSchema).min(1).max(40).optional()
+}).strict().superRefine((value, ctx) => {
+  if (value.action === 'set') {
+    if (!value.styles) {
+      ctx.addIssue({ code: 'custom', message: 'action « set » exige styles.' });
+    }
+    if (value.names !== undefined || value.scope !== undefined) {
+      ctx.addIssue({ code: 'custom', message: 'names et scope ne concernent que l’action « get ».' });
+    }
+    return;
+  }
+  if (value.styles !== undefined) {
+    ctx.addIssue({ code: 'custom', message: 'styles ne concerne que l’action « set ».' });
+  }
+});
+
 const ReadCaseSchema = z.object({
   query: z.string().optional(),
   show_structure: z.boolean().optional().default(false),
@@ -522,6 +586,7 @@ const TOOL_SCHEMAS = {
   'read_doc': ReadDocSchema,
   'edit_doc': EditDocSchema,
   'template': TemplateSchema,
+  'doc_styles': DocStylesSchema,
   'read_case': ReadCaseSchema,
   'get_resource': GetResourceSchema,
   'draft': DraftSchema,
@@ -563,6 +628,9 @@ async function callLocalTool(toolName, toolArgs) {
     case 'template':
       endpoint = endpointUrl('/api/word/template');
       break;
+    case 'doc_styles':
+      endpoint = endpointUrl('/api/word/doc-styles');
+      break;
     case 'read_case':
       endpoint = endpointUrl('/api/word/search-case');
       break;
@@ -585,7 +653,7 @@ async function callLocalTool(toolName, toolArgs) {
       throw new Error(`Outil inconnu: ${toolName}`);
   }
 
-  const paneId = ['read_doc', 'edit_doc', 'template'].includes(toolName) ? toolArgs.paneId : null;
+  const paneId = ['read_doc', 'edit_doc', 'template', 'doc_styles'].includes(toolName) ? toolArgs.paneId : null;
   const forwardedArgs = paneId ? { ...toolArgs } : toolArgs;
   if (paneId) delete forwardedArgs.paneId;
 

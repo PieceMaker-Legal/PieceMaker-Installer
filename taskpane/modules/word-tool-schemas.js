@@ -196,6 +196,115 @@ export const TEMPLATE_TOOL = {
   }
 };
 
+const STYLE_FONT_SCHEMA = {
+  type: 'object',
+  description: 'Propriétés de police du style.',
+  additionalProperties: false,
+  properties: {
+    name: { type: 'string', minLength: 1, description: 'Nom de la police, ex. « Times New Roman ».' },
+    size: { type: 'number', minimum: 1, maximum: 1638, description: 'Taille en points.' },
+    color: { type: 'string', minLength: 1, description: 'Couleur #RRGGBB ou nom Word.' },
+    highlightColor: { type: 'string', minLength: 1 },
+    bold: { type: 'boolean' },
+    italic: { type: 'boolean' },
+    underline: {
+      type: 'string',
+      enum: ['None', 'Single', 'Double', 'Thick', 'Dotted', 'DashLine', 'Wave']
+    },
+    strikeThrough: { type: 'boolean' },
+    allCaps: { type: 'boolean' },
+    smallCaps: { type: 'boolean' }
+  }
+};
+
+const STYLE_PARAGRAPH_FORMAT_SCHEMA = {
+  type: 'object',
+  description: 'Format de paragraphe du style. Indentations et espacements en points.',
+  additionalProperties: false,
+  properties: {
+    alignment: { type: 'string', enum: ['Left', 'Centered', 'Right', 'Justified'] },
+    leftIndent: { type: 'number' },
+    rightIndent: { type: 'number' },
+    firstLineIndent: { type: 'number' },
+    spaceBefore: { type: 'number', minimum: 0 },
+    spaceAfter: { type: 'number', minimum: 0 },
+    lineSpacing: { type: 'number', minimum: 0, description: 'Interligne en points ; 12 pt ≈ simple sur du 12.' },
+    lineUnitBefore: { type: 'number', minimum: 0 },
+    lineUnitAfter: { type: 'number', minimum: 0 },
+    outlineLevel: {
+      type: 'string',
+      enum: [
+        'OutlineLevel1', 'OutlineLevel2', 'OutlineLevel3', 'OutlineLevel4', 'OutlineLevel5',
+        'OutlineLevel6', 'OutlineLevel7', 'OutlineLevel8', 'OutlineLevel9', 'OutlineLevelBodyText'
+      ]
+    },
+    keepTogether: { type: 'boolean' },
+    keepWithNext: { type: 'boolean' },
+    widowControl: { type: 'boolean' }
+  }
+};
+
+const STYLE_UPDATE_SCHEMA = {
+  type: 'object',
+  description: 'Style à redéfinir ; seules les propriétés fournies changent.',
+  additionalProperties: false,
+  properties: {
+    name: { type: 'string', minLength: 1, description: 'Nom exact renvoyé par action « get », ex. « Heading 1 ».' },
+    font: STYLE_FONT_SCHEMA,
+    paragraphFormat: STYLE_PARAGRAPH_FORMAT_SCHEMA
+  },
+  required: ['name'],
+  anyOf: [{ required: ['font'] }, { required: ['paragraphFormat'] }]
+};
+
+export const DOC_STYLES_TOOL = {
+  name: 'doc_styles',
+  description: 'Lit la table des styles du document Word ouvert (police, taille, couleur, alignement, espacements par style) ou en redéfinit. Une redéfinition se propage à tous les paragraphes portant le style — aucun contenu n’est touché. Indépendant de « template ».',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      paneId: PANE_ID_PROPERTY,
+      action: {
+        type: 'string',
+        enum: ['get', 'set'],
+        description: 'get : lire la table ; set : redéfinir des styles existants.'
+      },
+      names: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 60,
+        items: { type: 'string', minLength: 1 },
+        description: 'get : restreindre à ces styles ; l’emporte sur scope.'
+      },
+      scope: {
+        type: 'string',
+        enum: ['used', 'all'],
+        default: 'used',
+        description: 'get : « used » = styles utilisés plus le socle Normal/Titres ; « all » = toute la table.'
+      },
+      styles: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 40,
+        items: STYLE_UPDATE_SCHEMA,
+        description: 'set : styles à redéfinir. Un nom inconnu n’est jamais créé, il revient dans « skipped ».'
+      }
+    },
+    required: ['paneId', 'action'],
+    oneOf: [
+      {
+        properties: { action: { const: 'get' } },
+        ...forbidProperties('styles')
+      },
+      {
+        properties: { action: { const: 'set' } },
+        required: ['styles'],
+        ...forbidProperties('names', 'scope')
+      }
+    ]
+  }
+};
+
 export function toEmbeddedTool(tool) {
   const { paneId, ...properties } = tool.inputSchema.properties;
   const required = (tool.inputSchema.required || []).filter((name) => name !== 'paneId');

@@ -8,6 +8,7 @@ import {
   validatePlaceholderContent,
   getAllPlaceholdersInDocument
 } from './modules/doc-tools.js';
+import { docStyles } from './modules/doc-styles.js';
 import * as AnonymizationModule from './modules/anonymization.js';
 import { initOllamaAnalyzer, analyzeWithOllama, ollamaAnalyzeDocuments } from './modules/ollama-analyzer.js';
 import { EDIT_DOC_TOOL, READ_DOC_TOOL, toEmbeddedTool } from './modules/word-tool-schemas.js';
@@ -242,6 +243,21 @@ async function handleToolRequest(action, params) {
                 });
                 if (result?.success === true) markDocRead();
                 return result;
+            }
+            case 'doc_styles': {
+                // Redéfinir un style retouche tout le document : même exigence
+                // d'approbation que l'injection de template. La lecture passe.
+                if (params?.action === 'set' && !config.autoApprove) {
+                    const approved = await requestApproval(
+                        "L'IA souhaite redéfinir des styles du document",
+                        `Styles visés : ${(params.styles || []).map((style) => style?.name).filter(Boolean).join(', ') || 'non précisés'}
+⚠️ La mise en forme change dans tout le document, le contenu reste intact.`
+                    );
+                    if (!approved) {
+                        return { error: 'Modification des styles refusée par l\'utilisateur' };
+                    }
+                }
+                return await docStyles(params);
             }
             case 'read_case':
                 return await localTools.read_case(params);

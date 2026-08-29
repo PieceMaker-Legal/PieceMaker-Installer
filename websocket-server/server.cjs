@@ -1004,6 +1004,66 @@ app.post('/api/word/edit-doc', async (req, res) => {
   }
 });
 
+// Outil doc_styles — table des styles du document ciblé. Aucun binaire n'est lu
+// ici : le volet interroge et redéfinit les styles du document déjà ouvert.
+app.post('/api/word/doc-styles', async (req, res) => {
+  try {
+    const { client, docPath } = getRequestPane(req);
+    if (!client) {
+      return res.status(503).json({
+        error: 'Aucun volet Word connecté pour le document actif. Appelez open_doc d’abord.'
+      });
+    }
+
+    const requestId = Date.now().toString();
+    const params = req.body;
+
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        client.off('message', messageHandler);
+        resolve(res.status(504).json({ error: 'Timeout: Le client Word n\'a pas répondu' }));
+      }, 60000);
+
+      const messageHandler = (data) => {
+        try {
+          const response = JSON.parse(data);
+          if (response.requestId === requestId) {
+            clearTimeout(timeout);
+            client.off('message', messageHandler);
+            // Un style personnalisé peut porter le nom d'une partie : la table
+            // rejoint la conversation codée, comme toute lecture Word.
+            const legalCase = caseMappingForDocument(docPath);
+            const result = legalCase
+              ? anonymizeShape(response.result, legalCase.mapping)
+              : response.result;
+            resolve(res.json(result));
+          }
+        } catch (e) {
+          // Ignorer les messages mal formés
+        }
+      };
+
+      client.on('message', messageHandler);
+
+      // Le modèle a lu des codes : on rétablit les vrais noms avant d'écrire
+      // dans Word, comme pour edit_doc.
+      const legalCaseOut = caseMappingForDocument(docPath);
+      const outboundParams = legalCaseOut
+        ? deanonymizeShape(params, legalCaseOut.reverse_mapping)
+        : params;
+
+      client.send(JSON.stringify({
+        requestId,
+        action: 'doc_styles',
+        params: outboundParams
+      }));
+    });
+  } catch (error) {
+    console.error('Erreur /api/word/doc-styles:', error);
+    return res.status(500).json({ error: error.message });
+  }
+});
+
 // Helper pour échapper les caractères spéciaux regex
 function escapeRegex(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

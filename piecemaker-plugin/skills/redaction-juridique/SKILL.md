@@ -48,6 +48,7 @@ Ces templates peuvent être déplacés vers `~/.piecemaker/templates/` pour un e
 - **Ne jamais réutiliser un nom réel** présent dans une pièce anonymisée du dossier pour rédiger un extrait destiné à sortir du dossier de travail — rester sur les codes du mapping (`PERSONNE_PHYSIQUE_1`, `PERSONNE_MORALE_1`, `SOCIETE_SCI_1`, `ADRESSE_1`, etc.) tant que le document n'est pas définitivement destiné à un usage interne au dossier.
 - **Respecter les règles de validation du template** (ex. : une section "FAITS" doit s'appuyer sur des notes de bas de page référençant les pièces communiquées) plutôt que de les contourner pour faire passer un placeholder vide ou incomplet.
 - Les outils `template` / `read_doc` / `edit_doc` (voir la skill `word-taskpane`) opèrent sur le document Word ouvert via Office.js et exigent le `paneId` renvoyé par `open_doc`. Après l'injection initiale, toute édition doit préserver le suivi des modifications (track changes) et la structure des titres.
+- **Corriger une mise en forme passe par `doc_styles`**, jamais par une réinjection de `template` : redéfinir un style (police, taille, alignement, espacements) se propage à tous les paragraphes qui le portent et laisse le contenu déjà rédigé intact, là où une réinjection l'écraserait.
 
 ## Ce qu'il ne faut pas faire
 
