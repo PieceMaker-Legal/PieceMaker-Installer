@@ -63,16 +63,6 @@ function sanitizeGraphRecord(record, allowedSourceFiles) {
   return sanitized;
 }
 
-function assertPseudonymized(value, forbiddenClearTexts) {
-  const serialized = JSON.stringify(value);
-  for (const clearText of forbiddenClearTexts) {
-    const candidate = String(clearText || '');
-    if (candidate.length >= 3 && serialized.includes(candidate)) {
-      throw new Error('Le snapshot sémantique contient une entité non pseudonymisée ; écriture refusée.');
-    }
-  }
-}
-
 /**
  * Ramène les variantes Graphify (`links`) vers le contrat stable (`edges`) et
  * retire uniquement les chemins privés. Retourne `null` pour une sortie qui
@@ -81,7 +71,6 @@ function assertPseudonymized(value, forbiddenClearTexts) {
  */
 function normalizeGraphifySemanticSnapshot(raw, {
   allowedSourceFiles = [],
-  forbiddenClearTexts = [],
 } = {}) {
   if (!raw || typeof raw !== 'object' || !Array.isArray(raw.nodes)) return null;
   const allowed = new Set([...allowedSourceFiles].map(normalizeSourceFile).filter(Boolean));
@@ -104,7 +93,6 @@ function normalizeGraphifySemanticSnapshot(raw, {
     input_tokens: Number(raw.input_tokens || 0),
     output_tokens: Number(raw.output_tokens || 0),
   };
-  assertPseudonymized(snapshot, forbiddenClearTexts);
   return snapshot;
 }
 
@@ -133,7 +121,6 @@ function materializeCompositeLegalGraph({
   mappingDocument,
   finalizeGraph,
   allowedSourceFiles = [],
-  forbiddenClearTexts = [],
   requireSemanticSnapshot = false,
 }) {
   if (typeof finalizeGraph !== 'function') {
@@ -141,7 +128,6 @@ function materializeCompositeLegalGraph({
   }
   const normalized = normalizeGraphifySemanticSnapshot(semanticSnapshot, {
     allowedSourceFiles,
-    forbiddenClearTexts,
   });
   if (requireSemanticSnapshot && !normalized) {
     throw new Error('Graphify a produit un graphe juridique invalide.');

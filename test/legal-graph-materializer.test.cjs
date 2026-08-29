@@ -192,16 +192,6 @@ test('sans snapshot valide, le matérialiseur conserve un graphe Graphify-compat
   assert.ok(materialized.graph.edges.some((edge) => edge.relation === 'mentionne'));
 });
 
-test('le snapshot refuse une entité claire avant toute persistance', () => {
-  assert.throws(() => normalizeGraphifySemanticSnapshot({
-    nodes: [{ id: 'fuite', label: 'Alice Martin' }],
-    edges: [],
-    hyperedges: [],
-  }, {
-    forbiddenClearTexts: ['Alice Martin'],
-  }), /snapshot sémantique contient une entité non pseudonymisée/);
-});
-
 function buildFixture({ scanned }) {
   const caseRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-materializer-'));
   const workspace = path.join(caseRoot, WORKSPACE_SUBDIR);

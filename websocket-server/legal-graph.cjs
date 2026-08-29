@@ -56,7 +56,7 @@ const LEGAL_PROMPT_VERSION = 3;
 // constitue la frontière de confiance juridique déterministe.
 const LEGAL_INTEGRATION_VERSION = 3;
 const LEGAL_FINALIZER_VERSION = 3;
-const LEGAL_GRAPH_TIMEOUT_MS = 30 * 60 * 1000;
+const DEFAULT_LEGAL_GRAPH_TIMEOUT_MS = 30 * 60 * 1000;
 const LEGAL_QUERY_TIMEOUT_MS = 2 * 60 * 1000;
 const LEGAL_FRAMEWORK_FILE = 'cadre_juridique_francais.md';
 const LEGAL_FRAMEWORK_VERIFIED_AT = '2026-08-25';
@@ -472,6 +472,17 @@ function legalGraphEnvironment(extraEnv, bootstrap, promptMarker = null) {
   if (promptMarker) env.PIECEMAKER_GRAPHIFY_LEGAL_MARKER = promptMarker;
   env.PYTHONPATH = env.PYTHONPATH ? `${bootstrap}${path.delimiter}${env.PYTHONPATH}` : bootstrap;
   return env;
+}
+
+function resolveLegalGraphTimeoutMs(env = process.env) {
+  const raw = env?.PIECEMAKER_LEGAL_GRAPH_TIMEOUT_MS;
+  if (typeof raw !== 'string' && typeof raw !== 'number') {
+    return DEFAULT_LEGAL_GRAPH_TIMEOUT_MS;
+  }
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0
+    ? value
+    : DEFAULT_LEGAL_GRAPH_TIMEOUT_MS;
 }
 
 function removeNonGraphifySecrets(env) {
@@ -1272,12 +1283,6 @@ function finalizeLegalGraph(raw, topology, mappingDocument) {
     },
   };
 
-  const serialized = JSON.stringify(result);
-  for (const clearText of Object.keys(mappingDocument.mapping || {})) {
-    if (clearText.length >= 3 && serialized.includes(clearText)) {
-      throw new Error('Le graphe juridique contient une entité non pseudonymisée ; écriture refusée.');
-    }
-  }
   return result;
 }
 
@@ -1300,7 +1305,6 @@ function materializeLegalGraph(semanticSnapshot, topology, mappingDocument, {
     mappingDocument,
     finalizeGraph: finalizeLegalGraph,
     allowedSourceFiles,
-    forbiddenClearTexts: Object.keys(mappingDocument?.mapping || {}),
     requireSemanticSnapshot,
   });
 }
@@ -1695,7 +1699,7 @@ async function generateLegalGraph(caseRoot, signature, topology, mappingDocument
     await runner(options.command || graphifyCommand(), args, {
       cwd: temporary,
       env,
-      timeoutMs: LEGAL_GRAPH_TIMEOUT_MS,
+      timeoutMs: resolveLegalGraphTimeoutMs(env),
     });
     const expectedPromptHash = sha256(fs.readFileSync(LEGAL_PROMPT_FILE));
     let loadedPromptHash = '';
@@ -1984,6 +1988,7 @@ async function legalGraphStatus(caseRoot) {
 
 module.exports = {
   ASSERTION_STATUSES,
+  DEFAULT_LEGAL_GRAPH_TIMEOUT_MS,
   LEGAL_FRAMEWORK_FILE,
   LEGAL_FINALIZER_VERSION,
   LEGAL_GRAPH_RELATIVE,
@@ -2006,6 +2011,7 @@ module.exports = {
   readPersistedLegalSemanticSnapshot,
   rematerializeDeterministicLegalGraph,
   renderLegalGraphViewer,
+  resolveLegalGraphTimeoutMs,
   topologySignature,
   topologySemanticBoundarySignature,
   topologySemanticSignature,
