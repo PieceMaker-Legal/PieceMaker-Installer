@@ -332,16 +332,15 @@ test('contrat admin : la frise garde ses éditions, ses exports et la bascule ve
   assert.match(app, /graph\.hidden = !wantGraph/);
   assert.match(app, /frame\.setAttribute\('sandbox', 'allow-scripts'\)/);
   assert.match(app, /frame\.srcdoc = graphData\.viewerHtml/);
-  assert.match(app, /openChronologyMetaDialog/);
-  assert.match(app, /openChronologyEntityDialog/);
+  assert.match(app, /openChronologyVerifyDialog/);
   assert.match(app, /\/api\/admin\/repository\/document-meta/);
+  assert.match(app, /\/api\/admin\/repository\/document-entities/);
   assert.match(app, /api\('\/api\/admin\/mapping', \{/);
   assert.match(app, /repository\/chronology\/export/);
   for (const id of [
     'chronologyExportPdf',
     'chronologyExportDocx',
-    'chronologyMetaDialog',
-    'chronologyEntityDialog',
+    'chronologyVerifyDialog',
   ]) {
     assert.match(html, new RegExp(`id="${id}"`));
   }

@@ -869,16 +869,41 @@
     </form>
   </dialog>
 
-  <dialog id="chronologyEntityDialog" class="chronology-entity-dialog">
-    <form id="chronologyEntityForm" class="dialog-card chronology-entity-card">
+  <dialog id="chronologyVerifyDialog" class="chronology-verify-dialog">
+    <form id="chronologyVerifyForm" class="dialog-card chronology-verify-card">
       <header class="procedure-dialog-header">
-        <div><p class="eyebrow">CHRONOLOGIE</p><h2 id="chronologyEntityTitle">Entités de la pièce</h2><p>Écartez ou ajoutez un code pour cette pièce seulement. Renommer agit sur le même code dans tout le dossier ; la suppression globale demande une confirmation distincte.</p></div>
-        <button id="closeChronologyEntity" class="dialog-close" type="button" aria-label="Fermer">×</button>
+        <div><p class="eyebrow">CHRONOLOGIE</p><h2 id="chronologyVerifyTitle">Vérifier la pièce</h2><p>Corrigez le type, la date et le lieu détectés, puis les entités citées, en regard du contenu converti. Les métadonnées corrigées priment sur la détection et survivent à un nouveau scan ; renommer une entité agit sur le même code dans tout le dossier.</p></div>
+        <button id="closeChronologyVerify" class="dialog-close" type="button" aria-label="Fermer">×</button>
       </header>
-      <div class="chronology-entity-columns">
-        <section class="chronology-entity-list-col">
-          <div class="chronology-entity-col-title">Entités de cette pièce</div>
-          <div id="chronologyEntityRows" class="chronology-entity-rows"></div>
+      <div class="chronology-verify-columns">
+        <section class="chronology-verify-edit-col">
+          <div class="chronology-verify-scroll">
+            <div class="chronology-meta-col-title">Métadonnées</div>
+            <div class="chronology-meta-grid">
+              <label class="chronology-meta-field">
+                <span>Type de document</span>
+                <input id="chronologyMetaNature" list="chronologyNatureList" placeholder="ex. assignation" autocomplete="off">
+                <datalist id="chronologyNatureList"></datalist>
+              </label>
+              <label class="chronology-meta-field">
+                <span>Date</span>
+                <input id="chronologyMetaDate" type="date">
+              </label>
+              <label class="chronology-meta-field chronology-meta-field-wide">
+                <span>Lieu / juridiction</span>
+                <input id="chronologyMetaJuris" placeholder="ex. Tribunal judiciaire de Paris" autocomplete="off">
+              </label>
+            </div>
+            <div class="chronology-meta-custom">
+              <div class="chronology-meta-col-title">Champs personnalisés</div>
+              <div id="chronologyMetaFields" class="chronology-meta-fields"></div>
+              <button id="addChronologyMetaField" class="button ghost compact" type="button">+ Ajouter un champ</button>
+            </div>
+            <div class="chronology-verify-entities">
+              <div class="chronology-meta-col-title">Entités citées</div>
+              <div id="chronologyEntityRows" class="chronology-entity-rows"></div>
+            </div>
+          </div>
           <div class="chronology-entity-add">
             <select id="chronologyEntityAddCode" aria-label="Entité à ajouter à cette pièce"></select>
             <button id="addChronologyEntityToDocument" class="button ghost compact" type="button">Ajouter à cette pièce</button>
@@ -889,44 +914,10 @@
           <div id="chronologyEntityPreview" class="chronology-entity-preview"></div>
         </section>
       </div>
-      <span id="chronologyEntityMessage" class="message"></span>
+      <span id="chronologyVerifyMessage" class="message"></span>
       <div class="actions">
-        <button id="cancelChronologyEntity" class="button secondary" type="button">Annuler</button>
-        <button id="saveChronologyEntity" class="button primary" type="submit">Enregistrer les corrections</button>
-      </div>
-    </form>
-  </dialog>
-
-  <dialog id="chronologyMetaDialog" class="chronology-meta-dialog">
-    <form id="chronologyMetaForm" class="dialog-card chronology-meta-card">
-      <header class="procedure-dialog-header">
-        <div><p class="eyebrow">CHRONOLOGIE</p><h2 id="chronologyMetaTitle">Métadonnées de la pièce</h2><p>Corrigez la date, le lieu et le type détectés, ou ajoutez vos propres champs. Ces corrections priment sur la détection et survivent à un nouveau scan.</p></div>
-        <button id="closeChronologyMeta" class="dialog-close" type="button" aria-label="Fermer">×</button>
-      </header>
-      <div class="chronology-meta-grid">
-        <label class="chronology-meta-field">
-          <span>Type de document</span>
-          <input id="chronologyMetaNature" list="chronologyNatureList" placeholder="ex. assignation" autocomplete="off">
-          <datalist id="chronologyNatureList"></datalist>
-        </label>
-        <label class="chronology-meta-field">
-          <span>Date</span>
-          <input id="chronologyMetaDate" type="date">
-        </label>
-        <label class="chronology-meta-field chronology-meta-field-wide">
-          <span>Lieu / juridiction</span>
-          <input id="chronologyMetaJuris" placeholder="ex. Tribunal judiciaire de Paris" autocomplete="off">
-        </label>
-      </div>
-      <div class="chronology-meta-custom">
-        <div class="chronology-meta-col-title">Champs personnalisés</div>
-        <div id="chronologyMetaFields" class="chronology-meta-fields"></div>
-        <button id="addChronologyMetaField" class="button ghost compact" type="button">+ Ajouter un champ</button>
-      </div>
-      <span id="chronologyMetaMessage" class="message"></span>
-      <div class="actions">
-        <button id="cancelChronologyMeta" class="button secondary" type="button">Annuler</button>
-        <button id="saveChronologyMeta" class="button primary" type="submit">Enregistrer</button>
+        <button id="cancelChronologyVerify" class="button secondary" type="button">Annuler</button>
+        <button id="saveChronologyVerify" class="button primary" type="submit">Enregistrer les corrections</button>
       </div>
     </form>
   </dialog>

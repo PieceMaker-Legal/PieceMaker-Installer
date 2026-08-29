@@ -3930,7 +3930,7 @@ function renderTimelineRow(doc) {
   if (doc.codes.length) {
     const chips = document.createElement('div');
     chips.className = 'chronology-chips';
-    chips.title = 'Cliquer pour corriger les entités détectées';
+    chips.title = 'Cliquer pour vérifier la pièce et corriger les entités détectées';
     for (const entity of doc.codes) {
       const chip = document.createElement('span');
       chip.className = `entity-chip cat-${entity.category}`;
@@ -3938,7 +3938,7 @@ function renderTimelineRow(doc) {
       chip.title = `${CATEGORY_LABELS[entity.category] || entity.category} · ${entity.code}`;
       chips.append(chip);
     }
-    chips.addEventListener('click', () => openChronologyEntityDialog(doc));
+    chips.addEventListener('click', () => openChronologyVerifyDialog(doc));
     card.append(chips);
   } else if (doc.indexed) {
     const none = document.createElement('div');
@@ -3970,23 +3970,14 @@ function renderTimelineRow(doc) {
   const actions = document.createElement('div');
   actions.className = 'chronology-card-actions';
 
-  const editButton = document.createElement('button');
-  editButton.type = 'button';
-  editButton.className = 'button ghost compact';
-  editButton.textContent = doc.edited ? '✏️ Métadonnées ✓' : '✏️ Métadonnées';
-  editButton.title = 'Corriger la date, le lieu, le type ou ajouter des champs';
-  if (doc.edited) editButton.classList.add('chronology-edited');
-  editButton.addEventListener('click', () => openChronologyMetaDialog(doc));
-  actions.append(editButton);
-
-  const correctButton = document.createElement('button');
-  correctButton.type = 'button';
-  correctButton.className = 'button ghost compact';
-  correctButton.textContent = '📝 Corriger / contenu';
-  correctButton.title = 'Voir le Markdown converti et corriger les entités détectées';
-  correctButton.disabled = !doc.indexed;
-  correctButton.addEventListener('click', () => openChronologyEntityDialog(doc));
-  actions.append(correctButton);
+  const verifyButton = document.createElement('button');
+  verifyButton.type = 'button';
+  verifyButton.className = 'button ghost compact';
+  verifyButton.textContent = doc.edited ? '🔎 Vérifier ✓' : '🔎 Vérifier';
+  verifyButton.title = 'Corriger les métadonnées et les entités en regard du Markdown converti';
+  if (doc.edited) verifyButton.classList.add('chronology-edited');
+  verifyButton.addEventListener('click', () => openChronologyVerifyDialog(doc));
+  actions.append(verifyButton);
 
   const revealButton = document.createElement('button');
   revealButton.type = 'button';
@@ -4118,27 +4109,93 @@ function renderChronologyGraph(data) {
 }
 
 // ---------------------------------------------------------------------------
-// Correction des entités : les décisions d'inclusion sont locales à la
+// Vérification d'une pièce : une seule fenêtre pour les métadonnées (type,
+// date, lieu, champs libres) et pour les entités citées, en regard du Markdown
+// converti. Les métadonnées corrigées vont dans un fichier d'override que le
+// pipeline n'écrase jamais (tout vide efface la correction et rend la main à
+// la détection). Côté entités, les décisions d'inclusion sont locales à la
 // pièce ; le libellé et la suppression du code sont des opérations globales,
-// annoncées comme telles. Le Markdown converti reste affiché à droite.
-let chronologyEntityDoc = null;
+// annoncées comme telles.
+let chronologyVerifyDoc = null;
 let chronologyEntityContext = null;
 
-function closeChronologyEntityDialog() {
-  chronologyEntityDoc = null;
-  chronologyEntityContext = null;
-  byId('chronologyEntityDialog').close();
+const NATURE_SUGGESTIONS = [
+  'assignation', 'conclusions', 'requête', 'courrier', 'courriel',
+  'mise en demeure', 'contrat', 'facture', 'devis', 'attestation',
+  'jugement', 'arrêt', 'ordonnance', 'procès-verbal', 'constat',
+  'expertise', 'statuts de société', 'extrait Kbis', 'relevé bancaire',
+  'acte notarié', 'bordereau de pièces', 'autre',
+];
+
+function populateNatureList() {
+  const list = byId('chronologyNatureList');
+  if (!list || list.childElementCount) return;
+  for (const nature of NATURE_SUGGESTIONS) {
+    const option = document.createElement('option');
+    option.value = nature;
+    list.append(option);
+  }
 }
 
-async function openChronologyEntityDialog(doc) {
-  if (!selectedFolder || !doc.indexed) return;
-  chronologyEntityDoc = doc;
+function addChronologyMetaFieldRow(field = { label: '', value: '' }) {
+  const row = document.createElement('div');
+  row.className = 'chronology-meta-field-row';
+
+  const label = document.createElement('input');
+  label.className = 'chronology-meta-field-label';
+  label.placeholder = 'Intitulé (ex. Cote)';
+  label.value = field.label || '';
+
+  const value = document.createElement('input');
+  value.className = 'chronology-meta-field-value';
+  value.placeholder = 'Valeur';
+  value.value = field.value || '';
+
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'remove-chronology-entity';
+  remove.title = 'Supprimer ce champ';
+  remove.textContent = '×';
+  remove.addEventListener('click', () => row.remove());
+
+  row.append(label, value, remove);
+  byId('chronologyMetaFields').append(row);
+  return row;
+}
+
+function closeChronologyVerifyDialog() {
+  chronologyVerifyDoc = null;
   chronologyEntityContext = null;
-  byId('chronologyEntityTitle').textContent = doc.name;
+  byId('chronologyVerifyDialog').close();
+}
+
+async function openChronologyVerifyDialog(doc) {
+  if (!selectedFolder) return;
+  chronologyVerifyDoc = doc;
+  chronologyEntityContext = null;
+  populateNatureList();
+  byId('chronologyVerifyTitle').textContent = doc.name;
+  byId('chronologyMetaNature').value = doc.nature || '';
+  byId('chronologyMetaDate').value = doc.dateIso || '';
+  byId('chronologyMetaJuris').value = doc.juridiction || '';
+  const fields = byId('chronologyMetaFields');
+  fields.textContent = '';
+  for (const field of Array.isArray(doc.fields) ? doc.fields : []) addChronologyMetaFieldRow(field);
   byId('chronologyEntityRows').textContent = '';
+  byId('chronologyEntityPreview').textContent = '';
+  // Neutralisé tant que le mapping n'est pas chargé : sinon une ouverture
+  // suivante réafficherait les options de la pièce précédente.
+  disableChronologyEntityAdd();
+  setMessage(byId('chronologyVerifyMessage'), '');
+  byId('chronologyVerifyDialog').showModal();
+  // Pièce jamais convertie : ni Markdown ni entités à corriger, mais les
+  // métadonnées restent modifiables — d'où une seule fenêtre pour les deux.
+  if (!doc.indexed) {
+    renderChronologyEntityUnavailable();
+    return;
+  }
   byId('chronologyEntityPreview').textContent = 'Chargement…';
-  setMessage(byId('chronologyEntityMessage'), 'Chargement…');
-  byId('chronologyEntityDialog').showModal();
+  setMessage(byId('chronologyVerifyMessage'), 'Chargement…');
   try {
     const [mappingData, documentData] = await Promise.all([
       api(`/api/admin/mapping?${new URLSearchParams({ case: selectedFolder })}`),
@@ -4158,10 +4215,26 @@ async function openChronologyEntityDialog(doc) {
     }
     renderChronologyEntityRows(doc);
     renderChronologyEntityPreview(documentData.content);
-    setMessage(byId('chronologyEntityMessage'), '');
+    setMessage(byId('chronologyVerifyMessage'), '');
   } catch (error) {
-    setMessage(byId('chronologyEntityMessage'), error.message, 'error');
+    setMessage(byId('chronologyVerifyMessage'), error.message, 'error');
   }
+}
+
+function renderChronologyEntityUnavailable() {
+  const rows = byId('chronologyEntityRows');
+  const empty = document.createElement('p');
+  empty.className = 'chronology-entity-empty';
+  empty.textContent = 'Pièce non convertie en Markdown : aucune entité à corriger.';
+  rows.append(empty);
+  byId('chronologyEntityPreview').textContent = 'Pièce non convertie en Markdown.';
+}
+
+function disableChronologyEntityAdd() {
+  const select = byId('chronologyEntityAddCode');
+  select.textContent = '';
+  select.disabled = true;
+  byId('addChronologyEntityToDocument').disabled = true;
 }
 
 function chronologyEntityRowsList() {
@@ -4169,7 +4242,7 @@ function chronologyEntityRowsList() {
 }
 
 function categoryForChronologyCode(code) {
-  return chronologyEntityDoc?.codes?.find((entity) => entity.code === code)?.category
+  return chronologyVerifyDoc?.codes?.find((entity) => entity.code === code)?.category
     || (/PERSONNE_PHYSIQUE|DIRIGEANT/.test(code) ? 'personne'
       : (/SOCIETE|MORALE|(?:^|_)(?:SAS|SARL|SA|SCI|GMBH|LTD)(?:_|$)/.test(code) ? 'societe' : 'autre'));
 }
@@ -4213,7 +4286,7 @@ function addChronologyEntityToDocument() {
   const code = byId('chronologyEntityAddCode').value;
   if (!code) return;
   chronologyEntityContext.activeCodes.add(code);
-  renderChronologyEntityRows(chronologyEntityDoc);
+  renderChronologyEntityRows(chronologyVerifyDoc);
 }
 
 function renderChronologyEntityRows(doc) {
@@ -4252,7 +4325,7 @@ function renderChronologyEntityRows(doc) {
     input.addEventListener('input', () => {
       input.classList.remove('invalid');
       chronologyEntityContext.labels.set(code, input.value);
-      setMessage(byId('chronologyEntityMessage'), '');
+      setMessage(byId('chronologyVerifyMessage'), '');
     });
     const codeLabel = document.createElement('span');
     codeLabel.className = 'chronology-entity-code';
@@ -4317,50 +4390,92 @@ function chronologyRelabeledGroup(group, code, rawLabel) {
   return { code, principal: label, variants };
 }
 
-async function saveChronologyEntityChanges(event) {
+// Métadonnées saisies dans la fenêtre, sous la forme attendue par l'override.
+function chronologyMetaFormValues() {
+  const fields = [...byId('chronologyMetaFields').querySelectorAll('.chronology-meta-field-row')]
+    .map((row) => ({
+      label: row.querySelector('.chronology-meta-field-label').value.trim(),
+      value: row.querySelector('.chronology-meta-field-value').value.trim(),
+    }))
+    .filter((field) => field.label || field.value);
+  return {
+    nature: byId('chronologyMetaNature').value.trim(),
+    dateIso: byId('chronologyMetaDate').value || null,
+    juridiction: byId('chronologyMetaJuris').value.trim(),
+    fields,
+  };
+}
+
+// Compare aux valeurs effectives affichées (override s'il existe, détection
+// sinon) : sans écart, on n'envoie rien, faute de quoi une simple ouverture de
+// la fenêtre figerait la détection dans un override et un commit inutile.
+function chronologyMetaChanged(doc, values) {
+  const current = {
+    nature: doc.nature || '',
+    dateIso: doc.dateIso || null,
+    juridiction: doc.juridiction || '',
+    fields: (Array.isArray(doc.fields) ? doc.fields : [])
+      .map((field) => ({ label: (field.label || '').trim(), value: (field.value || '').trim() }))
+      .filter((field) => field.label || field.value),
+  };
+  return JSON.stringify(current) !== JSON.stringify(values);
+}
+
+async function saveChronologyVerify(event) {
   event.preventDefault();
-  if (!chronologyEntityDoc || !chronologyEntityContext) return;
-  const button = byId('saveChronologyEntity');
+  if (!chronologyVerifyDoc) return;
+  const doc = chronologyVerifyDoc;
+  const button = byId('saveChronologyVerify');
   button.disabled = true;
   try {
-    captureChronologyEntityLabels();
-    const nextGroups = chronologyEntityContext.groups
-      .filter((group) => !chronologyEntityContext.deletedCodes.has(group.code))
-      .map((group) => chronologyRelabeledGroup(
-        group,
-        group.code,
-        chronologyEntityContext.labels.get(group.code),
-      ));
-    let nextMapping;
-    let currentMapping;
-    try {
-      nextMapping = {
-        ...buildMappingDocument(nextGroups),
-        informations_dossier: chronologyEntityContext.informations_dossier,
+    const metaValues = chronologyMetaFormValues();
+    const metaChanged = chronologyMetaChanged(doc, metaValues);
+
+    // Volet entités : absent tant que la pièce n'a pas été convertie.
+    let mappingChanged = false;
+    let decisionsChanged = false;
+    let nextMapping = null;
+    let decisions = null;
+    if (chronologyEntityContext) {
+      captureChronologyEntityLabels();
+      const nextGroups = chronologyEntityContext.groups
+        .filter((group) => !chronologyEntityContext.deletedCodes.has(group.code))
+        .map((group) => chronologyRelabeledGroup(
+          group,
+          group.code,
+          chronologyEntityContext.labels.get(group.code),
+        ));
+      let currentMapping;
+      try {
+        nextMapping = {
+          ...buildMappingDocument(nextGroups),
+          informations_dossier: chronologyEntityContext.informations_dossier,
+        };
+        currentMapping = buildMappingDocument(chronologyEntityContext.groups);
+      } catch (validationError) {
+        const offending = nextGroups[validationError.rowIndex];
+        const input = offending && byId('chronologyEntityRows').querySelector(`[data-code="${CSS.escape(offending.code)}"] .chronology-entity-label`);
+        input?.classList.add('invalid');
+        input?.focus();
+        throw validationError;
+      }
+
+      mappingChanged = JSON.stringify(currentMapping) !== JSON.stringify({
+        mapping: nextMapping.mapping,
+        reverse_mapping: nextMapping.reverse_mapping,
+      });
+      const knownCodes = new Set(Object.keys(nextMapping.reverse_mapping));
+      const computedDecisions = entityDecisionsForSelection(
+        doc,
+        [...chronologyEntityContext.activeCodes].filter((code) => knownCodes.has(code)),
+      );
+      decisions = {
+        additions: computedDecisions.additions.filter((code) => knownCodes.has(code)),
+        exclusions: computedDecisions.exclusions.filter((code) => knownCodes.has(code)),
       };
-      currentMapping = buildMappingDocument(chronologyEntityContext.groups);
-    } catch (validationError) {
-      const offending = nextGroups[validationError.rowIndex];
-      const input = offending && byId('chronologyEntityRows').querySelector(`[data-code="${CSS.escape(offending.code)}"] .chronology-entity-label`);
-      input?.classList.add('invalid');
-      input?.focus();
-      throw validationError;
+      decisionsChanged = !sameEntityDecisions(decisions, chronologyEntityContext.initialDecisions);
     }
 
-    const mappingChanged = JSON.stringify(currentMapping) !== JSON.stringify({
-      mapping: nextMapping.mapping,
-      reverse_mapping: nextMapping.reverse_mapping,
-    });
-    const knownCodes = new Set(Object.keys(nextMapping.reverse_mapping));
-    const computedDecisions = entityDecisionsForSelection(
-      chronologyEntityDoc,
-      [...chronologyEntityContext.activeCodes].filter((code) => knownCodes.has(code)),
-    );
-    const decisions = {
-      additions: computedDecisions.additions.filter((code) => knownCodes.has(code)),
-      exclusions: computedDecisions.exclusions.filter((code) => knownCodes.has(code)),
-    };
-    const decisionsChanged = !sameEntityDecisions(decisions, chronologyEntityContext.initialDecisions);
     let committed = false;
     if (mappingChanged) {
       const result = await api('/api/admin/mapping', {
@@ -4369,130 +4484,44 @@ async function saveChronologyEntityChanges(event) {
       });
       committed ||= Boolean(result.commit?.created);
     }
-    if (decisionsChanged) {
+    // Une seule mutation de pièce : `document-meta` remplace l'override en
+    // bloc et accepte les décisions d'entité ; `document-entities` préserve
+    // l'override existant quand seules les entités bougent.
+    if (metaChanged) {
+      const result = await api('/api/admin/repository/document-meta', {
+        method: 'PUT',
+        body: JSON.stringify({
+          case: selectedFolder,
+          path: doc.path,
+          ...metaValues,
+          reason: 'Vérification de la pièce depuis la chronologie',
+          ...(decisionsChanged ? { entityDecisions: decisions } : {}),
+        }),
+      });
+      committed ||= Boolean(result.commit?.created);
+    } else if (decisionsChanged) {
       const result = await api('/api/admin/repository/document-entities', {
         method: 'PUT',
         body: JSON.stringify({
           case: selectedFolder,
-          path: chronologyEntityDoc.path,
+          path: doc.path,
           entityDecisions: decisions,
-          reason: 'Correction des entités depuis la chronologie',
+          reason: 'Vérification de la pièce depuis la chronologie',
         }),
       });
       committed ||= Boolean(result.commit?.created);
     }
-    toast(mappingChanged || decisionsChanged
-      ? `Entités mises à jour${committed ? ' et commitées' : ''}`
+
+    const changed = [];
+    if (metaChanged) changed.push('métadonnées');
+    if (mappingChanged || decisionsChanged) changed.push('entités');
+    toast(changed.length
+      ? `Pièce vérifiée · ${changed.join(' et ')} mises à jour${committed ? ' et commitées' : ''}`
       : 'Aucune modification à enregistrer');
-    closeChronologyEntityDialog();
+    closeChronologyVerifyDialog();
     await loadChronology();
   } catch (error) {
-    setMessage(byId('chronologyEntityMessage'), error.message, 'error');
-  } finally {
-    button.disabled = false;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Correction manuelle des métadonnées d'une pièce (chronologie) — type, date,
-// lieu et champs libres. Persisté via `PUT /api/admin/repository/document-meta`
-// dans un fichier d'override séparé : le pipeline ne l'écrase jamais, donc une
-// correction survit à un nouveau scan. Envoyer tout vide efface la correction
-// (retour aux valeurs détectées par GLiNER).
-let chronologyMetaDoc = null;
-
-const NATURE_SUGGESTIONS = [
-  'assignation', 'conclusions', 'requête', 'courrier', 'courriel',
-  'mise en demeure', 'contrat', 'facture', 'devis', 'attestation',
-  'jugement', 'arrêt', 'ordonnance', 'procès-verbal', 'constat',
-  'expertise', 'statuts de société', 'extrait Kbis', 'relevé bancaire',
-  'acte notarié', 'bordereau de pièces', 'autre',
-];
-
-function populateNatureList() {
-  const list = byId('chronologyNatureList');
-  if (!list || list.childElementCount) return;
-  for (const nature of NATURE_SUGGESTIONS) {
-    const option = document.createElement('option');
-    option.value = nature;
-    list.append(option);
-  }
-}
-
-function addChronologyMetaFieldRow(field = { label: '', value: '' }) {
-  const row = document.createElement('div');
-  row.className = 'chronology-meta-field-row';
-
-  const label = document.createElement('input');
-  label.className = 'chronology-meta-field-label';
-  label.placeholder = 'Intitulé (ex. Cote)';
-  label.value = field.label || '';
-
-  const value = document.createElement('input');
-  value.className = 'chronology-meta-field-value';
-  value.placeholder = 'Valeur';
-  value.value = field.value || '';
-
-  const remove = document.createElement('button');
-  remove.type = 'button';
-  remove.className = 'remove-chronology-entity';
-  remove.title = 'Supprimer ce champ';
-  remove.textContent = '×';
-  remove.addEventListener('click', () => row.remove());
-
-  row.append(label, value, remove);
-  byId('chronologyMetaFields').append(row);
-  return row;
-}
-
-function closeChronologyMetaDialog() {
-  chronologyMetaDoc = null;
-  byId('chronologyMetaDialog').close();
-}
-
-function openChronologyMetaDialog(doc) {
-  if (!selectedFolder) return;
-  chronologyMetaDoc = doc;
-  populateNatureList();
-  byId('chronologyMetaTitle').textContent = doc.name;
-  byId('chronologyMetaNature').value = doc.nature || '';
-  byId('chronologyMetaDate').value = doc.dateIso || '';
-  byId('chronologyMetaJuris').value = doc.juridiction || '';
-  const fields = byId('chronologyMetaFields');
-  fields.textContent = '';
-  for (const field of Array.isArray(doc.fields) ? doc.fields : []) addChronologyMetaFieldRow(field);
-  setMessage(byId('chronologyMetaMessage'), '');
-  byId('chronologyMetaDialog').showModal();
-}
-
-async function saveChronologyMeta(event) {
-  event.preventDefault();
-  if (!chronologyMetaDoc) return;
-  const button = byId('saveChronologyMeta');
-  button.disabled = true;
-  try {
-    const fields = [...byId('chronologyMetaFields').querySelectorAll('.chronology-meta-field-row')]
-      .map((row) => ({
-        label: row.querySelector('.chronology-meta-field-label').value.trim(),
-        value: row.querySelector('.chronology-meta-field-value').value.trim(),
-      }))
-      .filter((field) => field.label || field.value);
-    await api('/api/admin/repository/document-meta', {
-      method: 'PUT',
-      body: JSON.stringify({
-        case: selectedFolder,
-        path: chronologyMetaDoc.path,
-        nature: byId('chronologyMetaNature').value.trim(),
-        dateIso: byId('chronologyMetaDate').value || null,
-        juridiction: byId('chronologyMetaJuris').value.trim(),
-        fields,
-      }),
-    });
-    toast('Métadonnées enregistrées');
-    closeChronologyMetaDialog();
-    await loadChronology();
-  } catch (error) {
-    setMessage(byId('chronologyMetaMessage'), error.message, 'error');
+    setMessage(byId('chronologyVerifyMessage'), error.message, 'error');
   } finally {
     button.disabled = false;
   }
@@ -4728,14 +4757,11 @@ byId('addAdverseParty').addEventListener('click', () => addProcedureParty('adver
 byId('closeProcedureParties').addEventListener('click', closeProcedurePartiesDialog);
 byId('cancelProcedureParties').addEventListener('click', closeProcedurePartiesDialog);
 byId('procedurePartiesForm').addEventListener('submit', saveProcedureParties);
-byId('closeChronologyEntity').addEventListener('click', closeChronologyEntityDialog);
-byId('cancelChronologyEntity').addEventListener('click', closeChronologyEntityDialog);
-byId('chronologyEntityForm').addEventListener('submit', saveChronologyEntityChanges);
+byId('closeChronologyVerify').addEventListener('click', closeChronologyVerifyDialog);
+byId('cancelChronologyVerify').addEventListener('click', closeChronologyVerifyDialog);
+byId('chronologyVerifyForm').addEventListener('submit', saveChronologyVerify);
 byId('addChronologyEntityToDocument').addEventListener('click', addChronologyEntityToDocument);
-byId('closeChronologyMeta').addEventListener('click', closeChronologyMetaDialog);
-byId('cancelChronologyMeta').addEventListener('click', closeChronologyMetaDialog);
 byId('addChronologyMetaField').addEventListener('click', () => addChronologyMetaFieldRow());
-byId('chronologyMetaForm').addEventListener('submit', saveChronologyMeta);
 byId('caseTelegramCard').addEventListener('click', openCaseTelegramEditor);
 byId('telegramCaseView').addEventListener('submit', saveCaseTelegramBot);
 

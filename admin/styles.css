@@ -710,13 +710,17 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .graphify-viewer-wrap.graphify-fullscreen .chronology-graph-meta { margin: 0 88px 0 0; }
 .graphify-viewer-wrap.graphify-fullscreen .graphify-viewer-frame { flex: 1; height: auto; }
 
-/* Correction des entités détectées (pièce ↔ mapping) */
-.chronology-entity-dialog { width: min(1120px, calc(100% - 28px)); max-height: min(90vh, 900px); overflow: hidden; }
-.chronology-entity-card { max-height: min(90vh, 900px); grid-template-rows: auto minmax(0, 1fr) auto auto; overflow: hidden; }
-.chronology-entity-columns { display: grid; min-height: 0; grid-template-columns: minmax(0, .95fr) minmax(0, 1.35fr); gap: 14px; overflow: hidden; }
-.chronology-entity-list-col, .chronology-entity-preview-col { display: flex; min-width: 0; min-height: 220px; flex-direction: column; overflow: hidden; border: 1px solid #d8dee4; border-radius: 12px; background: #f6f8fa; }
+/* Vérification d'une pièce : métadonnées + entités en regard du Markdown. */
+.chronology-verify-dialog { width: min(1180px, calc(100% - 28px)); max-height: min(92vh, 940px); overflow: hidden; }
+.chronology-verify-card { max-height: min(92vh, 940px); grid-template-rows: auto minmax(0, 1fr) auto auto; overflow: hidden; }
+.chronology-verify-columns { display: grid; min-height: 0; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.25fr); gap: 14px; overflow: hidden; }
+.chronology-verify-edit-col, .chronology-entity-preview-col { display: flex; min-width: 0; min-height: 220px; flex-direction: column; overflow: hidden; border: 1px solid #d8dee4; border-radius: 12px; background: #f6f8fa; }
+/* Colonne de gauche : une seule zone de défilement pour les deux blocs, la
+   liste déroulante d'ajout restant ancrée en bas. */
+.chronology-verify-scroll { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: auto; padding: 12px; gap: 4px; }
+.chronology-verify-entities { margin-top: 16px; }
 .chronology-entity-col-title { border-bottom: 1px solid #d8dee4; padding: 10px 12px; color: #57606a; font-size: .65rem; font-weight: 750; letter-spacing: .04em; text-transform: uppercase; }
-.chronology-entity-rows { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 8px; overflow: auto; padding: 10px; }
+.chronology-entity-rows { display: flex; flex-direction: column; gap: 8px; }
 .chronology-entity-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; border: 1px solid #d8dee4; border-radius: 9px; background: #fff; padding: 8px 9px; }
 .chronology-entity-row.excluded { opacity: .62; background: #f6f8fa; }
 .chronology-entity-local-action { white-space: nowrap; }
@@ -728,11 +732,11 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .chronology-entity-code { color: var(--muted); font-size: .62rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; display: block; margin-top: 2px; }
 .remove-chronology-entity { width: 28px; height: 32px; border: 0; border-radius: 6px; background: transparent; color: #6e7781; cursor: pointer; font-size: 1.05rem; }
 .remove-chronology-entity:hover { background: #ffebe9; color: #82071e; }
-.chronology-entity-empty { margin: auto; padding: 28px 16px; color: #8c959f; font-size: .74rem; text-align: center; }
+.chronology-entity-empty { margin: 0; padding: 18px 16px; color: #8c959f; font-size: .74rem; text-align: center; }
 .chronology-entity-preview { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; font-size: .82rem; line-height: 1.55; }
 .chronology-entity-preview :is(h1, h2, h3) { margin: 12px 0 6px; }
 .chronology-entity-preview p { margin: 0 0 10px; }
-.chronology-entity-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; border-top: 1px solid #d8dee4; padding: 9px 10px; }
+.chronology-entity-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; border-top: 1px solid #d8dee4; padding: 9px 10px; background: #f6f8fa; }
 .chronology-entity-add select { min-width: 0; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; padding: 5px 8px; color: #24292f; }
 
 /* Champs libres affichés sur la carte de chronologie. */
@@ -741,9 +745,8 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .chronology-fields dd { margin: 0; color: var(--ink); font-size: .74rem; }
 .chronology-card-actions .button.chronology-edited { color: #1a7f37; border-color: #b5e3c1; }
 
-/* Édition des métadonnées d'une pièce (type / date / lieu / champs). */
-.chronology-meta-dialog { width: min(640px, calc(100% - 28px)); max-height: min(90vh, 820px); }
-.chronology-meta-card { max-height: min(90vh, 820px); overflow: auto; }
+/* Métadonnées d'une pièce (type / date / lieu / champs), dans la fenêtre de
+   vérification. */
 .chronology-meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 4px; }
 .chronology-meta-field { display: flex; flex-direction: column; gap: 5px; }
 .chronology-meta-field-wide { grid-column: 1 / -1; }
@@ -1107,7 +1110,7 @@ html[data-theme="dark"] .procedure-summary-side.client { background: #132b1d; }
 html[data-theme="dark"] .procedure-summary-side.adverse { background: #321b20; }
 html[data-theme="dark"] :is(.procedure-summary-side small, .procedure-dialog-header p:last-child, .procedure-party-item label, .procedure-party-fields label, .procedure-party-column-title small) { color: var(--muted); }
 html[data-theme="dark"] .procedure-summary-separator { border-color: var(--line); color: var(--muted); }
-html[data-theme="dark"] :is(.procedure-party-column, .chronology-entity-list-col, .chronology-entity-preview-col) { border-color: var(--line); background: var(--dark-surface-muted); }
+html[data-theme="dark"] :is(.procedure-party-column, .chronology-verify-edit-col, .chronology-entity-preview-col) { border-color: var(--line); background: var(--dark-surface-muted); }
 html[data-theme="dark"] :is(.procedure-party-column-title, .chronology-entity-col-title) { border-color: var(--line); }
 html[data-theme="dark"] :is(.procedure-party-item input, .procedure-party-item select, .chronology-entity-row input, .chronology-meta-field input, .chronology-meta-field-row input) { border-color: var(--dark-border); background: var(--paper); color: var(--ink); }
 html[data-theme="dark"] :is(.chronology-meta-field > span, .chronology-meta-col-title) { color: var(--muted); }
@@ -1126,7 +1129,7 @@ html[data-theme="dark"] .chronology-dot { border-color: var(--paper); }
 html[data-theme="dark"] .chronology-entity-row { border-color: var(--line); background: var(--dark-surface); }
 html[data-theme="dark"] .chronology-entity-row.excluded { background: var(--dark-surface-muted); }
 html[data-theme="dark"] .chronology-entity-col-title { color: var(--muted); }
-html[data-theme="dark"] .chronology-entity-add { border-color: var(--line); }
+html[data-theme="dark"] .chronology-entity-add { border-color: var(--line); background: var(--dark-surface-muted); }
 html[data-theme="dark"] .chronology-entity-add select { border-color: var(--dark-border); background: var(--paper); color: var(--ink); }
 html[data-theme="dark"] .entity-chip.cat-personne { background: #172f4d; color: #79c0ff; }
 html[data-theme="dark"] .entity-chip.cat-societe { background: #30264d; color: #d2a8ff; }
