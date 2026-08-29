@@ -244,21 +244,8 @@ async function handleToolRequest(action, params) {
                 if (result?.success === true) markDocRead();
                 return result;
             }
-            case 'doc_styles': {
-                // Redéfinir un style retouche tout le document : même exigence
-                // d'approbation que l'injection de template. La lecture passe.
-                if (params?.action === 'set' && !config.autoApprove) {
-                    const approved = await requestApproval(
-                        "L'IA souhaite redéfinir des styles du document",
-                        `Styles visés : ${(params.styles || []).map((style) => style?.name).filter(Boolean).join(', ') || 'non précisés'}
-⚠️ La mise en forme change dans tout le document, le contenu reste intact.`
-                    );
-                    if (!approved) {
-                        return { error: 'Modification des styles refusée par l\'utilisateur' };
-                    }
-                }
+            case 'doc_styles':
                 return await docStyles(params);
-            }
             case 'read_case':
                 return await localTools.read_case(params);
             case 'get_resource':

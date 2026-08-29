@@ -95,9 +95,6 @@ ne supprime aucun style : un nom inconnu revient dans `skipped` avec sa raison,
 sans erreur. Il n'affecte pas non plus un style à des paragraphes précis —
 c'est le rôle de `edit_doc`.
 
-Le volet demande une approbation avant chaque `set`, la mise en forme changeant
-dans tout le document. La lecture passe sans approbation.
-
 Corriger une mise en forme passe donc par `doc_styles`, jamais par une
 réinjection de `template`, qui écraserait le contenu déjà rédigé.
 
