@@ -14,6 +14,7 @@ logger = logging.getLogger('piecemaker_pii')
 DEFAULT_CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'litellm_config.yaml')
 CHATGPT_WEBSOCKET_PATH = '/chatgpt/responses'
 CHATGPT_WEBSOCKET_TARGET = 'wss://chatgpt.com/backend-api/codex/responses'
+GRACEFUL_SHUTDOWN_TIMEOUT_S = 10
 
 
 def _config_file() -> str:
@@ -113,7 +114,19 @@ def main() -> int:
 
     import uvicorn
 
-    uvicorn.run(app, host=host, port=port, log_level='info')
+    # Sans borne, Uvicorn attend indéfiniment la fermeture des connexions
+    # ouvertes à la réception du SIGTERM. Un WebSocket Codex ou un flux SSE en
+    # cours suffit alors à figer l'arrêt : le processus n'accepte plus rien
+    # mais garde le port, si bien qu'aucune relance ne peut s'y lier et que
+    # `startLitellmProxy` refuse de tuer un PID vivant. La borne transforme cet
+    # état sans issue en un arrêt franc.
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_level='info',
+        timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_TIMEOUT_S,
+    )
     return 0
 
 

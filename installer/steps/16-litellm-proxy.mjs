@@ -3,7 +3,7 @@
 import os from 'node:os';
 
 import {
-  bypassLlmClients,
+  bypassLlmClientsIfProxyGone,
   configureLlmClients,
   getLitellmStatus,
   installLitellmDependencies,
@@ -55,7 +55,9 @@ export async function install(ctx) {
     service = await startLitellmProxy({ config: ctx.config });
     log.ok(`Proxy LiteLLM ${service.started ? 'démarré' : 'déjà actif'} : ${service.origin}`);
   } catch (error) {
-    bypassLlmClients({ userHome: os.homedir() });
+    // Un proxy lent à démarrer n'est pas un proxy absent : ne retirer le
+    // routage que si plus aucun processus LiteLLM ne tourne.
+    bypassLlmClientsIfProxyGone({ config: ctx.config, userHome: os.homedir() });
     return { status: 'failed', note: error.message };
   }
 

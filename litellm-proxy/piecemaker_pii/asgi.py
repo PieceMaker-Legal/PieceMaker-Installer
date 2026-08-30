@@ -5,6 +5,7 @@ génération LLM sont interceptés : champs textuels codés dans la requête, pu
 ré-identification du JSON, du SSE ou du NDJSON renvoyé au client.
 """
 
+import asyncio
 import codecs
 import json
 import logging
@@ -16,6 +17,14 @@ from .mapping import MappingCache
 from .substitution import anonymize_text, anonymize_text_with_matches, deanonymize_text
 
 logger = logging.getLogger('piecemaker_pii.asgi')
+
+# Le codage/décodage PII est du travail CPU synchrone : tant qu'il tourne, la
+# boucle d'événements ne répond plus, health check compris. Des charges utiles
+# de l'ordre du mégaoctet (Codex) ont bloqué la boucle plus de 350 ms, assez
+# pour faire échouer les sondes des appelants et déclencher de fausses
+# relances. Au-delà de ce seuil, le travail part donc dans un thread. En deçà,
+# il reste en ligne : le coût d'un aller-retour de thread dépasserait le gain.
+OFFLOAD_MIN_BYTES = 64 * 1024
 
 # Clés dont la valeur est du contenu adressé au modèle. Entrer dans une de ces
 # valeurs transforme toutes les chaînes qu'elle contient, y compris les objets
@@ -199,25 +208,44 @@ class PIIMiddleware:
 
         raw_body = b''.join(body_parts)
         read_ms = (time.perf_counter() - read_started_at) * 1000
-        json_load_ms = 0.0
-        anonymize_ms = 0.0
-        json_dump_ms = 0.0
-        request_json = False
-        try:
-            operation_started_at = time.perf_counter()
-            body_dict = json.loads(raw_body)
-            json_load_ms = (time.perf_counter() - operation_started_at) * 1000
+        # Instantané du mapping : le cache remplace ses dictionnaires d'un bloc
+        # plutôt que de les muter, donc le thread lit une vue cohérente même si
+        # un rechargement survient pendant qu'il travaille.
+        mapping_snapshot = self.cache.mapping
 
-            operation_started_at = time.perf_counter()
-            anonymized = _walk_anonymize(body_dict, self.cache.mapping)
-            anonymize_ms = (time.perf_counter() - operation_started_at) * 1000
+        def prepare_request_body():
+            try:
+                operation_started_at = time.perf_counter()
+                body_dict = json.loads(raw_body)
+                load_ms = (time.perf_counter() - operation_started_at) * 1000
 
-            operation_started_at = time.perf_counter()
-            modified_body = json.dumps(anonymized, ensure_ascii=False).encode('utf-8')
-            json_dump_ms = (time.perf_counter() - operation_started_at) * 1000
-            request_json = True
-        except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
-            modified_body = raw_body
+                operation_started_at = time.perf_counter()
+                anonymized = _walk_anonymize(body_dict, mapping_snapshot)
+                anon_ms = (time.perf_counter() - operation_started_at) * 1000
+
+                operation_started_at = time.perf_counter()
+                encoded = json.dumps(anonymized, ensure_ascii=False).encode('utf-8')
+                dump_ms = (time.perf_counter() - operation_started_at) * 1000
+                return encoded, load_ms, anon_ms, dump_ms, True
+            except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+                return raw_body, 0.0, 0.0, 0.0, False
+
+        if len(raw_body) >= OFFLOAD_MIN_BYTES:
+            (
+                modified_body,
+                json_load_ms,
+                anonymize_ms,
+                json_dump_ms,
+                request_json,
+            ) = await asyncio.to_thread(prepare_request_body)
+        else:
+            (
+                modified_body,
+                json_load_ms,
+                anonymize_ms,
+                json_dump_ms,
+                request_json,
+            ) = prepare_request_body()
 
         request_ready_at = time.perf_counter()
         request_prepare_ms = (request_ready_at - request_started_at) * 1000
@@ -378,7 +406,11 @@ class PIIMiddleware:
             response_parts.append(body)
             if not more_body:
                 operation_started_at = time.perf_counter()
-                modified = self._deanonymize_json(b''.join(response_parts))
+                raw_response = b''.join(response_parts)
+                if len(raw_response) >= OFFLOAD_MIN_BYTES:
+                    modified = await asyncio.to_thread(self._deanonymize_json, raw_response)
+                else:
+                    modified = self._deanonymize_json(raw_response)
                 response_transform_ms += (time.perf_counter() - operation_started_at) * 1000
                 modified_response_bytes += len(modified)
                 await send({
@@ -448,6 +480,16 @@ class PIIMiddleware:
                 modified['text'] = encoded.decode('utf-8')
             return modified, len(raw), True
 
+        async def transform_frame_async(message: dict, transform: Callable):
+            # Les trames Codex atteignent le mégaoctet : au-delà du seuil, le
+            # codage part dans un thread pour ne pas geler la boucle — et donc
+            # le health check — pendant plusieurs centaines de millisecondes.
+            payload = message.get('bytes')
+            size_hint = len(payload) if payload is not None else len(message.get('text') or '')
+            if size_hint >= OFFLOAD_MIN_BYTES:
+                return await asyncio.to_thread(transform_frame, message, transform)
+            return transform_frame(message, transform)
+
         async def anonymized_receive():
             nonlocal client_frames, client_json_frames, client_bytes, transform_ms
             nonlocal contextual_reverse
@@ -458,7 +500,7 @@ class PIIMiddleware:
             self.cache.refresh_if_needed()
             operation_started_at = time.perf_counter()
             observed_reverse = {}
-            modified, size, request_json = transform_frame(
+            modified, size, request_json = await transform_frame_async(
                 message,
                 lambda value: _walk_anonymize(
                     value,
@@ -481,7 +523,7 @@ class PIIMiddleware:
                 return
 
             operation_started_at = time.perf_counter()
-            modified, size, response_json = transform_frame(
+            modified, size, response_json = await transform_frame_async(
                 message,
                 lambda value: _walk_deanonymize(value, contextual_reverse),
             )

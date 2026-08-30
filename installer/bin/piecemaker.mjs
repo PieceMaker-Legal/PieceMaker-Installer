@@ -38,6 +38,7 @@ import { HOME_DIR, REPO_ROOT, commandExists, findPython, venvPaths } from '../li
 import { loadConfig, readEnv, markStep, loadState, CONFIG_FILE } from '../lib/state.mjs';
 import {
   bypassLlmClients,
+  bypassLlmClientsIfProxyGone,
   configureLlmClients,
   getLitellmStatus,
   readLitellmLogs,
@@ -451,7 +452,10 @@ async function startProxyCompanion() {
     service = await startLitellmProxy();
   } catch (error) {
     // Fail-safe : aucun client ne doit rester pointé vers un port local mort.
-    bypassLlmClients({ userHome: os.homedir() });
+    // Mais un proxy encore vivant — démarrage à froid, sonde dépassée sous
+    // charge — n'est pas un port mort : le dérouter enverrait les sessions
+    // suivantes en clair chez le fournisseur pour une simple lenteur.
+    bypassLlmClientsIfProxyGone({ userHome: os.homedir() });
     throw error;
   }
   const clients = configureLlmClients({ config: loadConfig(), userHome: os.homedir() });
@@ -799,9 +803,10 @@ async function runOperationalCommand(command, knownUpdate = null, flags = {}) {
           configureLlmClients({ config: loadConfig(), userHome: os.homedir() });
           log.ok(`Proxy PII redémarré : ${restarted.origin}`);
         } catch (error) {
-          bypassLlmClients({ userHome: os.homedir() });
+          const repli = bypassLlmClientsIfProxyGone({ userHome: os.homedir() });
           log.warn(`Proxy PII non redémarré : ${error.message}`);
-          log.warn('Accès direct rétabli pour Claude Code et Codex.');
+          if (repli.bypassed) log.warn('Accès direct rétabli pour Claude Code et Codex.');
+          else log.warn('Routage conservé : le processus LiteLLM tourne toujours (démarrage en cours ?).');
         }
       }
       const daemon = restartTelegramDaemon();

@@ -368,6 +368,24 @@ export function bypassLlmClients({ userHome = os.homedir() } = {}) {
   };
 }
 
+/**
+ * Retire le routage, mais seulement si plus aucun processus LiteLLM ne tourne.
+ *
+ * Le repli en accès direct existe pour qu'une machine sans proxy reste
+ * utilisable — pas pour punir un proxy lent. Or les appelants ne distinguaient
+ * pas « proxy absent » de « health check dépassé » : une sonde trop courte
+ * suffisait à effacer `ANTHROPIC_BASE_URL`, et toutes les sessions suivantes
+ * partaient en clair chez le fournisseur alors que le proxy tournait. Un PID
+ * vivant tranche là où un délai réseau ne prouve rien.
+ */
+export function bypassLlmClientsIfProxyGone(options = {}) {
+  const { userHome = os.homedir(), ...rest } = options;
+  if (litellmProcessPid(rest) !== null) {
+    return { bypassed: false, reason: 'processus-vivant', clients: null };
+  }
+  return { bypassed: true, reason: null, clients: bypassLlmClients({ userHome }) };
+}
+
 export function configureLlmClients({ config = loadConfig(), userHome = os.homedir() } = {}) {
   const urls = litellmUrls(config);
   return {
@@ -505,7 +523,15 @@ function processRunning(pid) {
   try { process.kill(pid, 0); return true; } catch (error) { return error?.code === 'EPERM'; }
 }
 
-export function probeLitellm(config = loadConfig(), timeoutMs = 1200) {
+// Le health check répond en quelques millisecondes à vide, mais le middleware
+// PII code et décode le JSON sur la boucle d'événements : sous charge (Claude
+// Code et Codex ensemble, charges utiles de l'ordre du mégaoctet) la réponse a
+// été mesurée jusqu'à 1139 ms dans proxy-guard.log. Un budget de 1200 ms
+// déclarait donc mort un proxy simplement occupé, et les appelants retiraient
+// le routage d'un proxy en pleine santé.
+const PROBE_TIMEOUT_MS = 5_000;
+
+export function probeLitellm(config = loadConfig(), timeoutMs = PROBE_TIMEOUT_MS) {
   const url = new URL(litellmUrls(config).health);
   return new Promise((resolve) => {
     const request = http.get({
@@ -654,12 +680,25 @@ export async function startLitellmProxy(options = {}) {
   return { ...await getLitellmStatus({ ...options, config }), started: true };
 }
 
+/**
+ * Arrête le proxy et s'assure qu'il a bien rendu le port.
+ *
+ * La sonde HTTP seule ne suffit pas à constater un arrêt : un Uvicorn figé sur
+ * « Waiting for connections to close » — un WebSocket Codex ou un flux SSE
+ * encore ouvert au moment du SIGTERM — cesse de répondre tout en gardant le
+ * port 4000. Une sonde muette signait alors un arrêt réussi sur un processus
+ * bien vivant, le fichier PID était effacé, et la relance suivante ne pouvait
+ * ni se lier au port ni tuer ce PID devenu invisible : le proxy restait mort
+ * jusqu'à une intervention manuelle. On suit donc le PID observé avant l'arrêt,
+ * et on tranche au SIGKILL passé le délai de grâce.
+ */
 export async function stopLitellmProxy(options = {}) {
   const config = options.config || loadConfig();
   const capture = options.runCapture || runCapture;
   const paths = litellmPaths({ ...options, config });
   const launchd = launchAgentState(capture);
   const directPid = readPid(paths.pid);
+  const observedPid = launchd.pid && processRunning(launchd.pid) ? launchd.pid : directPid;
   const alreadyStopped = !launchd.loaded && !processRunning(directPid);
   if (launchd.loaded) {
     const result = capture('launchctl', ['bootout', `${launchd.domain}/${LITELLM_LAUNCHD_LABEL}`]);
@@ -671,7 +710,19 @@ export async function stopLitellmProxy(options = {}) {
   }
 
   const deadline = Date.now() + (options.timeoutMs || 8_000);
-  while (Date.now() < deadline && await probeLitellm(config, 400)) await delay(200);
+  while (Date.now() < deadline
+    && (processRunning(observedPid) || await probeLitellm(config, 400))) {
+    await delay(200);
+  }
+
+  // Un processus encore debout passé le délai de grâce ne rendra plus le port
+  // de lui-même : c'est exactement l'arrêt bloqué décrit ci-dessus.
+  if (processRunning(observedPid)) {
+    try { process.kill(observedPid, 'SIGKILL'); } catch { /* déjà mort */ }
+    const killDeadline = Date.now() + 2_000;
+    while (Date.now() < killDeadline && processRunning(observedPid)) await delay(100);
+  }
+
   const running = await probeLitellm(config, 400);
   if (running) throw new Error("LiteLLM répond toujours après la demande d’arrêt.");
   try { fs.unlinkSync(paths.pid); } catch { /* absent */ }
