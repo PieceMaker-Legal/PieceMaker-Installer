@@ -1,7 +1,7 @@
 /**
- * Step 05 — HTTPS certificates for the Word taskpane.
+ * Step 05 — HTTPS certificates for the local server.
  *
- * The certificate Word's taskpane needs — a CA + a localhost server cert,
+ * The certificate the local server needs — a CA + a localhost server cert,
  * read directly by server.cjs at
  * websocket-server/localhost.{crt,key} — is produced by
  * websocket-server/generate-ca-certificates.cjs. That is what this step
@@ -20,7 +20,7 @@ import { commandExists, runCapture, IS_WINDOWS, IS_MAC, REPO_ROOT } from '../lib
 export const meta = {
   id: '05-certificats',
   label: 'Certificats HTTPS',
-  description: 'Génère le certificat local requis par Word pour charger le complément en HTTPS',
+  description: 'Génère le certificat local requis pour servir l\'administration et l\'API en HTTPS',
 };
 
 const CERT_DIR = path.join(REPO_ROOT, 'websocket-server');
@@ -125,8 +125,8 @@ export async function install(ctx) {
     log.warn('La vérification du certificat serveur a échoué — les fichiers sont générés mais non validés.');
   }
 
-  // Trust the CA at the OS level so Word/WebView2 accept the connection
-  // without a security warning. Requires admin rights — ask first.
+  // Trust the CA at the OS level so browsers accept the connection without
+  // a security warning. Requires admin rights — ask first.
   if (nonInteractive || !process.stdout.isTTY) {
     return {
       status: 'partial',
@@ -135,14 +135,14 @@ export async function install(ctx) {
   }
 
   const wantTrust = await confirm(
-    'Ajouter ce certificat aux autorités de confiance du système ? Nécessaire pour que Word charge le complément sans avertissement (mot de passe administrateur requis).',
+    'Ajouter ce certificat aux autorités de confiance du système ? Nécessaire pour que les navigateurs se connectent sans avertissement (mot de passe administrateur requis).',
     true
   );
 
   if (!wantTrust) {
     return {
       status: 'partial',
-      note: 'CA non ajoutée au magasin de confiance — Word peut afficher un avertissement de sécurité.',
+      note: 'CA non ajoutée au magasin de confiance — les navigateurs peuvent afficher un avertissement de sécurité.',
     };
   }
 

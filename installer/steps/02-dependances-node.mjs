@@ -1,9 +1,9 @@
 /**
  * Step 02 — Node.js dependencies.
  *
- * Runs `npm install` at the repo root and in mcp-server/. Electron is no
- * longer part of the active dependency graph, so package lifecycle scripts
- * can run normally (notably the native node-pty installation).
+ * Runs `npm install` at the repo root. Electron is no longer part of the
+ * active dependency graph, so package lifecycle scripts can run normally
+ * (notably the native node-pty installation).
  */
 
 import fs from 'node:fs';
@@ -14,7 +14,7 @@ import { run, npmBin, npmEnv, REPO_ROOT } from '../lib/platform.mjs';
 export const meta = {
   id: '02-dependances-node',
   label: 'Dépendances Node.js',
-  description: 'Installe les modules npm de la racine et du serveur MCP',
+  description: 'Installe les modules npm de la racine',
 };
 
 function truncate(text) {
@@ -89,7 +89,6 @@ export async function install(ctx) {
   const results = [];
 
   results.push(['racine du projet', await npmInstall(REPO_ROOT, 'Racine', ctx)]);
-  results.push(['mcp-server/', await npmInstall(path.join(REPO_ROOT, 'mcp-server'), 'mcp-server', ctx)]);
 
   if (ctx.dryRun) {
     return { status: 'skipped', note: 'Mode simulation — aucune installation effectuée.' };
@@ -108,7 +107,7 @@ export async function install(ctx) {
   if (!ptyHelpers.ready) {
     return {
       status: 'failed',
-      note: 'node-pty est absent ou incomplet : le terminal intégré du volet Word ne peut pas démarrer.',
+      note: 'node-pty est absent ou incomplet : le terminal intégré (Claude Code CLI) ne peut pas démarrer.',
     };
   }
   if (ptyHelpers.repaired) log.ok(`node-pty : ${ptyHelpers.repaired} lanceur(s) PTY rendu(s) exécutable(s)`);
@@ -118,15 +117,11 @@ export async function install(ctx) {
 
 export async function check(ctx) {
   const rootInstalled = fs.existsSync(path.join(REPO_ROOT, 'node_modules'));
-  // mcp-server/ currently declares zero dependencies, so `npm install` there
-  // never creates node_modules — package-lock.json is the only reliable trace.
-  const mcpInstalled = fs.existsSync(path.join(REPO_ROOT, 'mcp-server', 'node_modules'))
-    || fs.existsSync(path.join(REPO_ROOT, 'mcp-server', 'package-lock.json'));
   const ptyReady = repairNodePtySpawnHelpers(REPO_ROOT, { repair: false }).ready;
 
-  if (rootInstalled && mcpInstalled && ptyReady) return { status: 'done', note: '' };
-  if (rootInstalled || mcpInstalled) {
-    return { status: 'partial', note: ptyReady ? 'Dépendances installées pour un seul des deux projets.' : 'node-pty absent ou incomplet.' };
+  if (rootInstalled && ptyReady) return { status: 'done', note: '' };
+  if (rootInstalled) {
+    return { status: 'partial', note: 'node-pty absent ou incomplet.' };
   }
   return { status: 'failed', note: 'node_modules absent — exécutez cette étape.' };
 }

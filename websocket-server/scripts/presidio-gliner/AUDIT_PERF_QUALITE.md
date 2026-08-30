@@ -80,7 +80,7 @@ dans le document anonymisé.
 En v2 j'ai proposé « maximiser le rappel sous plancher de précision, car un faux positif n'est qu'un
 mot caviardé pour rien ». **C'est faux**, et je l'ai écrit avant d'avoir lu le code de substitution.
 
-`taskpane/modules/anonymization-server.cjs:394` :
+`websocket-server/lib/anonymization-server.cjs:394` :
 
 ```js
 const regex = new RegExp(escapeRegex(original), 'gi');

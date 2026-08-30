@@ -13,7 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const MOD = path.resolve(__dirname, '../../../../taskpane/modules/anonymization-server.cjs');
+const MOD = path.resolve(__dirname, '../../../lib/anonymization-server.cjs');
 const { buildEntityRegex, byDescendingEntityLength } = require(MOD);
 
 function escapeRegex(s) {

@@ -148,7 +148,7 @@ The court in Paris ruled...
 - Updated `convert_to_anonymization_format()` to parse addresses and apply strategies
 - Updated `merge_with_existing_mapping()` with same logic
 
-### 2. `taskpane/modules/anonymization-server.cjs`
+### 2. `websocket-server/lib/anonymization-server.cjs`
 - Updated POST `/api/anonymize/text` route to handle partial address anonymization
 - Added special handling for addresses in both hierarchical and flat mapping formats
 - Updated de-anonymization logic to reconstruct full addresses from partial anonymization

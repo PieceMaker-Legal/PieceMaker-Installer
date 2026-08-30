@@ -30,15 +30,34 @@ Ces templates peuvent être déplacés vers `~/.piecemaker/templates/` pour un e
 ## Workflow de rédaction
 
 1. **Choisir le bon template** selon la nature de l'acte (voir tableau ci-dessus).
-2. **Préparer un document de travail `.docx`** dans le dossier du client — ne jamais ouvrir le template original comme document cible. Appeler `open_doc` sur ce document et conserver le `paneId` renvoyé.
-3. **Injecter le template** avec son chemin absolu :
+2. **Préparer un document de travail `.docx`** dans le dossier du client en
+   **copiant** le template choisi vers ce nouveau chemin (`cp`) — ne jamais
+   éditer le template original en place, et ne jamais copier par-dessus un
+   fichier de travail contenant déjà de la rédaction à conserver. Aucun
+   document n'a besoin d'être ouvert dans une application Word : toute la
+   suite passe par le skill `document-skills:docx` (Bash, `pandoc`,
+   dépaquetage OOXML) — il n'y a ni volet, ni `paneId`.
+3. **Lire le contenu du document de travail** avec `pandoc -t markdown
+   fichier.docx` pour repérer tous les placeholders `{{...}}` restants, puis
+   le dépaqueter pour éditer son XML :
 
-   ```text
-   template { "paneId": "a1b2", "path": "/Users/tsardet/Desktop/01 - Template Assignation.docx" }
+   ```bash
+   unzip -q fichier.docx -d unpacked/
+   python scripts/merge_runs.py unpacked/   # coalesce les runs fragmentés
+   # éditer unpacked/word/document.xml : remplacer chaque {{PLACEHOLDER}}
+   (cd unpacked && rm -f ../fichier.docx && zip -Xr ../fichier.docx .)
+   python scripts/validate.py fichier.docx   # contrôle XSD
    ```
 
-   `template` remplace intégralement le contenu et les styles du document de travail. L'appeler une seule fois, au début, après avoir vérifié que la cible ne contient rien à conserver. Utiliser le `paneId` du document cible, pas celui d'un autre volet. En cas de succès, son payload est `{ "success": true, "content": "<texte intégral du template, placeholders inclus>" }` : `content` n'est jamais limité à un placeholder particulier.
-4. **Remplir les placeholders** repérés directement dans `content`, un par un, en s'appuyant sur les pièces du dossier (voir l'agent `analyste-piece` pour synthétiser une pièce avant de rédiger les faits) et sans jamais inventer une information absente du dossier. Le document Word injecté est l'unique source des placeholders : ne charger ni fichier JSON compagnon, ni ordre ou consigne de placeholder stocké hors du document.
+   `merge_runs.py` est nécessaire car Word fragmente souvent un placeholder
+   sur plusieurs `<w:r>` : sans fusion, `{{PLACEHOLDER}}` peut ne pas exister
+   comme chaîne contiguë dans le XML brut.
+4. **Remplir les placeholders** repérés à l'étape précédente, un par un, en
+   s'appuyant sur les pièces du dossier (voir l'agent `analyste-piece` pour
+   synthétiser une pièce avant de rédiger les faits) et sans jamais inventer
+   une information absente du dossier. Le document de travail est l'unique
+   source des placeholders : ne charger ni fichier JSON compagnon, ni ordre ou
+   consigne de placeholder stocké hors du document.
 5. **Citer via `recherche-juridique`** : toute référence à un texte de loi ou à une décision insérée dans `{{DISCUSSION}}` / `{{DISCUSSION_APPEL}}` / `{{DISCUSSION_ASSIGNATION}}` / `{{DISPOSITIF*}}` doit d'abord être vérifiée avec cette skill — jamais citée de mémoire.
 6. **Anonymiser avant toute sortie externe** du document rédigé — skill `anonymisation`, puis vérification par l'agent `verificateur-anonymisation` avant envoi.
 
@@ -47,14 +66,30 @@ Ces templates peuvent être déplacés vers `~/.piecemaker/templates/` pour un e
 - **Citations vérifiables uniquement** : voir la skill `recherche-juridique` pour le détail des outils et de la procédure de vérification. Ne jamais produire un identifiant de texte ou de décision non confirmé.
 - **Ne jamais réutiliser un nom réel** présent dans une pièce anonymisée du dossier pour rédiger un extrait destiné à sortir du dossier de travail — rester sur les codes du mapping (`PERSONNE_PHYSIQUE_1`, `PERSONNE_MORALE_1`, `SOCIETE_SCI_1`, `ADRESSE_1`, etc.) tant que le document n'est pas définitivement destiné à un usage interne au dossier.
 - **Respecter les règles de validation du template** (ex. : une section "FAITS" doit s'appuyer sur des notes de bas de page référençant les pièces communiquées) plutôt que de les contourner pour faire passer un placeholder vide ou incomplet.
-- Les outils `template` / `read_doc` / `edit_doc` (voir la skill `word-taskpane`) opèrent sur le document Word ouvert via Office.js et exigent le `paneId` renvoyé par `open_doc`. Après l'injection initiale, toute édition doit préserver le suivi des modifications (track changes) et la structure des titres.
-- **Corriger une mise en forme passe par `doc_styles`**, jamais par une réinjection de `template` : redéfinir un style (police, taille, alignement, espacements) se propage à tous les paragraphes qui le portent et laisse le contenu déjà rédigé intact, là où une réinjection l'écraserait.
+- L'édition du document de travail passe par le skill `document-skills:docx` :
+  dépaquetage OOXML (`unzip`/`zip`), lecture via `pandoc -t markdown`, édition
+  directe de `word/document.xml`. Ce sont des scripts Bash/Python locaux sur
+  le fichier `.docx` — aucune application Word n'est requise, il n'y a pas de
+  `paneId`. Après le remplissage initial des placeholders, toute édition
+  ultérieure doit rester en suivi des modifications (`<w:ins>`/`<w:del>` avec
+  `w:id`/`w:author`/`w:date`) et être validée avec
+  `python scripts/validate.py fichier.docx --original <version précédente>
+  --author "<nom>"`, qui signale tout texte changé sans balise de suivi.
+- **Corriger une mise en forme se fait en éditant `word/styles.xml`** dans le
+  même dépaquetage, jamais en recopiant le template par-dessus le document
+  déjà rédigé : redéfinir dans ce fichier un style déjà déclaré (police,
+  taille, alignement, espacements) se propage à tous les paragraphes qui le
+  portent et laisse le contenu intact. Le skill `docx` n'a **pas** d'outil
+  dédié équivalent à l'ancien `doc_styles` (qui redéfinissait un style en un
+  seul appel, sans repasser par un dépaquetage) : c'est une édition XML
+  manuelle comme les autres, à revalider avec `validate.py` avant de refermer
+  le zip.
 
 ## Ce qu'il ne faut pas faire
 
 - Ne jamais fabriquer un numéro d'article, de décision ou de dossier pour combler un manque d'information.
 - Ne jamais présenter une jurisprudence non vérifiée comme un fait établi.
 - Ne jamais modifier un template original sur le Bureau ou dans `~/.piecemaker/templates/` : toujours travailler sur une copie.
-- Ne jamais appeler `template` sur un document contenant déjà du travail à conserver : l'outil remplace le contenu et les styles.
+- Ne jamais copier un template par-dessus un document de travail contenant déjà du travail à conserver : la copie initiale ne se fait qu'une fois, sur un fichier de travail vide ou tout juste créé.
 - Ne jamais simplifier une règle de validation de template juridique sans validation d'un expert du domaine.
 - Ne jamais utiliser le template n°4 pour une vraie décision de SCI tant que son contenu n'a pas été corrigé (voir l'avertissement ci-dessus).

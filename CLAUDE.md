@@ -15,8 +15,8 @@ dans [`docs/AUDIT-Project.md`](docs/AUDIT-Project.md).
 Un monorepo qui est à la fois :
 - un **installateur terminal** (`piecemaker`) qui clone le projet dans
   `~/PieceMaker`, installe les dépendances et configure la machine ;
-- un **serveur local** HTTPS/WebSocket (port `43098`) exposant l'API,
-  l'administration web et un pont vers le volet Word ;
+- un **serveur local** HTTPS/WebSocket (port `43098`) exposant l'API et
+  l'administration web ;
 - un **marketplace de plugin Claude Code** (`piecemaker-plugin/`) : skills,
   agents, hooks de garde-fou PII et serveur MCP Legifrance.
 
@@ -37,8 +37,6 @@ Markdown, rédaction et tamponnage de pièces. Node ≥ 18, Python ≥ 3.10.
 | `installer/` | Installateur terminal, sans dépendance. `bin/piecemaker.mjs` = commande + orchestrateur ; `steps/00..16-*.mjs` = étapes idempotentes (`{ meta, install, check }`), jouées dans l'ordre du nom ; `lib/` = UI, prompts, plateforme, état ; `templates/` = templates déposés chez l'utilisateur. |
 | `websocket-server/` | `server.cjs` (Express + HTTPS + WS). `admin-routes.cjs` = API d'administration ; `case-registry.cjs`, `document-index.cjs`, `originals-pipeline.cjs` = dossiers/pièces ; `mxc-sandbox.cjs` = bac à sable OS ; `scripts/` = Python (GLiNER/Presidio, conversion). |
 | `admin/` | Interface web locale servie sur `/admin/` (`app.js`, `index.html`, éditeur Markdown des skills/agents, aperçus facturation). |
-| `taskpane/` | Complément Office (volet Word). `taskpane.js` reçoit les ordres MCP par WebSocket et agit sur le document ; `modules/anonymization-server.cjs` = mapping côté volet. |
-| `mcp-server/` | `mcp-server-local.js` : serveur MCP (stdio) qui **relaie** les outils document vers le serveur HTTPS local. |
 | `orchestrator/` | Assistant Bot Telegram (`piecemaker-daemon.mjs`) et surveillance de quotas (`limit-watch.mjs`), sans LLM. |
 | `piecemaker-plugin/` | Plugin Claude Code : `skills/`, `agents/`, `hooks/hooks.json`, `mcp/` (Legifrance), `scripts/` (logique des hooks) + `scripts/lib/` (mapping, protection, commits, facturation…). |
 | `litellm-proxy/` | Proxy LiteLLM officiel entouré du middleware PII PieceMaker ; pass-through des authentifications Claude Code/Codex, sans stockage de leurs jetons. |
@@ -55,23 +53,20 @@ ré-identification des réponses.
 Archives à ignorer : `admin.backup-*`, `_mxc_hooktest/`, `ARCHITECTURE_FIX.md`,
 `central-hook-haiku-test.md`.
 
-## Flux clé — outils document (Word)
+## Flux clé — outils document (`.docx`)
 
-Les outils MCP `read_doc` / `edit_doc` / `template` ne touchent jamais le
-document Word directement :
-
-```
-Claude Code ──stdio──▶ mcp-server-local.js ──HTTPS POST──▶ server.cjs
-                                                              │ WebSocket
-                                                              ▼
-                                                        taskpane.js (Word)
-```
-
-Conséquence : ces outils supposent `piecemaker start` **et** Word ouvert sur
-le document. Sans cela l'appel échoue — vérifier `piecemaker status` avant de
-conclure à un bug. `template` lit localement le template `.docx` désigné par son
-chemin absolu, puis le volet remplace le contenu et les styles du document de
-travail ciblé par `paneId`.
+Le pont Word (complément Office + serveur MCP dédié, anciennement
+`taskpane/` et `mcp-server/` dans ce dépôt) a été extrait vers un dépôt séparé
+et indépendant, **actuellement suspendu** — il n'y a plus de volet Word ni de
+`paneId` dans ce dépôt. Tout travail sur un `.docx` (rédaction, relecture,
+correction de style, suivi des modifications) passe par le skill officiel
+Anthropic `document-skills:docx` : Bash + `pandoc` + dépaquetage OOXML
+(`unzip`/`zip` sur `word/document.xml`, `word/styles.xml`), sans application
+Word ouverte. Voir `piecemaker-plugin/skills/redaction-juridique/SKILL.md` et
+`piecemaker-plugin/skills/tamponnage/SKILL.md` pour le détail de ce que ce
+skill couvre et de ce qu'il ne couvre pas (le tamponnage live depuis un volet
+Word, notamment, n'a pas d'équivalent tant que le dépôt séparé n'est pas
+réactivé — le tamponnage passe uniquement par l'administration web).
 
 ## Anonymisation (invariant central)
 
@@ -82,8 +77,11 @@ qui sont réécrites au passage.
 - Voies **Claude Code et Codex** : le proxy PII LiteLLM code les requêtes avant
   leur transmission au fournisseur et ré-identifie les réponses avant leur
   restitution locale. Aucun hook Claude Code n'applique le mapping.
-- Voie **Word** : hors de portée des hooks ; `server.cjs` applique le même
-  mapping via `piecemaker-plugin/scripts/lib/mapping.cjs`.
+- Voie **serveur local** : hors de portée des hooks ; le pipeline
+  d'anonymisation des pièces (`websocket-server/originals-pipeline.cjs`,
+  `document-index.cjs`, `legal-graph.cjs`, `mxc-sandbox.cjs`,
+  `lib/anonymization-server.cjs`) applique le mapping via
+  `piecemaker-plugin/scripts/lib/mapping.cjs`.
 - Le mapping central dé-conflicté `~/.piecemaker/central-mapping.json` est
   reconstruit par le serveur et rechargé à chaud par le proxy.
 - Le **scan** GLiNER/Presidio n'est lancé que depuis l'administration
@@ -122,7 +120,6 @@ piecemaker start | stop | status | logs | doctor
 ```
 
 Admin : `https://localhost:43098/admin/` (local uniquement).
-Volet Word : `https://localhost:43098/taskpane.html`.
 
 ## Conventions
 

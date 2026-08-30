@@ -20,8 +20,7 @@
  * Nanterre ».
  *
  * Le module vit dans le plugin parce que les hooks, distribués seuls, en ont
- * besoin via `mapping.cjs` et ne peuvent require ni `websocket-server/` ni
- * `taskpane/`.
+ * besoin via `mapping.cjs` et ne peuvent require `websocket-server/`.
  */
 const fs = require('node:fs');
 const os = require('node:os');

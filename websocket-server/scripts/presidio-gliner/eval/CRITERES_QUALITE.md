@@ -16,7 +16,7 @@ Rejouer : `node verify_substitution.cjs <doc.md> <doc_sensitive_map.json>` ·
 
 `buildEntityRegex` (limites de mot Unicode, longueur minimale 4 sauf acronymes majuscules,
 sensibilité à la casse pour les entités courtes, tolérance aux blancs) et
-`byDescendingEntityLength` (la plus longue d'abord) — `taskpane/modules/anonymization-server.cjs`.
+`byDescendingEntityLength` (la plus longue d'abord) — `websocket-server/lib/anonymization-server.cjs`.
 
 Mesuré sur GENSIGHT_URD, 793 entités distinctes issues d'un vrai scan :
 

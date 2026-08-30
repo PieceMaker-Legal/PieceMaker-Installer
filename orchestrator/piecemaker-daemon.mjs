@@ -157,7 +157,7 @@ function closeTerminalWindow(p, dev) {
   try { unlinkSync(ttyFile); } catch {}
 }
 
-// Reap : tue les process MCP / pollers bun devenus ORPHELINS (ppid == 1),
+// Reap : tue les process pollers bun devenus ORPHELINS (ppid == 1),
 // abandonnés par une session morte lors d'un ancien restart. Ne touche jamais
 // une session vivante (ses enfants ont un ppid ≠ 1).
 function reapOrphans() {
@@ -168,8 +168,7 @@ function reapOrphans() {
       if (!m) continue;
       const [, pid, ppid, cmd] = m;
       if (ppid !== '1') continue; // uniquement les orphelins
-      if (/mcp-server-local\.js/.test(cmd) ||
-          /claude-plugins-official\/telegram\/.*\bstart\b/.test(cmd) ||
+      if (/claude-plugins-official\/telegram\/.*\bstart\b/.test(cmd) ||
           /claude --channels plugin:telegram/.test(cmd)) {
         try { process.kill(Number(pid), 'SIGKILL'); } catch {}
       }

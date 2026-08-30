@@ -36,8 +36,8 @@ function readFileStripBOM(filePath, encoding) {
 }
 
 // Le moteur de correspondance d'entités vit dans le plugin PieceMaker : les
-// hooks Claude Code en ont besoin et ne peuvent pas require `taskpane/`. Une
-// seule définition des frontières de mots, des variantes Unicode et du tri
+// hooks Claude Code en ont besoin et ne peuvent pas require `websocket-server/`.
+// Une seule définition des frontières de mots, des variantes Unicode et du tri
 // longest-entity-first, sinon deux moteurs de substitution divergent en
 // silence.
 const {

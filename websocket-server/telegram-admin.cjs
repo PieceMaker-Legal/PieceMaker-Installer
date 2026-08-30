@@ -14,8 +14,8 @@ const DEFAULT_ASSISTANT_NAME = 'Assistant PieceMaker';
 const DEFAULT_MONITOR_NAME = 'PieceMaker Monitor';
 const RESERVED_DOSSIER_DIRS = new Set([
   'models', 'ressources', '_python_uploads', 'node_modules', 'admin', 'build',
-  'certificates', 'docs', 'electron', 'installer', 'mcp-server', 'orchestrator',
-  'output', 'piecemaker-plugin', 'taskpane', 'test', 'websocket-server',
+  'certificates', 'docs', 'electron', 'installer', 'orchestrator',
+  'output', 'piecemaker-plugin', 'test', 'websocket-server',
 ]);
 // Arborescences techniques : un dossier juridique finit par en héberger.
 const SKIPPED_DIR_NAMES = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', '__pycache__', 'venv']);

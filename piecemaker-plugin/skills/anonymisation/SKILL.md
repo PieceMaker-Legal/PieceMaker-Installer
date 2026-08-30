@@ -35,7 +35,7 @@ description: Lancer un scan PII GLiNER/Presidio sur un document PieceMaker, lire
     "reverse_mapping": { "PERSON_01": ["Jean Dupont"] } }
   ```
   Il est géré côté serveur par
-  `taskpane/modules/anonymization-server.cjs`, qui expose
+  `websocket-server/lib/anonymization-server.cjs`, qui expose
   `GET/PUT/DELETE /api/anonymize/mapping/:documentId` et
   `POST /api/anonymize/text` (paramètre `direction`: `anonymize` ou
   `deanonymize`).
