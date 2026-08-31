@@ -115,11 +115,11 @@ environnement virtuel Python et modèles GLiNER2.5 multilingue + spaCy.
 | --- | --- | --- |
 | 00-identite | Identification de l’utilisateur | signe chaque tâche enregistrée dans l’historique avec votre nom |
 | 01-prerequis | Prérequis système | vérifie Node.js, npm, git et Python avant toute installation |
-| 02-dependances-node | Dépendances Node.js | installe les modules npm de la racine et du serveur MCP |
+| 02-dependances-node | Dépendances Node.js | installe les modules npm de la racine |
 | 03-python-gliner | Python, GLiNER & anonymisation | venv Python, dépendances et migration obligatoire vers GLiNER2.5 |
 | 03b-python-graphify | Graphify (graphe juridique) | venv Python séparé, installe le fork Graphify PieceMaker-Legal à un tag figé |
 | 04-conversion-md | Conversion de documents en Markdown | vérifie markitdown/pypdf et propose MinerU pour les PDF scannés |
-| 05-certificats | Certificats HTTPS | génère le certificat local requis par Word |
+| 05-certificats | Certificats HTTPS | génère le certificat local requis pour servir l’administration et l’API en HTTPS |
 | 06-hooks | Hooks Claude Code (protection, commits & facturation) | configure les garde-fous, les commits PostToolUse et le suivi de facturation ; le mapping relève du proxy PII |
 | 07-legifrance | Serveur MCP Légifrance (clés PISTE) | configure et valide l’accès à l’API Légifrance via PISTE |
 | 08-telegram | Telegram — Assistant Bot et daemon | configure le bot conversationnel PieceMaker et son daemon de surveillance séparé |
@@ -127,8 +127,7 @@ environnement virtuel Python et modèles GLiNER2.5 multilingue + spaCy.
 | 09-codex-plugin | Skills Codex PieceMaker | enregistre les skills PieceMaker lorsque la CLI Codex est présente |
 | 10-libreoffice | Conversion des pièces en PDF (LibreOffice) | installe LibreOffice, requis pour tamponner les pièces Excel et Word |
 | 10-pandoc | Génération PDF/DOCX (pandoc + typst) | installe pandoc et typst, utilisés pour l’export de la chronologie et de l’historique |
-| 11-document-skills | Skill docx (documents Word) | installe et active le plugin officiel document-skills |
-| 12-word-taskpane | Ouverture automatique du volet Word | permet à PieceMaker d’ouvrir Word avec le volet déjà affiché |
+| 11-docx-cli | Outil docx-cli (documents Word) | installe et active le plugin docx-cli, qui pilote les `.docx` via le binaire « docx » |
 | 13-garde-secrets | Garde-fou secrets (Claude Code) | empêche Claude Code de lire le `.env` du serveur et le mapping central |
 | 14-mxc-sandbox | Confinement OS (mxc) | construit microsoft/mxc pour isoler la session Claude Code |
 | 15-pwa-desktop | Application PieceMaker sur le Bureau | propose une icône qui démarre le serveur avant d’ouvrir l’administration |
@@ -223,24 +222,26 @@ qu'elle matérialise ou rapporte. La sortie conserve les distinctions
 Ce graphe juridique est distinct du graphe léger de la frise : la frise ne
 contient que les mentions GLiNER et n'appelle aucun LLM. Dans les deux cas, les
 noms de fichiers persistants sont remplacés par des empreintes et les personnes
-par leurs codes pseudonymisés. `piecemaker graph query` fonctionne sans MCP,
-sans serveur PieceMaker et sans Word ouvert.
+par leurs codes pseudonymisés. `piecemaker graph query` fonctionne sans MCP et
+sans serveur PieceMaker démarré.
 
 Le tableau de bord est servi uniquement en local sur
 `https://localhost:43098/admin/`. Il peut être installé comme PWA. L’icône
 Bureau proposée par l’installateur démarre le serveur avant de l’ouvrir ; si
 une PWA déjà ouverte détecte le serveur arrêté, sa page de secours propose le
-même redémarrage local. Le volet Word reste réservé au fonctionnement interne
-de l’add-in et n’est pas proposé dans l’administration.
+même redémarrage local.
 
-Pour travailler sur un document depuis Codex ou Claude Code, l'étape
-`12-word-taskpane` enregistre automatiquement le MCP `piecemaker-word` dans les
-CLI installées. Il suffit de lancer normalement `codex` ou `claude`, puis de
-demander l'ouverture du `.docx`. Au premier `open_doc`, le MCP démarre le
-serveur PieceMaker local s'il est arrêté, puis ouvre Word et son volet.
-`open_doc` renvoie le `paneId` à transmettre ensuite à chaque appel `read_doc`
-ou `edit_doc`. Aucun lanceur ni démarrage PieceMaker intermédiaire n'est
-nécessaire.
+Pour travailler sur un document `.docx` depuis Codex ou Claude Code, il suffit
+de lancer normalement `codex` ou `claude` et de demander la rédaction, la
+relecture ou la correction du document : le skill `docx-cli`
+(dépôt `kklimuk/docx-cli`, installé par l'étape `11-docx-cli`) lit et édite le
+fichier directement sur disque via le binaire `docx`, qui mute l'OOXML en place
+— styles maison, couleurs de thème et objets embarqués préservés — et gère les
+modifications suivies et les commentaires, sans application Word ouverte et
+sans serveur PieceMaker requis pour cette opération. Le pont Word historique (complément Office +
+serveur MCP dédié, anciennement les étapes `12-word-taskpane` et les dossiers
+`taskpane/`/`mcp-server/` de ce dépôt) a été extrait vers un dépôt séparé et
+indépendant, actuellement **suspendu**.
 
 ## Intégration avec Claude Code et Codex CLI
 
@@ -250,9 +251,9 @@ skills dans `~/.claude/skills` et `~/.codex/skills`, ainsi que les agents dans
 `~/.claude/agents`. Les hooks Claude sont fusionnés directement dans
 `~/.claude/settings.json`. Les fichiers personnels homonymes sont conservés.
 
-Les composants comprennent les skills d'anonymisation, de conversion, de
-rédaction juridique et de tamponnage des pièces, deux agents Claude dédiés et
-les hooks de garde-fou PII. Voir
+Les composants comprennent les skills de conversion, de rédaction juridique
+et de tamponnage des pièces, les agents Claude dédiés et les hooks de
+garde-fou PII. Voir
 [`piecemaker-plugin/README.md`](./piecemaker-plugin/README.md).
 
 ## Structure
@@ -262,8 +263,6 @@ les hooks de garde-fou PII. Voir
 - `orchestrator/` — Assistant Bot Telegram et daemon de surveillance sans LLM
 - `websocket-server/` — serveur HTTPS/WebSocket, API REST et scripts Python
 - `admin/` — interface web locale : Telegram, paramètres, éditeur visuel des skills/agents et aperçus de facturation
-- `taskpane/` — volet Office du complément Word
-- `mcp-server/` — serveur MCP exposant les outils document
 - `litellm-proxy/` — application LiteLLM standard entourée du mapping PII réseau PieceMaker
 
 Le `CLAUDE.md` racine est versionné dans ce dépôt et contient les repères

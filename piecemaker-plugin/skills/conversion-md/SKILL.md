@@ -50,7 +50,7 @@ Pour convertir puis scanner en un seul appel, utiliser
 `websocket-server/scripts/convert_and_scan_pipeline.py <file1> [file2 ...] -o <output_dir> [--engine ...] [--mode ...] [--lang ...]`,
 qui appelle `smart_converter.py` puis
 `websocket-server/scripts/presidio-gliner/presidio-gliner.py` pour chaque
-fichier (voir la skill `anonymisation`). Sortie persistante : un Markdown par
+fichier. Sortie persistante : un Markdown par
 fichier et un unique `{output_dir}/mapping_default.json` cumulatif. Dans le
 pipeline d'administration d'un dossier, `-o` vise le sous-dossier
 `Fichiers convertis PieceMaker/` du dossier (racine réservée aux originaux) ;

@@ -71,7 +71,7 @@ modification du mapping ou des parties.
 
 ## Prérequis
 
-1. Le dossier doit être anonymisé (`/anonymisation` ou scan via
+1. Le dossier doit être anonymisé (« Anonymiser & mapper » dans
    l'administration).
 2. Les parties de la procédure doivent être sélectionnées dans l'éditeur des
    parties de l'administration (`https://localhost:43098/admin/`).

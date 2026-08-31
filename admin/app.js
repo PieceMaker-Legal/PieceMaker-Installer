@@ -519,7 +519,6 @@ async function loadStatus() {
       badge.className = 'status-pill ok';
       notifyNativeShell({ kind: 'status', value: 'ok', label: badge.textContent });
       byId('version').textContent = status.version;
-      byId('wordStatus').textContent = status.wordClients > 0 ? `Oui (${status.wordClients})` : 'Non';
       byId('certStatus').textContent = status.certificatesReady ? 'Prêts' : 'À installer';
       const total = status.files.skills + status.files.agents;
       const assetCount = byId('assetCount');
@@ -848,7 +847,7 @@ function restoreConfigurationForm() {
 
 const CONFIGURATION_DESCRIPTIONS = {
   client: 'Pilote le projet et charge les composants PieceMaker. Réglages généraux, signature des commits et identifiants Légifrance ci-dessous.',
-  terminal: 'Second affichage interactif de la session terminal qui a ouvert le document Word.',
+  terminal: 'Pont PTY local pour une session terminal interactive (Claude Code CLI).',
   mcp: 'Relie le client aux outils documentaires PieceMaker et à la recherche juridique Légifrance.',
   telegram: 'Deux bots séparés — un Assistant conversationnel et une surveillance sans LLM — chacun avec son propre token BotFather.',
   gliner: 'Détection PII locale (Presidio + GLiNER2.5). Construit le mapping du dossier. Aucune donnée ne quitte le poste.',
@@ -1767,7 +1766,6 @@ const officialMarketplace = createMarketplaceController({
 });
 
 const MCP_ICONS = {
-  word: '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 9l2 6 2-4 2 4 2-6"/></svg>',
   legifrance: '<svg viewBox="0 0 24 24"><path d="M12 3 2 7l10 4 10-4-10-4z"/><path d="M4 10v5c0 3 3.6 5 8 5s8-2 8-5v-5"/></svg>',
   server: '<svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="7" rx="2"/><rect x="2" y="14" width="20" height="7" rx="2"/><circle cx="6" cy="6.5" r="1"/><circle cx="6" cy="17.5" r="1"/></svg>',
 };
@@ -1776,7 +1774,6 @@ let mcpTabLoaded = false;
 
 function mcpIconForName(name) {
   const lower = (name || '').toLowerCase();
-  if (/word|document|edit_doc|taskpane/.test(lower)) return MCP_ICONS.word;
   if (/légifrance|legifrance|juri|legal|piste/.test(lower)) return MCP_ICONS.legifrance;
   return MCP_ICONS.server;
 }

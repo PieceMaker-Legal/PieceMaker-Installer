@@ -13,9 +13,9 @@
  * l'appel au fournisseur.
  *
  * Bash est traité comme les outils de lecture. C'est indispensable depuis que
- * le skill `docx` est disponible : il travaille par `pandoc`, `unzip` et
- * `python ooxml/scripts/unpack.py`, qui contournaient entièrement un garde-fou
- * limité à Read/Grep/Glob.
+ * le skill `docx-cli` est disponible : il travaille par le binaire `docx`
+ * (`docx read pièce.docx`, `docx find`…), qui contournerait entièrement un
+ * garde-fou limité à Read/Grep/Glob.
  */
 
 import fs from 'node:fs';

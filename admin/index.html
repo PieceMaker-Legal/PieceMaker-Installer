@@ -382,7 +382,6 @@
         <div id="settingsConfigurationGroup" class="configuration-form-group">
         <div class="metrics">
           <article class="card metric"><span>Version</span><strong id="version">—</strong></article>
-          <article class="card metric"><span>Word connecté</span><strong id="wordStatus">—</strong></article>
           <article class="card metric"><span>Certificats HTTPS</span><strong id="certStatus">—</strong></article>
           <article class="card metric"><span>Skills / agents</span><strong id="assetCount">—</strong><small id="assetRegistered"></small></article>
         </div>
@@ -420,7 +419,7 @@
               <div><p class="eyebrow">LOCAL</p><h2>Serveur et fichiers</h2></div>
             </div>
             <div class="form-grid">
-              <label>Port local<input id="port" name="port" type="number" min="1024" max="65535" required readonly><small>Le port 43098 est actuellement requis par le complément Word.</small></label>
+              <label>Port local<input id="port" name="port" type="number" min="1024" max="65535" required readonly><small>Le port 43098 est actuellement fixe.</small></label>
               <label class="wide">Interpréteur Python<input id="pythonPath" name="pythonPath" placeholder="python3 ou chemin absolu"></label>
             </div>
           </article>
@@ -823,7 +822,7 @@
       </div>
 
       <div id="pluginTabMcp" class="plugin-dialog-panel" hidden role="tabpanel">
-        <p class="hint">Serveurs MCP configurés sur ce poste et connecteurs disponibles. Les serveurs MCP relient Claude Code aux outils locaux (Word, Légifrance…) et aux services distants.</p>
+        <p class="hint">Serveurs MCP configurés sur ce poste et connecteurs disponibles. Les serveurs MCP relient Claude Code aux outils locaux (Légifrance…) et aux services distants.</p>
         <p id="mcpTabStatus" class="muted">Chargement…</p>
         <div id="mcpTabList" class="plugin-component-list mcp-server-list" aria-label="Serveurs MCP et connecteurs">Chargement…</div>
       </div>

@@ -59,10 +59,12 @@ Le pont Word (complément Office + serveur MCP dédié, anciennement
 `taskpane/` et `mcp-server/` dans ce dépôt) a été extrait vers un dépôt séparé
 et indépendant, **actuellement suspendu** — il n'y a plus de volet Word ni de
 `paneId` dans ce dépôt. Tout travail sur un `.docx` (rédaction, relecture,
-correction de style, suivi des modifications) passe par le skill officiel
-Anthropic `document-skills:docx` : Bash + `pandoc` + dépaquetage OOXML
-(`unzip`/`zip` sur `word/document.xml`, `word/styles.xml`), sans application
-Word ouverte. Voir `piecemaker-plugin/skills/redaction-juridique/SKILL.md` et
+correction de style, suivi des modifications) passe par le skill `docx-cli`
+(dépôt `kklimuk/docx-cli`, installé par l'étape `11-docx-cli`) : Bash + le
+binaire `docx`, qui mute l'OOXML **en place** (styles maison, couleurs de
+thème et objets embarqués préservés), adresse le contenu par localisateurs
+stables et expose les modifications suivies (`docx track-changes`), sans
+application Word ouverte. Voir `piecemaker-plugin/skills/redaction-juridique/SKILL.md` et
 `piecemaker-plugin/skills/tamponnage/SKILL.md` pour le détail de ce que ce
 skill couvre et de ce qu'il ne couvre pas (le tamponnage live depuis un volet
 Word, notamment, n'a pas d'équivalent tant que le dépôt séparé n'est pas
@@ -111,7 +113,8 @@ vérifie l'empreinte via `plugin-refresh.mjs`, jamais le seul code de sortie.
 ## Commandes de développement
 
 ```bash
-npm test                 # node --test sur test/*.test.* (concurrency 4)
+npm test                 # node --test sur test/*.test.* (concurrency 4, ~4 min)
+                         # à déléguer à l'agent test-piecemaker (Haiku, ~/.claude/agents/)
 npm run server           # lance server.cjs directement
 npm run check            # diagnostic installateur, n'installe rien
 node installer/bin/piecemaker.mjs --dry-run --all

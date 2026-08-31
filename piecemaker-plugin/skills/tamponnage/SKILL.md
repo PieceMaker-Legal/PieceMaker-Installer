@@ -22,7 +22,7 @@ description: Configurer ou générer le tampon du cabinet et tamponner les pièc
 > `localTools.stamping` dans `taskpane/taskpane.js` — ce code a été retiré de
 > ce dépôt et vit désormais dans un dépôt séparé et indépendant
 > (`PieceMaker-Word-MCP`), actuellement **suspendu**. Il n'existe **aucun
-> équivalent via le skill `docx`** : `docx` sait lire/éditer un `.docx`, pas
+> équivalent via le skill `docx-cli`** : `docx` sait lire/éditer un `.docx`, pas
 > superposer une image sur un PDF ni piloter une modal dans un volet Office
 > ouvert. Tant que ce dépôt séparé n'est pas réactivé, configurer et appliquer
 > le tampon passe uniquement par `/admin/` (onglet « Tampon et pièces »).
@@ -135,7 +135,7 @@ jamais le `.md` d'une pièce, le bordereau doit renvoyer au document d'origine.
 ## Règles
 
 - Le nombre de pièces tamponnées et leur ordre doivent correspondre exactement
-  au bordereau du dossier (rédigé via le skill `docx` dans le document de
+  au bordereau du dossier (rédigé via le skill `docx-cli` dans le document de
   procédure) : renumérotez le bordereau si la sélection change, la
   numérotation n'est pas persistée côté serveur.
 - Compilations et pièces tamponnées contiennent des données de client : ne

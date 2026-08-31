@@ -35,23 +35,25 @@ Ces templates peuvent être déplacés vers `~/.piecemaker/templates/` pour un e
    éditer le template original en place, et ne jamais copier par-dessus un
    fichier de travail contenant déjà de la rédaction à conserver. Aucun
    document n'a besoin d'être ouvert dans une application Word : toute la
-   suite passe par le skill `document-skills:docx` (Bash, `pandoc`,
-   dépaquetage OOXML) — il n'y a ni volet, ni `paneId`.
-3. **Lire le contenu du document de travail** avec `pandoc -t markdown
-   fichier.docx` pour repérer tous les placeholders `{{...}}` restants, puis
-   le dépaqueter pour éditer son XML :
+   suite passe par le skill `docx-cli` (Bash + le binaire `docx`) — il n'y a
+   ni volet, ni `paneId`.
+3. **Lire le contenu du document de travail** avec `docx read fichier.docx`
+   (Markdown) et localiser les placeholders restants avec
+   `docx find fichier.docx "{{"` — la sortie donne les localisateurs stables
+   (`p3:5-20`) qui servent aux éditions :
 
    ```bash
-   unzip -q fichier.docx -d unpacked/
-   python scripts/merge_runs.py unpacked/   # coalesce les runs fragmentés
-   # éditer unpacked/word/document.xml : remplacer chaque {{PLACEHOLDER}}
-   (cd unpacked && rm -f ../fichier.docx && zip -Xr ../fichier.docx .)
-   python scripts/validate.py fichier.docx   # contrôle XSD
+   docx read fichier.docx                       # contenu en Markdown
+   docx find fichier.docx --regex "\{\{[A-Z_]+\}\}"   # placeholders + localisateurs
+   docx replace fichier.docx "{{PARTIE_CLIENTE}}" "…"    # un placeholder
+   docx replace fichier.docx --batch fills.jsonl         # tous, en une passe
+   docx validate fichier.docx                   # contrôle du document produit
    ```
 
-   `merge_runs.py` est nécessaire car Word fragmente souvent un placeholder
-   sur plusieurs `<w:r>` : sans fusion, `{{PLACEHOLDER}}` peut ne pas exister
-   comme chaîne contiguë dans le XML brut.
+   `docx replace` remplace le texte en conservant la mise en forme du run :
+   plus besoin de fusionner les runs fragmentés à la main comme avec le
+   dépaquetage OOXML, le placeholder est retrouvé même s'il est éclaté sur
+   plusieurs `<w:r>`.
 4. **Remplir les placeholders** repérés à l'étape précédente, un par un, en
    s'appuyant sur les pièces du dossier (voir l'agent `analyste-piece` pour
    synthétiser une pièce avant de rédiger les faits) et sans jamais inventer
@@ -59,31 +61,30 @@ Ces templates peuvent être déplacés vers `~/.piecemaker/templates/` pour un e
    source des placeholders : ne charger ni fichier JSON compagnon, ni ordre ou
    consigne de placeholder stocké hors du document.
 5. **Citer via `recherche-juridique`** : toute référence à un texte de loi ou à une décision insérée dans `{{DISCUSSION}}` / `{{DISCUSSION_APPEL}}` / `{{DISCUSSION_ASSIGNATION}}` / `{{DISPOSITIF*}}` doit d'abord être vérifiée avec cette skill — jamais citée de mémoire.
-6. **Anonymiser avant toute sortie externe** du document rédigé — skill `anonymisation`, puis vérification par l'agent `verificateur-anonymisation` avant envoi.
+6. **Anonymiser avant toute sortie externe** du document rédigé — anonymisation depuis l'administration (« Anonymiser & mapper »), puis vérification par l'agent `verificateur-anonymisation` avant envoi.
 
 ## Règles qui s'appliquent toujours
 
 - **Citations vérifiables uniquement** : voir la skill `recherche-juridique` pour le détail des outils et de la procédure de vérification. Ne jamais produire un identifiant de texte ou de décision non confirmé.
 - **Ne jamais réutiliser un nom réel** présent dans une pièce anonymisée du dossier pour rédiger un extrait destiné à sortir du dossier de travail — rester sur les codes du mapping (`PERSONNE_PHYSIQUE_1`, `PERSONNE_MORALE_1`, `SOCIETE_SCI_1`, `ADRESSE_1`, etc.) tant que le document n'est pas définitivement destiné à un usage interne au dossier.
 - **Respecter les règles de validation du template** (ex. : une section "FAITS" doit s'appuyer sur des notes de bas de page référençant les pièces communiquées) plutôt que de les contourner pour faire passer un placeholder vide ou incomplet.
-- L'édition du document de travail passe par le skill `document-skills:docx` :
-  dépaquetage OOXML (`unzip`/`zip`), lecture via `pandoc -t markdown`, édition
-  directe de `word/document.xml`. Ce sont des scripts Bash/Python locaux sur
-  le fichier `.docx` — aucune application Word n'est requise, il n'y a pas de
+- L'édition du document de travail passe par le skill `docx-cli` : le binaire
+  `docx` mute l'OOXML en place, sans dépaquetage ni application Word, et sans
   `paneId`. Après le remplissage initial des placeholders, toute édition
-  ultérieure doit rester en suivi des modifications (`<w:ins>`/`<w:del>` avec
-  `w:id`/`w:author`/`w:date`) et être validée avec
-  `python scripts/validate.py fichier.docx --original <version précédente>
-  --author "<nom>"`, qui signale tout texte changé sans balise de suivi.
-- **Corriger une mise en forme se fait en éditant `word/styles.xml`** dans le
-  même dépaquetage, jamais en recopiant le template par-dessus le document
-  déjà rédigé : redéfinir dans ce fichier un style déjà déclaré (police,
-  taille, alignement, espacements) se propage à tous les paragraphes qui le
-  portent et laisse le contenu intact. Le skill `docx` n'a **pas** d'outil
-  dédié équivalent à l'ancien `doc_styles` (qui redéfinissait un style en un
-  seul appel, sans repasser par un dépaquetage) : c'est une édition XML
-  manuelle comme les autres, à revalider avec `validate.py` avant de refermer
-  le zip.
+  ultérieure doit rester en suivi des modifications : activer le suivi une
+  fois avec `docx track-changes fichier.docx on` — chaque `replace`, `edit`,
+  `insert` ou `delete` émet alors ses `<w:ins>`/`<w:del>` — puis contrôler
+  avec `docx track-changes list fichier.docx` que toutes les modifications
+  portent bien une marque de suivi.
+- **Corriger une mise en forme se fait au niveau du style**, jamais en
+  recopiant le template par-dessus le document déjà rédigé : redéfinir un
+  style déjà déclaré (police, taille, alignement, espacements) se propage à
+  tous les paragraphes qui le portent et laisse le contenu intact. Inspecter
+  les styles avec `docx styles fichier.docx` ; `docx` mutant le XML en place,
+  les styles maison et les couleurs de thème du template survivent aux
+  éditions. Si un réglage n'a pas de verbe dédié, passer par l'échappatoire
+  `docx raw` plutôt que par un dépaquetage manuel, et revalider avec
+  `docx validate`.
 
 ## Ce qu'il ne faut pas faire
 

@@ -771,12 +771,6 @@ async function configurationOverview({ repoRoot, homeDir, userHome, getRuntimeSt
 
   const mcpItems = [
     {
-      name: 'PieceMaker · Word',
-      installed: fs.existsSync(path.join(repoRoot, 'mcp-server', 'mcp-server-local.js')),
-      configured: true,
-      detail: 'Outils locaux pour lire, éditer et tamponner les documents Word.',
-    },
-    {
       name: 'Légifrance',
       installed: fs.existsSync(path.join(repoRoot, 'piecemaker-plugin', 'mcp', 'legifrance', 'mcp_stdio_server.py')),
       configured: Boolean(env.LEGIFRANCE_CLIENT_ID && env.LEGIFRANCE_CLIENT_SECRET),
@@ -1980,7 +1974,7 @@ async function sendGeneratedDocument(res, { html, filename, format }) {
   stream.once('close', cleanup);
   res.once('close', cleanup);
   // Sans écouteur, un `error` sur le flux remonterait en exception non
-  // interceptée et tuerait le serveur — or il sert aussi le volet Word et les
+  // interceptée et tuerait le serveur — or il sert aussi l'administration et les
   // WebSocket. Les en-têtes sont déjà partis : on ne peut que couper.
   stream.once('error', (error) => {
     console.warn(`[export] Lecture du document généré interrompue: ${error.message}`);

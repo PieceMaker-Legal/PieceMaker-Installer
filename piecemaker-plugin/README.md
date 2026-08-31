@@ -7,8 +7,6 @@ distribué par un manifest ou un marketplace PieceMaker.
 ## Contenu
 
 - **Skills** (`skills/`) :
-  - `anonymisation` — scan PII GLiNER/Presidio, lecture/édition de mapping
-    d'anonymisation, ré-identification.
   - `conversion-md` — conversion de documents en Markdown
     (`smart_converter.py`, markitdown/MinerU).
   - `redaction-juridique` — rédaction/relecture de documents juridiques
