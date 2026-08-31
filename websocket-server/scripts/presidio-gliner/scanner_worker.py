@@ -141,8 +141,11 @@ GLINER_THRESHOLD = 0.5
 # contexts (81 min for this document's 1 689 ORGANIZATION mentions) and answering
 # "Osakeyhtio", "EIRELI" or "No Liability" for French and American companies.
 
-CHUNK_SIZE = 250
-CHUNK_OVERLAP = 50
+# Réglage officiel Fastino pour les documents longs GLiNER2.5 : 384 mots avec
+# 64 mots de recouvrement. Ces valeurs doivent rester identiques dans
+# presidio-gliner.py, qui est l'autre point d'entrée du scanner.
+CHUNK_SIZE = 384
+CHUNK_OVERLAP = 64
 BATCH_SIZE = 8
 
 # ---------------------------------------------------------------------------

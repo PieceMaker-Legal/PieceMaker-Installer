@@ -137,8 +137,11 @@ GLINER_THRESHOLD = 0.5
 # Legal forms are read literally from the text by scan_utils.extract_legal_form;
 # the previous 30-label classify_text schema is gone (see scanner_worker.py).
 
-CHUNK_SIZE = 250  # words per chunk
-CHUNK_OVERLAP = 50  # words of overlap between chunks
+# Réglage officiel Fastino pour les documents longs GLiNER2.5 : 384 mots avec
+# 64 mots de recouvrement. Ces valeurs doivent rester identiques dans
+# scanner_worker.py, qui est le point d'entrée persistant du scanner.
+CHUNK_SIZE = 384  # words per chunk
+CHUNK_OVERLAP = 64  # words of overlap between chunks
 BATCH_SIZE = 8  # number of chunks to process in parallel
 
 

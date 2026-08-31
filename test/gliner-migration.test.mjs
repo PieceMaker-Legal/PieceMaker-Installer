@@ -81,3 +81,14 @@ test('les scanners utilisent AutoExtractor sans téléchargement implicite', () 
     assert.doesNotMatch(source, /from gliner2 import GLiNER2/);
   }
 });
+
+test('les deux points d’entrée GLiNER2.5 conservent le découpage Fastino des longs documents', () => {
+  for (const relative of [
+    'websocket-server/scripts/presidio-gliner/presidio-gliner.py',
+    'websocket-server/scripts/presidio-gliner/scanner_worker.py',
+  ]) {
+    const source = fs.readFileSync(path.join(ROOT, relative), 'utf8');
+    assert.match(source, /^CHUNK_SIZE\s*=\s*384\b/m, `${relative} doit utiliser des chunks de 384 mots`);
+    assert.match(source, /^CHUNK_OVERLAP\s*=\s*64\b/m, `${relative} doit utiliser un recouvrement de 64 mots`);
+  }
+});
