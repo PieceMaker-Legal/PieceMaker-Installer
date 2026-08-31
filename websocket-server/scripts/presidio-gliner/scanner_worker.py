@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Long-lived scanner worker — loads GLiNER2 + spaCy once, processes multiple files
+Long-lived scanner worker — loads GLiNER2.5 + spaCy once, processes multiple files
 via a JSON-line stdin/stdout protocol.
 
 Protocol:
@@ -37,10 +37,12 @@ from presidio_analyzer import (
 from presidio_analyzer.nlp_engine import NlpArtifacts, NlpEngineProvider
 
 try:
-    from gliner2 import GLiNER2
+    from gliner2 import AutoExtractor
     GLINER2_AVAILABLE = True
 except ImportError:
     GLINER2_AVAILABLE = False
+
+from model_config import PREFERRED_GLINER_MODEL
 
 # ---------------------------------------------------------------------------
 # Import scan_utils via the same path trick as presidio-gliner.py
@@ -92,7 +94,7 @@ DEBUG_ENTITIES = os.environ.get("PIECEMAKER_DEBUG_ENTITIES", "").lower() in ("1"
 # ---------------------------------------------------------------------------
 # Constants (must match presidio-gliner.py)
 # ---------------------------------------------------------------------------
-GLINER_MODEL = "fastino/gliner2-multi-v1"
+GLINER_MODEL = PREFERRED_GLINER_MODEL
 
 ENTITY_MAPPING = {
     "person":       "PERSON",
@@ -128,11 +130,10 @@ ENTITY_DESCRIPTIONS = {
     ),
 }
 
-# Confidence threshold, swept 0.05 -> 0.90 on the reference corpus. 0.70 is the
-# highest value that still finds every reference entity; above it OBA is lost, below it
-# precision falls without recovering any entity. The previous 0.30 filtered nothing
-# useful and let through twice as many false positives.
-GLINER_THRESHOLD = 0.7
+# GLiNER2.5 has a different boundary head and its scores are not calibrated like
+# those of the former span checkpoint. Start from Fastino's documented default;
+# anonymisation favours recall, and the mapping remains reviewable for false positives.
+GLINER_THRESHOLD = 0.5
 
 # The legal form of an organisation is read literally from the text by
 # scan_utils.extract_legal_form. The previous 221-label zero-shot schema and its
@@ -317,10 +318,13 @@ class GLiNER2Recognizer(LocalRecognizer):
             raise ImportError("gliner2 is not installed.")
         if self.model is not None:
             return
-        self.model = GLiNER2.from_pretrained(self.model_name)
+        self.model = AutoExtractor.from_pretrained(
+            self.model_name,
+            local_files_only=True,
+        )
         # Reached only when the worker did not pre-load a shared model; accelerate here too
         # so the fast path does not depend on which entry point loaded the model first.
-        coreml_runtime.maybe_accelerate(self.model)
+        coreml_runtime.maybe_accelerate(self.model, self.model_name)
 
     def analyze(self, text, entities, nlp_artifacts=None):
         if self.model is None:
@@ -487,13 +491,14 @@ def _ensure_gliner_loaded():
     global _gliner_model
     if _gliner_model is None and GLINER2_AVAILABLE:
         _log("Loading GLiNER2 model...")
-        _gliner_model = GLiNER2.from_pretrained(GLINER_MODEL)
+        _gliner_model = AutoExtractor.from_pretrained(
+            GLINER_MODEL,
+            local_files_only=True,
+        )
 
-        # The encoder is 92 % of the wall clock; running it on the Mac GPU via CoreML
-        # halves a scan (GENSIGHT: 18.8 -> 9.0 min) for identical output — the French
-        # corpus gives strictly the same entity sets. Falls back to torch on its own if
-        # coremltools or the model file is missing, so this is safe to call blind.
-        coreml_runtime.maybe_accelerate(_gliner_model)
+        # The encoder dominates the wall clock. CoreML uses an artifact compiled from
+        # this exact GLiNER2.5 checkpoint; otherwise it falls back to torch on its own.
+        coreml_runtime.maybe_accelerate(_gliner_model, GLINER_MODEL)
 
         _log("GLiNER2 model loaded.")
 

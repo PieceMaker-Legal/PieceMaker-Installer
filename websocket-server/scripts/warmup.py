@@ -16,7 +16,17 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Callable
+from typing import Dict, List, Optional
+
+PRESIDIO_GLINER_DIR = Path(__file__).resolve().parent / "presidio-gliner"
+if str(PRESIDIO_GLINER_DIR) not in sys.path:
+    sys.path.insert(0, str(PRESIDIO_GLINER_DIR))
+
+from model_config import (  # noqa: E402
+    LEGACY_GLINER_MODELS,
+    PREFERRED_GLINER_MODEL,
+    is_model_cached,
+)
 
 
 # ============================================================================
@@ -25,9 +35,9 @@ from typing import Dict, List, Optional, Callable
 
 MODELS_CONFIG = {
     "gliner2": {
-        "model_id": "fastino/gliner2-multi-v1",
-        "description": "GLiNER2 entity extraction model (205M params)",
-        "size_mb": "~400MB",
+        "model_id": PREFERRED_GLINER_MODEL,
+        "description": "GLiNER2.5 multilingual boundary model (287M params)",
+        "size_mb": "~1.1GB",
         "optional": False,
         "type": "huggingface",
     },
@@ -72,14 +82,24 @@ def log_plain(message: str):
 
 def is_gliner2_cached(model_id: str) -> bool:
     """Check if GLiNER2 model exists in HuggingFace cache"""
-    try:
-        from huggingface_hub import try_to_load_from_cache
+    return is_model_cached(model_id)
 
-        # Try to load model config to check if cached
-        cached_path = try_to_load_from_cache(repo_id=model_id, filename="config.json")
-        return cached_path is not None and os.path.exists(cached_path)
-    except Exception:
-        return False
+
+def gliner_migration_status() -> Dict:
+    """Describe the preferred/legacy checkpoint state without downloading."""
+    preferred_cached = is_gliner2_cached(PREFERRED_GLINER_MODEL)
+    cached_legacy = [
+        model_id for model_id in LEGACY_GLINER_MODELS
+        if is_gliner2_cached(model_id)
+    ]
+    return {
+        "preferred_model_id": PREFERRED_GLINER_MODEL,
+        "preferred_cached": preferred_cached,
+        "legacy_model_ids": list(LEGACY_GLINER_MODELS),
+        "cached_legacy_model_ids": cached_legacy,
+        "active_model_id": PREFERRED_GLINER_MODEL,
+        "replacement_available": bool(cached_legacy and not preferred_cached),
+    }
 
 
 def is_spacy_cached(model_id: str) -> bool:
@@ -114,70 +134,18 @@ def check_model_cached(model_key: str) -> bool:
 # ============================================================================
 
 
-class TQDMRedirector:
-    """Custom progress bar that outputs JSON for server consumption"""
-
-    def __init__(self, model_id: str, description: str = ""):
-        self.model_id = model_id
-        self.description = description
-        self.n = 0
-        self.total = 0
-
-    def update(self, n: int = 1):
-        """Update progress"""
-        self.n += n
-        if self.total > 0:
-            pct = (self.n / self.total) * 100
-            log_json(
-                f"Downloading {self.model_id}: {pct:.1f}%",
-                level="progress",
-                model=self.model_id,
-                progress=pct,
-                downloaded=self.n,
-                total=self.total,
-            )
-
-    def set_postfix(self, **kwargs):
-        pass
-
-    def close(self):
-        pass
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        pass
-
-
-def download_gliner2_model(model_id: str, description: str) -> bool:
+def download_gliner2_model(model_id: str, description: str, force: bool = False) -> bool:
     """Download GLiNER2 model with progress reporting"""
     try:
         from huggingface_hub import snapshot_download
-        import huggingface_hub
-
         log_json(f"Starting download: {description}", model=model_id, phase="start")
         log_plain(f"📥 Downloading {model_id}...")
-
-        # Custom callback for progress
-        def progress_callback(files, downloaded, total, **kwargs):
-            if total > 0:
-                pct = (downloaded / total) * 100
-                log_json(
-                    f"Downloading: {pct:.1f}%",
-                    level="progress",
-                    model=model_id,
-                    progress=pct,
-                    downloaded=downloaded,
-                    total=total,
-                )
 
         # Download with resume support
         snapshot_download(
             model_id,
             local_files_only=False,
-            resume_download=True,
-            tqdm_class=None,  # We'll handle progress ourselves
+            force_download=force,
         )
 
         log_json(f"Download complete: {model_id}", model=model_id, phase="complete")
@@ -259,7 +227,7 @@ def download_model(model_key: str, force: bool = False) -> bool:
 
     # Download based on type
     if config["type"] == "huggingface":
-        return download_gliner2_model(config["model_id"], config["description"])
+        return download_gliner2_model(config["model_id"], config["description"], force=force)
     elif config["type"] == "spacy":
         return download_spacy_model(config["model_id"], config["description"])
 
@@ -298,9 +266,10 @@ def check_python_dependencies() -> Dict[str, bool]:
         "pypdf": False,
     }
 
+    import_names = {"huggingface_hub": "huggingface_hub"}
     for pkg in dependencies.keys():
         try:
-            __import__(pkg.replace("_", ""))
+            __import__(import_names.get(pkg, pkg))
             dependencies[pkg] = True
             log_json(f"Package {pkg} installed", package=pkg, installed=True)
         except ImportError:
@@ -372,7 +341,8 @@ def run_warmup(
     log_plain("")
 
     # Summary
-    critical_ok = results["models"].get("gliner2", False)
+    migration = gliner_migration_status()
+    critical_ok = results["models"].get("gliner2", migration["preferred_cached"])
     total_models = len(results["models"])
     success_models = sum(1 for v in results["models"].values() if v)
 
@@ -408,7 +378,7 @@ def get_status() -> Dict:
     # Check dependencies
     for pkg in ["gliner2", "huggingface_hub", "spacy", "markitdown", "pypdf"]:
         try:
-            __import__(pkg.replace("_", ""))
+            __import__(pkg)
             status["dependencies"][pkg] = True
         except ImportError:
             status["dependencies"][pkg] = False
@@ -420,8 +390,13 @@ def get_status() -> Dict:
     except:
         status["tools"]["mineru"] = False
 
-    # Overall ready status
-    status["ready"] = status["models"]["gliner2"]["cached"]
+    # Overall ready status: migration obligatoire, le cache historique ne rend
+    # jamais l'anonymisation opérationnelle à lui seul.
+    status["migration"] = gliner_migration_status()
+    status["ready"] = all(
+        info["cached"] or info["config"].get("optional", False)
+        for info in status["models"].values()
+    )
 
     return status
 
@@ -470,7 +445,8 @@ def main():
     )
 
     # Exit code based on critical component
-    critical_ok = results["models"].get("gliner2", False)
+    migration = gliner_migration_status()
+    critical_ok = results["models"].get("gliner2", migration["preferred_cached"])
     sys.exit(0 if critical_ok else 1)
 
 

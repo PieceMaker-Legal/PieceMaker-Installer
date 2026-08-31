@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
 """Run mdeberta's encoder on the Mac GPU through CoreML instead of the CPU.
 
-The encoder is 92 % of a scan's wall clock, and a CoreML/GPU MLProgram runs it about twice
-as fast as torch on this hardware. Measured end to end, fp32 against CoreML, on the same
-machine one run after the other (see eval/BACKENDS_MESURES.md §6):
+The encoder dominates a scan's wall clock. Historical GLiNER2 measurements showed that a
+CoreML/GPU MLProgram ran it about twice as fast as torch on this hardware (see
+eval/BACKENDS_MESURES.md §6):
 
     GENSIGHT_URD_2023  972 chunks   18,76 min -> 8,96 min    2,09x
     Assignation URGOT   18 chunks   0,932 -> 0,403 s/chunk    2,31x
     Conclusions         13 chunks   0,999 -> 0,441 s/chunk    2,27x
 
-Quality is unchanged: on both French documents the sets of detected entities are strictly
-identical to fp32 at every threshold, and on GENSIGHT 810 of the 812 entities at the
-production threshold are shared — the four differences being longer or shorter forms of
-entities the other backend also finds, which global string substitution redacts either way.
+Those quality and speed measurements concern the historical checkpoint. GLiNER2.5 gets a
+separate compiled artifact so old weights can never be injected into the new model.
 
 NOT the Neural Engine: `CPU_AND_NE` measured **3,3x slower** than the CPU on this model.
 deberta-v3's disentangled attention is the pattern the ANE handles worst. `CPU_AND_GPU` is
@@ -24,14 +22,33 @@ correctly. A scan must never fail because of an optimisation.
 
 Environment:
     PIECEMAKER_COREML=0          disable entirely (default: enabled)
-    PIECEMAKER_COREML_MODEL=...  path to the .mlmodelc (default: models/ next to this file)
+    PIECEMAKER_COREML_MODEL=...  path to the .mlmodelc (default: model-specific
+                               file in models/ next to this file)
 """
 import os
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_SEQ = 832
-DEFAULT_MODEL = os.path.join(_HERE, "models", f"encoder_b1_{DEFAULT_SEQ}.mlmodelc")
+LEGACY_MODEL_ID = "fastino/gliner2-multi-v1"
+
+
+def default_model_path(model_id=None, seq_len=DEFAULT_SEQ):
+    """Return a CoreML artifact tied to the exact checkpoint weights.
+
+    Reusing the historical GLiNER2 encoder with GLiNER2.5 would silently
+    produce invalid detections. Keep the old filename only for the old model;
+    every newer checkpoint gets its own explicit artifact.
+    """
+    if not model_id or model_id == LEGACY_MODEL_ID:
+        filename = f"encoder_b1_{seq_len}.mlmodelc"
+    else:
+        slug = str(model_id).rsplit("/", 1)[-1].replace("/", "-")
+        filename = f"{slug}-encoder_b1_{seq_len}.mlmodelc"
+    return os.path.join(_HERE, "models", filename)
+
+
+DEFAULT_MODEL = default_model_path()
 
 
 def _log(msg):
@@ -113,7 +130,7 @@ def _seq_len_from_path(path: str) -> int:
     return int(tail) if tail.isdigit() else DEFAULT_SEQ
 
 
-def maybe_accelerate(model) -> bool:
+def maybe_accelerate(model, model_id=None) -> bool:
     """Point `model.encoder.forward` at CoreML when it is available and wanted.
 
     Returns True if the encoder was swapped. Never raises.
@@ -122,7 +139,7 @@ def maybe_accelerate(model) -> bool:
         _log("CoreML disabled (PIECEMAKER_COREML=0) — torch CPU")
         return False
 
-    path = os.environ.get("PIECEMAKER_COREML_MODEL", DEFAULT_MODEL)
+    path = os.environ.get("PIECEMAKER_COREML_MODEL", default_model_path(model_id))
     if not os.path.exists(path):
         _log(f"CoreML model absent ({path}) — torch CPU")
         return False

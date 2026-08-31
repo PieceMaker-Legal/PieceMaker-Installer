@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Génère une fois l'encodeur CoreML, pour que les scans GLiNER tournent sur le GPU.
 
-Le runtime (`coreml_runtime.py`) accélère l'encodeur mdeberta — 92 % du temps d'un
-scan — sur le GPU du Mac : ~2× plus rapide, **sortie de détection strictement
-identique** (mesurée dans `eval/BACKENDS_MESURES.md`), et surtout des cœurs CPU
-libérés pour que la machine reste utilisable pendant un scan.
+Le runtime (`coreml_runtime.py`) accélère l'encodeur mdeberta sur le GPU du Mac
+et libère surtout les cœurs CPU pour que la machine reste utilisable pendant un
+scan. Les mesures historiques sont documentées dans `eval/BACKENDS_MESURES.md` ;
+GLiNER2.5 reçoit son propre artefact compilé à partir de ses poids exacts.
 
 Ce script est **best-effort et idempotent** :
   - il ne refait rien si le `.mlmodelc` est déjà là ;
@@ -16,7 +16,7 @@ Il réutilise `Wrap` et `_patch_deberta_scale` de `eval/coreml_encoder.py` pour 
 pas dupliquer les correctifs de traçage deberta, mais synthétise ses propres
 entrées (la conversion ne dépend que de leur forme, pas de leurs valeurs).
 
-    python3 build_coreml.py            # génère models/encoder_b1_832.mlmodelc
+    python3 build_coreml.py            # génère l'encodeur GLiNER2.5 dans models/
     PIECEMAKER_COREML_SEQ=832          # longueur de séquence (défaut 832)
 """
 import os
@@ -27,8 +27,12 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 SEQ = int(os.environ.get("PIECEMAKER_COREML_SEQ", "832"))
 MODELS_DIR = os.path.join(HERE, "models")
-TARGET = os.path.join(MODELS_DIR, f"encoder_b1_{SEQ}.mlmodelc")
-GLINER_MODEL = "fastino/gliner2-multi-v1"
+
+from model_config import PREFERRED_GLINER_MODEL  # noqa: E402
+from coreml_runtime import default_model_path  # noqa: E402
+
+GLINER_MODEL = PREFERRED_GLINER_MODEL
+TARGET = default_model_path(GLINER_MODEL, SEQ)
 
 
 def _log(msg):
@@ -44,7 +48,7 @@ def main():
         import numpy as np
         import torch
         import coremltools as ct
-        from gliner2 import GLiNER2
+        from gliner2 import AutoExtractor
     except Exception as exc:  # noqa: BLE001
         _log(f"CoreML non généré (dépendance manquante : {type(exc).__name__}: {exc}) — les scans resteront sur CPU torch")
         return 0
@@ -67,7 +71,10 @@ def main():
         mask = torch.ones((1, SEQ), dtype=torch.long)
 
         _log(f"Chargement de {GLINER_MODEL}...")
-        model = GLiNER2.from_pretrained(GLINER_MODEL).eval()
+        model = AutoExtractor.from_pretrained(
+            GLINER_MODEL,
+            local_files_only=True,
+        ).eval()
         wrap = Wrap(model.encoder).eval()
         del model
 

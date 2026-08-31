@@ -1,16 +1,19 @@
-# GLiNER2 Entity Extractor
+# GLiNER2.5 Entity Extractor
 
 ## Description
 
-GLiNER2 est un extracteur d'entités nommées basé sur un modèle de deep learning (205M paramètres). Il permet de détecter automatiquement des entités sensibles (PII - Personally Identifiable Information) dans des documents Markdown.
+PieceMaker utilise GLiNER2.5, un extracteur d'entités nommé multilingue basé sur
+la nouvelle architecture boundary de Fastino (287 M paramètres). Il détecte
+localement les entités sensibles dans les documents Markdown.
 
 ## Installation
 
 ```bash
-pip install gliner2
+pip install 'gliner2[local]>=2.0.0'
 ```
 
-Le modèle `fastino/gliner2-base-v1` sera téléchargé automatiquement au premier lancement (~205 Mo).
+Le modèle `fastino/gliner2.5-multi-v1` est téléchargé par l’installateur
+(environ 1,1 Go). La migration depuis `fastino/gliner2-multi-v1` est obligatoire.
 
 ## Utilisation via l'interface
 
@@ -22,18 +25,18 @@ Le modèle `fastino/gliner2-base-v1` sera téléchargé automatiquement au premi
 ## Utilisation en ligne de commande
 
 ```bash
-python gliner2_scan.py <fichier.md> -o <dossier_sortie>
+python presidio-gliner/presidio-gliner.py <fichier.md> -o <dossier_sortie>
 ```
 
 ### Exemple
 
 ```bash
-python gliner2_scan.py document.md -o ./gliner2_output
+python presidio-gliner/presidio-gliner.py document.md -o ./presidio_gliner_output
 ```
 
 ## Entités détectées
 
-GLiNER2 détecte les types d'entités suivants:
+Le pipeline GLiNER2.5 + Presidio détecte notamment les types suivants :
 
 - **person**: Noms de personnes
 - **email**: Adresses email
@@ -79,7 +82,7 @@ Le script génère un fichier JSON avec la structure suivante:
   "summary": {
     "total_entities_found": 15,
     "entity_types": ["PERSON", "EMAIL", "PHONE", "ADDRESS"],
-    "model": "fastino/gliner2-base-v1"
+    "model": "fastino/gliner2.5-multi-v1"
   }
 }
 ```
@@ -88,7 +91,8 @@ Le script génère un fichier JSON avec la structure suivante:
 
 ### Seuil de confiance
 
-Le script utilise un seuil de confiance de 0.7 par défaut. Les entités avec un score inférieur ne sont pas retournées.
+Le scanner utilise le seuil de confiance 0,5 recommandé par défaut pour la
+nouvelle tête boundary. Les entités moins certaines ne sont pas retournées.
 
 ### Variables d'environnement
 
@@ -104,7 +108,7 @@ Le script utilise un seuil de confiance de 0.7 par défaut. Les entités avec un
 | Confidence scores | Natif | Natif |
 | Spans de texte | Natif | Natif |
 | Format de sortie | JSON natif | JSON natif |
-| Taille du modèle | 205M params | Variable |
+| Taille du modèle | 287M params | Variable |
 | Personnalisation | Labels flexibles | Patterns regex |
 
 ## Avantages de GLiNER2
@@ -117,18 +121,18 @@ Le script utilise un seuil de confiance de 0.7 par défaut. Les entités avec un
 
 ## Dépendances
 
-- Python 3.8+
-- gliner2
-- torch (installé automatiquement avec gliner2)
+- Python 3.10+
+- `gliner2[local]>=2.0.0`
+- torch et transformers (installés par l’extra `local`)
 
 ## Limitations
 
-- Nécessite un téléchargement initial du modèle (~205 Mo)
+- Nécessite un téléchargement initial du modèle (~1,1 Go)
 - Performance optimale sur CPU moderne (multi-core recommandé)
 - Précision variable selon la qualité du texte source
 
 ## Support
 
-Pour plus d'informations sur GLiNER2:
-- Documentation: https://github.com/urchade/GLiNER
-- Modèle: https://huggingface.co/fastino/gliner2-base-v1
+Pour plus d'informations sur GLiNER2.5 :
+- Documentation : https://github.com/fastino-ai/GLiNER2
+- Modèle : https://huggingface.co/fastino/gliner2.5-multi-v1

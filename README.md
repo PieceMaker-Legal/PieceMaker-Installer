@@ -105,7 +105,7 @@ l'installateur interactif. Variables disponibles :
 | [Claude Code](https://claude.com/claude-code) | — | hooks, skills, agents et Assistant Bot Telegram |
 
 Prévoir une vingtaine de minutes et environ 2,5 Go : dépendances npm,
-environnement virtuel Python et modèles GLiNER2 + spaCy.
+environnement virtuel Python et modèles GLiNER2.5 multilingue + spaCy.
 
 ### Détail des étapes
 
@@ -116,7 +116,7 @@ environnement virtuel Python et modèles GLiNER2 + spaCy.
 | 00-identite | Identification de l’utilisateur | signe chaque tâche enregistrée dans l’historique avec votre nom |
 | 01-prerequis | Prérequis système | vérifie Node.js, npm, git et Python avant toute installation |
 | 02-dependances-node | Dépendances Node.js | installe les modules npm de la racine et du serveur MCP |
-| 03-python-gliner | Python, GLiNER & anonymisation | venv Python, dépendances et modèles GLiNER |
+| 03-python-gliner | Python, GLiNER & anonymisation | venv Python, dépendances et migration obligatoire vers GLiNER2.5 |
 | 03b-python-graphify | Graphify (graphe juridique) | venv Python séparé, installe le fork Graphify PieceMaker-Legal à un tag figé |
 | 04-conversion-md | Conversion de documents en Markdown | vérifie markitdown/pypdf et propose MinerU pour les PDF scannés |
 | 05-certificats | Certificats HTTPS | génère le certificat local requis par Word |

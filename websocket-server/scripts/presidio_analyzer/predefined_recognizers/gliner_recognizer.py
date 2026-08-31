@@ -1,4 +1,4 @@
-"""GLiNER2-based entity recognizer for Presidio.
+"""GLiNER2.5-based entity recognizer for Presidio.
 
 Wraps the gliner2 library into a Presidio LocalRecognizer so it can be used
 as a drop-in NER backend alongside pattern-based recognizers.
@@ -16,9 +16,9 @@ from presidio_analyzer import (
 from presidio_analyzer.nlp_engine import NlpArtifacts
 
 try:
-    from gliner2 import GLiNER2
+    from gliner2 import AutoExtractor
 except ImportError:
-    GLiNER2 = None
+    AutoExtractor = None
 
 logger = logging.getLogger("presidio-analyzer")
 
@@ -38,7 +38,7 @@ DEFAULT_ENTITY_DESCRIPTIONS = {
 
 
 class GLiNERRecognizer(LocalRecognizer):
-    """GLiNER2 model based entity recognizer."""
+    """GLiNER2.5 model based entity recognizer."""
 
     def __init__(
         self,
@@ -49,13 +49,13 @@ class GLiNERRecognizer(LocalRecognizer):
         context: Optional[List[str]] = None,
         entity_mapping: Optional[Dict[str, str]] = None,
         entity_descriptions: Optional[Dict[str, str]] = None,
-        model_name: str = "fastino/gliner2-base-v1",
+        model_name: str = "fastino/gliner2.5-multi-v1",
         threshold: float = 0.5,
         chunk_size: int = 15000,
         chunk_overlap: int = 1500,
         defer_load: bool = False,
     ):
-        """GLiNER2 model based entity recognizer.
+        """GLiNER2.5 model based entity recognizer.
 
         :param entity_mapping: GLiNER2 label → Presidio entity type mapping.
         :param entity_descriptions: Label descriptions for GLiNER2's API.
@@ -89,24 +89,30 @@ class GLiNERRecognizer(LocalRecognizer):
 
     def load(self) -> None:
         """Load the GLiNER2 model."""
-        if not GLiNER2:
+        if not AutoExtractor:
             raise ImportError(
-                "gliner2 is not installed. Install with: pip install gliner2"
+                "gliner2 is not installed. Install with: pip install 'gliner2[local]>=2.0.0'"
             )
-        self.gliner = GLiNER2.from_pretrained(self.model_name)
+        self.gliner = AutoExtractor.from_pretrained(
+            self.model_name,
+            local_files_only=True,
+        )
 
     def load_with_progress(self) -> None:
         """Load the GLiNER2 model with user-friendly progress messages."""
-        if not GLiNER2:
+        if not AutoExtractor:
             raise ImportError(
-                "gliner2 is not installed. Install with: pip install gliner2"
+                "gliner2 is not installed. Install with: pip install 'gliner2[local]>=2.0.0'"
             )
 
         print(f"\U0001f504 Loading GLiNER2 model ({self.model_name})...")
         start = time.time()
 
         try:
-            self.gliner = GLiNER2.from_pretrained(self.model_name)
+            self.gliner = AutoExtractor.from_pretrained(
+                self.model_name,
+                local_files_only=True,
+            )
             elapsed = time.time() - start
             print(f"\u2713 Model loaded ({elapsed:.1f}s)")
         except Exception as exc:

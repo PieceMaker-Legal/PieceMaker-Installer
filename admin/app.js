@@ -851,7 +851,7 @@ const CONFIGURATION_DESCRIPTIONS = {
   terminal: 'Second affichage interactif de la session terminal qui a ouvert le document Word.',
   mcp: 'Relie le client aux outils documentaires PieceMaker et à la recherche juridique Légifrance.',
   telegram: 'Deux bots séparés — un Assistant conversationnel et une surveillance sans LLM — chacun avec son propre token BotFather.',
-  gliner: 'Détection PII locale (Presidio + GLiNER2). Construit le mapping du dossier. Aucune donnée ne quitte le poste.',
+  gliner: 'Détection PII locale (Presidio + GLiNER2.5). Construit le mapping du dossier. Aucune donnée ne quitte le poste.',
   mineru: 'OCR local pour les PDF scannés et les images. Optionnel : les PDF texte passent par markitdown.',
   ollama: 'Modèles LLM exécutés localement (analyse, embeddings). Aucune requête vers un service distant.',
   litellm: 'Passerelle locale qui applique le mapping central à chaque requête et réponse avant le fournisseur distant.',
@@ -860,7 +860,7 @@ const CONFIGURATION_DESCRIPTIONS = {
 };
 const CONFIGURATION_TITLES = {
   client: 'Client IA & Paramètres', terminal: 'Terminal', mcp: 'MCP locaux', telegram: 'Telegram',
-  gliner: 'GLiNER · détection PII', mineru: 'MinerU · OCR', ollama: 'Ollama · modèles locaux',
+  gliner: 'GLiNER2.5 · détection PII', mineru: 'MinerU · OCR', ollama: 'Ollama · modèles locaux',
   litellm: 'LiteLLM · Proxy PII',
   docs: 'Dossier & pièces', hooks: 'Hooks — barrière d’anonymisation',
 };

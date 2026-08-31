@@ -1,14 +1,14 @@
 """
-Presidio-GLiNER2 PII Scanner — scans a Markdown file for sensitive data using
+Presidio-GLiNER2.5 PII Scanner — scans a Markdown file for sensitive data using
 presidio-analyzer with a custom GLiNER2 recognizer (gliner2 pip package) and
-the fastino/gliner2-multi-v1 model.
+the fastino/gliner2.5-multi-v1 boundary model.
 
 Usage:
     python presidio-gliner.py <md_file> -o <output_dir>
 
 Pip deps:
     presidio-analyzer>=2.2.0
-    gliner2>=1.2.0
+    gliner2[local]>=2.0.0
     spacy>=3.7.0
     # + spaCy models: fr_core_news_sm, en_core_web_sm
 
@@ -37,11 +37,13 @@ from presidio_analyzer import (
 from presidio_analyzer.nlp_engine import NlpArtifacts, NlpEngineProvider
 
 try:
-    from gliner2 import GLiNER2
+    from gliner2 import AutoExtractor
 
     GLINER2_AVAILABLE = True
 except ImportError:
     GLINER2_AVAILABLE = False
+
+from model_config import PREFERRED_GLINER_MODEL
 
 # ---------------------------------------------------------------------------
 # Parent dir on sys.path so we can import scan_utils.
@@ -91,7 +93,7 @@ DEBUG_ENTITIES = os.environ.get("PIECEMAKER_DEBUG_ENTITIES", "").lower() in ("1"
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-GLINER_MODEL = "fastino/gliner2-multi-v1"
+GLINER_MODEL = PREFERRED_GLINER_MODEL
 
 ENTITY_MAPPING = {
     "person":       "PERSON",
@@ -127,11 +129,10 @@ ENTITY_DESCRIPTIONS = {
     ),
 }
 
-# Confidence threshold, swept 0.05 -> 0.90 on the reference corpus. 0.70 is the
-# highest value that still finds every reference entity; above it OBA is lost, below it
-# precision falls without recovering any entity. The previous 0.30 filtered nothing
-# useful and let through twice as many false positives.
-GLINER_THRESHOLD = 0.7
+# GLiNER2.5 has a different boundary head and its scores are not calibrated like
+# those of the former span checkpoint. Start from Fastino's documented default;
+# anonymisation favours recall, and the mapping remains reviewable for false positives.
+GLINER_THRESHOLD = 0.5
 
 # Legal forms are read literally from the text by scan_utils.extract_legal_form;
 # the previous 30-label classify_text schema is gone (see scanner_worker.py).
@@ -221,10 +222,13 @@ class GLiNER2Recognizer(LocalRecognizer):
     def load(self) -> None:
         if not GLINER2_AVAILABLE:
             raise ImportError("gliner2 is not installed.")
-        self.model = GLiNER2.from_pretrained(self.model_name)
+        self.model = AutoExtractor.from_pretrained(
+            self.model_name,
+            local_files_only=True,
+        )
         # Same CoreML/GPU encoder as the worker (~2x, identical output). Falls back to
         # torch on its own when coremltools or the compiled model is absent.
-        coreml_runtime.maybe_accelerate(self.model)
+        coreml_runtime.maybe_accelerate(self.model, self.model_name)
 
     def analyze(
         self,

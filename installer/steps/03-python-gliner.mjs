@@ -3,8 +3,9 @@
  *
  * This is the anonymisation core: a venv is created at config.venvPath,
  * websocket-server/scripts/requirements.txt is installed into it, then
- * warmup.py downloads the GLiNER2 (~400MB) and spaCy fr/en models. warmup.py
- * emits JSON status lines on stdout (see log_json in warmup.py) interleaved
+ * warmup.py downloads GLiNER2.5 multilingual (~1.1GB) and spaCy fr/en. An
+ * existing GLiNER2 checkpoint triggers an explicit, mandatory migration prompt.
+ * warmup.py emits JSON status lines on stdout (see log_json in warmup.py) interleaved
  * with plain emoji lines (log_plain) — both are surfaced through the spinner.
  */
 
@@ -44,6 +45,37 @@ function onWarmupLine(spin) {
   };
 }
 
+export function parseWarmupStatus(result) {
+  try { return JSON.parse(result?.stdout || ''); } catch { return null; }
+}
+
+export function glinerInstallState(status) {
+  const migration = status?.migration || {};
+  const preferredModelId = migration.preferred_model_id || 'fastino/gliner2.5-multi-v1';
+  const preferredCached = Boolean(
+    migration.preferred_cached ?? status?.models?.gliner2?.cached,
+  );
+  const legacyModels = Array.isArray(migration.cached_legacy_model_ids)
+    ? migration.cached_legacy_model_ids
+    : [];
+  return {
+    preferredModelId,
+    preferredCached,
+    legacyModels,
+    replacementRequired: !preferredCached && legacyModels.length > 0,
+  };
+}
+
+export function glinerDownloadQuestion(state) {
+  return state.replacementRequired
+    ? `GLiNER2.5 multilingue remplace obligatoirement l’ancien modèle ${state.legacyModels.join(', ')}. Télécharger et activer ${state.preferredModelId} (environ 1,1 Go) ?`
+    : `Télécharger et activer ${state.preferredModelId} ainsi que les modèles spaCy fr/en (environ 1,2 Go au total) ?`;
+}
+
+function readWarmupStatus(python) {
+  return parseWarmupStatus(runCapture(python, [WARMUP, '--status'], { cwd: SCRIPTS_DIR }));
+}
+
 export async function install(ctx) {
   if (!fs.existsSync(REQUIREMENTS)) {
     return { status: 'failed', note: `requirements.txt introuvable : ${REQUIREMENTS}` };
@@ -61,6 +93,7 @@ export async function install(ctx) {
   if (ctx.dryRun) {
     log.info(`[simulation] Création du venv dans ${venvDir}`);
     log.info(`[simulation] pip install -r ${REQUIREMENTS}`);
+    log.info('[simulation] Proposition de migration obligatoire vers GLiNER2.5');
     log.info('[simulation] python warmup.py (téléchargement des modèles)');
     return { status: 'skipped', note: 'Mode simulation — aucune installation effectuée.' };
   }
@@ -112,19 +145,21 @@ export async function install(ctx) {
   updateConfig({ pythonPath: vp.python, venvPath: venvDir });
   writeEnv({ PYTHON_PATH: vp.python });
 
-  // 4. Download models (~500MB) — ask first.
-  const proceed = await confirm(
-    'Télécharger les modèles GLiNER2 et spaCy (fr/en), environ 500 Mo au total ?',
-    true
-  );
+  // 4. GLiNER2.5 is a boundary checkpoint and cannot be loaded by the former
+  // GLiNER2 class. Migration is mandatory: declining keeps the step incomplete
+  // and the scanner deliberately has no fallback to the legacy checkpoint.
+  const beforeWarmup = readWarmupStatus(vp.python);
+  const installState = glinerInstallState(beforeWarmup);
+  const question = glinerDownloadQuestion(installState);
+  const proceed = installState.preferredCached || await confirm(question, true);
   if (!proceed) {
     return {
       status: 'partial',
-      note: 'Modèles non téléchargés — relancez l\'étape "03-python-gliner" quand vous serez prêt.',
+      note: 'Migration GLiNER2.5 obligatoire refusée — l’anonymisation reste indisponible. Relancez l’étape « 03-python-gliner » pour terminer la migration.',
     };
   }
 
-  const spin = spinner('Téléchargement des modèles GLiNER2 et spaCy...');
+  const spin = spinner('Installation des modèles GLiNER2.5 et spaCy...');
   const code = await run(vp.python, [WARMUP], { cwd: SCRIPTS_DIR, onLine: onWarmupLine(spin) });
 
   if (code !== 0) {
@@ -135,16 +170,27 @@ export async function install(ctx) {
     };
   }
 
-  spin.succeed('Modèles GLiNER2 et spaCy prêts');
+  const afterWarmup = readWarmupStatus(vp.python);
+  const installedState = glinerInstallState(afterWarmup);
+  const missingAfterWarmup = Object.entries(afterWarmup?.models || {})
+    .filter(([, info]) => !info.cached && !info.config?.optional)
+    .map(([key]) => key);
+  if (!installedState.preferredCached || !afterWarmup?.ready) {
+    spin.fail('Migration vers GLiNER2.5 incomplète');
+    return {
+      status: 'partial',
+      note: `Les modèles requis ne sont pas prêts (${missingAfterWarmup.join(', ') || installedState.preferredModelId}). Relancez l’étape « 03-python-gliner » pour réessayer.`,
+    };
+  }
+  spin.succeed('GLiNER2.5 multilingue et modèles spaCy prêts');
 
   // Encodeur GPU CoreML (macOS) — optionnel. Il fait tourner l'encodeur mdeberta
-  // sur le GPU : ~2× plus rapide, sortie identique, et surtout les cœurs CPU
-  // restent libres pour que la machine ne rame pas pendant un scan. Best-effort :
+  // sur le GPU et libère les cœurs CPU pendant un scan. Best-effort :
   // le runtime retombe sur torch si le modèle n'est pas généré, donc un échec ne
   // fait jamais échouer l'étape.
   if (process.platform === 'darwin' && fs.existsSync(BUILD_COREML)) {
     const buildIt = await confirm(
-      'Générer l\'encodeur GPU CoreML maintenant ? (~4 min une fois, ~620 Mo — rend les scans 2× plus rapides et n\'occupe plus le CPU)',
+      'Générer le nouvel encodeur GPU CoreML pour GLiNER2.5 maintenant ? (~4 min une fois, ~620 Mo — rend les scans plus rapides et libère le CPU)',
       true
     );
     if (buildIt) {
@@ -177,11 +223,17 @@ export async function check(ctx) {
   }
 
   const result = runCapture(vp.python, [WARMUP, '--status'], { cwd: SCRIPTS_DIR });
-  let statusJson;
-  try {
-    statusJson = JSON.parse(result.stdout);
-  } catch {
+  const statusJson = parseWarmupStatus(result);
+  if (!statusJson) {
     return { status: 'failed', note: 'Impossible de lire l\'état des modèles (venv incomplet ?).' };
+  }
+
+  const installState = glinerInstallState(statusJson);
+  if (installState.replacementRequired) {
+    return {
+      status: 'failed',
+      note: `Migration obligatoire : ${installState.preferredModelId} doit remplacer ${installState.legacyModels.join(', ')}. Relancez cette étape.`,
+    };
   }
 
   const models = statusJson.models || {};
@@ -190,6 +242,8 @@ export async function check(ctx) {
     .map(([key]) => key);
 
   if (statusJson.ready && missing.length === 0) return { status: 'done', note: '' };
-  if (statusJson.ready) return { status: 'partial', note: `Modèles optionnels manquants : ${missing.join(', ')}` };
-  return { status: 'failed', note: `Modèle critique manquant : gliner2. Relancez cette étape.` };
+  if (installState.preferredCached && missing.length > 0) {
+    return { status: 'failed', note: `Modèles requis manquants : ${missing.join(', ')}. Relancez cette étape.` };
+  }
+  return { status: 'failed', note: `Modèle critique manquant : ${installState.preferredModelId}. Relancez cette étape.` };
 }

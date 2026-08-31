@@ -8,8 +8,9 @@ PyYAML>=6.0.3
 markitdown[all]>=0.1.4  # Markitdown with all optional dependencies
 pypdf>=6.6.2  # PDF text layer inspection (actively maintained fork of PyPDF2)
 
-# GLiNER2 entity extraction
-gliner2>=2.0.0
+# GLiNER2/GLiNER2.5 entity extraction. Since 2.0, local inference dependencies
+# (torch, transformers...) live behind the `local` extra.
+gliner2[local]>=2.0.0
 huggingface-hub>=0.20.0  # Required for model downloading with progress
 
 # Presidio + GLiNER integration

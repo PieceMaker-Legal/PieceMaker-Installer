@@ -826,11 +826,30 @@ async function configurationOverview({ repoRoot, homeDir, userHome, getRuntimeSt
   })();
   const hasPackage = (name) => Boolean(sitePackages) && fs.existsSync(path.join(sitePackages, name));
   const glinerDir = path.join(repoRoot, 'websocket-server', 'scripts', 'presidio-gliner');
-  const glinerReady = fs.existsSync(path.join(glinerDir, 'presidio-gliner.py'))
-    && (hasPackage('gliner2') || hasPackage('gliner') || steps['03-python-gliner']?.status === 'done');
-  const coreml = (() => {
-    try { return fs.readdirSync(glinerDir).some((name) => name.endsWith('.mlmodelc')); } catch { return false; }
+  const glinerModelId = 'fastino/gliner2.5-multi-v1';
+  const huggingFaceHubCache = process.env.HF_HUB_CACHE
+    || path.join(process.env.HF_HOME || path.join(userHome, '.cache', 'huggingface'), 'hub');
+  const glinerModelCache = path.join(
+    huggingFaceHubCache,
+    `models--${glinerModelId.replace('/', '--')}`,
+    'snapshots',
+  );
+  const glinerModelReady = (() => {
+    try {
+      return fs.readdirSync(glinerModelCache)
+        .some((revision) => ['config.json', 'model.safetensors']
+          .every((name) => fs.existsSync(path.join(glinerModelCache, revision, name))));
+    } catch { return false; }
   })();
+  const glinerReady = fs.existsSync(path.join(glinerDir, 'presidio-gliner.py'))
+    && hasPackage('gliner2')
+    && glinerModelReady;
+  const coremlDefault = path.join(
+    glinerDir, 'models', 'gliner2.5-multi-v1-encoder_b1_832.mlmodelc',
+  );
+  const coreml = [process.env.PIECEMAKER_COREML_MODEL, coremlDefault]
+    .filter(Boolean)
+    .some((candidate) => fs.existsSync(candidate));
   const mineruReady = hasPackage('mineru') || hasPackage('magic_pdf')
     || fs.existsSync(path.join(venvDir, 'bin', 'mineru'));
   const folders = listConfiguredCases(readRegistryConfig(path.join(homeDir, 'config.json'))).map((entry) => {
@@ -901,12 +920,13 @@ async function configurationOverview({ repoRoot, homeDir, userHome, getRuntimeSt
         installerStatus: steps['16-litellm-proxy']?.status || '',
       },
       gliner: {
-        name: 'GLiNER · PII',
+        name: 'GLiNER2.5 · PII',
         installed: glinerReady,
         summary: glinerReady
           ? coreml ? 'Détection locale · GPU CoreML' : 'Détection locale · CPU'
           : 'Modèle d’anonymisation absent',
         coreml,
+        model: glinerModelId,
         engine: coreml ? 'CoreML (GPU)' : 'torch (CPU)',
       },
       mineru: {
