@@ -50,6 +50,15 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/compile-recherche.mjs\""
           }
         ]
+      },
+      {
+        "matcher": "Write|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/classify-ai-documents.mjs\""
+          }
+        ]
       }
     ],
     "Stop": [

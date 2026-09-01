@@ -303,8 +303,39 @@ function markdownCounterpart(absolutePath, caseRoot) {
   return structured || { path: workspaceMarkdown, exists: false };
 }
 
+/**
+ * Classe une pièce en « espace de travail » : accessible à l'IA, anonymisée à
+ * la lecture. C'est l'écriture ciblée dont a besoin le hook
+ * `classify-ai-documents.mjs` — un document produit par l'IA n'a aucune raison
+ * de naître au coffre-fort, elle ne pourrait plus se relire.
+ *
+ * Ne fait rien, et retourne pourquoi, quand le chemin n'est pas une pièce
+ * classable : hors dossier, `.md`/`.json` (déjà lisibles), dotfile, mapping ou
+ * scan PII (jamais déclassés), espace de travail OOXML implicite, ou clé déjà
+ * inscrite. `resources` est prioritaire : une ressource n'est jamais
+ * rétrogradée en espace de travail. Idempotent, ne lève jamais.
+ */
+function classifyAsWorkspace(absolutePath, caseRoot) {
+  try {
+    if (!absolutePath || !caseRoot) return { classified: false, key: null, reason: 'arguments' };
+    if (isMappingFile(absolutePath)) return { classified: false, key: null, reason: 'mapping' };
+    const key = exceptionKey(absolutePath, caseRoot);
+    if (!key) return { classified: false, key: null, reason: 'non-classable' };
+    if (isOoxmlWorkspacePath(absolutePath, caseRoot)) return { classified: false, key, reason: 'ooxml' };
+    const { unprotected, resources } = readProtection(caseRoot);
+    if (resources.has(key)) return { classified: false, key, reason: 'ressource' };
+    if (unprotected.has(key)) return { classified: false, key, reason: 'déjà classée' };
+    writeProtection(caseRoot, { unprotected: [...unprotected, key] });
+    return { classified: true, key, reason: null };
+  } catch (error) {
+    return { classified: false, key: null, reason: error?.message || 'erreur' };
+  }
+}
+
 module.exports = {
+  classifyAsWorkspace,
   documentKey,
+  exceptionKey,
   isMappingFile,
   locateCase,
   isProtectedFile,

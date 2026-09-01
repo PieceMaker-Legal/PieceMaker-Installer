@@ -43,6 +43,7 @@ const SYNTHESE_DIR = path.join(BILLING_DIR, 'synthese');
 const HOOK_SCRIPTS = {
   protect: path.join(SCRIPTS_DIR, 'protect-originals.mjs'),
   commit: path.join(SCRIPTS_DIR, 'commit-track.mjs'),
+  classify: path.join(SCRIPTS_DIR, 'classify-ai-documents.mjs'),
   billing: path.join(SCRIPTS_DIR, 'billing-track.mjs'),
   proxyGuard: path.join(SCRIPTS_DIR, 'proxy-guard.mjs'),
   statusline: path.join(SCRIPTS_DIR, 'statusline.mjs'),
@@ -157,6 +158,34 @@ export async function install(ctx) {
       stop_reason: 'end_turn',
     });
     testResults.push(billingResult);
+
+    // 4. classify-ai-documents.mjs — un document « créé par l'IA » dans le bac
+    //    de test enregistré doit ressortir classé « espace de travail » dans
+    //    `.piecemaker/protection.json`, sans quoi l'IA ne pourrait pas se
+    //    relire. On vérifie l'effet de bord, pas seulement le code de sortie.
+    const createdDoc = path.join(testDir, 'note-selftest.docx');
+    fs.writeFileSync(createdDoc, 'NOTE DE TEST', 'utf8');
+    const classifyResult = runHookSelfTest('classify-ai-documents.mjs', HOOK_SCRIPTS.classify, {
+      hook_event_name: 'PostToolUse',
+      session_id: 'installer-selftest',
+      cwd: testDir,
+      transcript_path: '',
+      permission_mode: 'default',
+      tool_name: 'Write',
+      tool_input: { file_path: createdDoc },
+      tool_response: { success: true },
+      tool_use_id: 'toolu_installer_classify_selftest',
+    });
+    if (classifyResult.ok) {
+      const { readProtection } = require('../../piecemaker-plugin/scripts/lib/protection.cjs');
+      if (!readProtection(testDir).unprotected.has('note-selftest.docx')) {
+        classifyResult.ok = false;
+        classifyResult.note = 'le document créé n\'a pas été classé « espace de travail »';
+      } else {
+        classifyResult.note = 'document créé classé « espace de travail »';
+      }
+    }
+    testResults.push(classifyResult);
   } finally {
     // Rétablir la liste des dossiers enregistrés : le bac de test ne doit pas
     // rester surveillé après l'installation.
@@ -165,7 +194,7 @@ export async function install(ctx) {
   }
 
   const allOk = testResults.every((r) => r.ok);
-  if (allOk) spin.succeed('Hooks vérifiés — les trois scripts répondent au contrat stdin/stdout');
+  if (allOk) spin.succeed(`Hooks vérifiés — les ${testResults.length} scripts répondent au contrat stdin/stdout`);
 
   else spin.fail('Échec de vérification d\'au moins un hook');
 

@@ -22,6 +22,9 @@ distribué par un manifest ou un marketplace PieceMaker.
 - **Hooks** (`hooks/hooks.json`) — protection des pièces et mappings
   (`PreToolUse`), suivi Légifrance et commit Git après écriture (`PostToolUse`),
   compilation des recherches et suivi de session local (`Stop`/`TaskCompleted`).
+  Un document créé par l'IA dans un dossier enregistré est classé d'office
+  « espace de travail » (`classify-ai-documents.mjs`, `PostToolUse`) : sans
+  quoi il naîtrait au coffre-fort et l'IA ne pourrait pas se relire.
   Le mapping PII est appliqué par le proxy LiteLLM, pas par ces hooks. Tous
   les hooks échouent "ouverts" (fail-open) : aucune erreur, timeout ou
   absence de configuration ne bloque jamais une session.
