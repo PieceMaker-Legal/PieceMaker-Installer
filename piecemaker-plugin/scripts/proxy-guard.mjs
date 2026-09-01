@@ -252,7 +252,7 @@ async function main() {
     if (after.ok && routing.routed) {
       verdict = 'actif';
       const relance = autostart.status === 'réussi' ? ' — proxy PII redémarré automatiquement.' : '';
-      systemMessage = `🔒 Protection PieceMaker active ✓${relance}`;
+      systemMessage = `🔒 Anonymisation PieceMaker active ✓${relance}`;
       additionalContext = `Le proxy PII LiteLLM répond sur le port ${port} et Claude Code y est routé (ANTHROPIC_BASE_URL). Les échanges avec le fournisseur sont anonymisés puis ré-identifiés localement.`;
     } else if (after.ok && !routing.routed) {
       // Proxy debout mais routage absent : c'est l'état laissé par

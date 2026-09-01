@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * statusLine Claude Code — bandeau permanent d'état de la protection PieceMaker.
+ * statusLine Claude Code — bandeau permanent d'état de l'anonymisation PieceMaker.
  *
  * Contrat statusLine (type "command") : JSON sur stdin décrivant la session
  * (workspace, model...), une seule ligne sur stdout, exit 0. Appelé très
@@ -96,10 +96,23 @@ function probe(port, timeoutMs) {
   });
 }
 
+/**
+ * Couleur ANSI du badge : vert quand l'anonymisation est effective, rouge
+ * sinon. Claude Code rend les séquences ANSI de la statusLine ; on n'en met
+ * que sur le badge, jamais sur le dossier ni le modèle.
+ */
+const VERT = '\u001b[32m';
+const ROUGE = '\u001b[31m';
+const RESET = '\u001b[0m';
+
+function colore(texte, couleur) {
+  return process.env.NO_COLOR ? texte : `${couleur}${texte}${RESET}`;
+}
+
 function badge(routed, actif) {
-  if (routed && actif) return '🔒 Protection PieceMaker active ✓';
-  if (routed) return '⚠️ Protection PieceMaker inactive — proxy arrêté (piecemaker start)';
-  return '⚠️ Protection PieceMaker inactive — accès direct';
+  if (routed && actif) return colore('🔒 Anonymisation PieceMaker active ✓', VERT);
+  if (routed) return colore('⚠️ Anonymisation PieceMaker inactive — proxy arrêté (piecemaker start)', ROUGE);
+  return colore('⚠️ Anonymisation PieceMaker inactive — accès direct', ROUGE);
 }
 
 /** Écrit la ligne et quitte proprement, en attendant le flush comme hook-io.mjs::emit. */
