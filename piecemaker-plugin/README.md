@@ -4,6 +4,9 @@ Ce dossier regroupe les skills partagés avec Claude Code et Codex CLI, ainsi
 que les agents et hooks de garde-fou propres à Claude Code. Il n'est pas
 distribué par un manifest ou un marketplace PieceMaker.
 
+Le serveur MCP Légifrance est maintenu séparément dans
+[`PieceMaker-Legal/mcp-legifrance`](https://github.com/PieceMaker-Legal/mcp-legifrance).
+
 ## Contenu
 
 - **Skills** (`skills/`) :
@@ -77,11 +80,15 @@ serveur et l'étape 06 réconcilient cet enregistrement.
 
 ## Serveur MCP Légifrance
 
-Le serveur MCP autonome expose `mcp/legifrance/mcp_stdio_server.py` (transport
-portable principal) et `mcp/legifrance/mcp_http_local.py` (adaptateur HTTP
-partagé, limité à `127.0.0.1`). Le fichier `.mcp.json` conserve la configuration
-stdio du plugin ; les deux transports lisent leurs clés PISTE depuis
-l'environnement, `LEGIFRANCE_ENV_FILE` ou un `.env` local.
+L'étape `07-legifrance` installe le plugin autonome depuis
+`PieceMaker-Legal/mcp-legifrance`. Son runtime, ses tests, son venv et sa
+configuration MCP ne vivent plus dans ce dépôt. Le plugin conserve
+volontairement l'identifiant Claude `piecemaker`, donc le namespace historique
+`mcp__plugin_piecemaker_legifrance` utilisé par les agents reste inchangé.
+
+Les identifiants PISTE sont copiés avec des permissions 0600 dans
+`~/.config/mcp-legifrance/.env`. Le `.env` PieceMaker reste alimenté pour
+l'administration et la migration des installations antérieures.
 
 Deux outils complètent les recherches ponctuelles :
 
@@ -97,4 +104,5 @@ Ce flux n'utilise ni embeddings, ni base vectorielle, ni top-k. Le filtre
 statique exige la présence conjointe d'un contexte SA et d'une révocation située
 à 300 caractères au plus d'une fonction dirigeante ; chaque cooccurrence d'une
 candidate est conservée. Les tokens sont annoncés comme estimés tant qu'un usage
-exact du fournisseur n'a pas été passé au validateur.
+exact du fournisseur n'a pas été passé au validateur. L'implémentation et ses
+tests appartiennent désormais au dépôt MCP autonome.

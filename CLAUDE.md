@@ -17,8 +17,9 @@ Un monorepo qui est à la fois :
   `~/PieceMaker`, installe les dépendances et configure la machine ;
 - un **serveur local** HTTPS/WebSocket (port `43098`) exposant l'API et
   l'administration web ;
-- un **marketplace de plugin Claude Code** (`piecemaker-plugin/`) : skills,
-  agents, hooks de garde-fou PII et serveur MCP Legifrance.
+- des **composants Claude Code/Codex** (`piecemaker-plugin/`) : skills, agents
+  et hooks de garde-fou PII ; le serveur MCP Légifrance autonome est installé
+  depuis `PieceMaker-Legal/mcp-legifrance`.
 
 Cible : assistant juridique local (RGPD) — anonymisation, conversion en
 Markdown, rédaction et tamponnage de pièces. Node ≥ 18, Python ≥ 3.10.
@@ -38,7 +39,7 @@ Markdown, rédaction et tamponnage de pièces. Node ≥ 18, Python ≥ 3.10.
 | `websocket-server/` | `server.cjs` (Express + HTTPS + WS). `admin-routes.cjs` = API d'administration ; `case-registry.cjs`, `document-index.cjs`, `originals-pipeline.cjs` = dossiers/pièces ; `mxc-sandbox.cjs` = bac à sable OS ; `scripts/` = Python (GLiNER/Presidio, conversion). |
 | `admin/` | Interface web locale servie sur `/admin/` (`app.js`, `index.html`, éditeur Markdown des skills/agents, aperçus facturation). |
 | `orchestrator/` | Assistant Bot Telegram (`piecemaker-daemon.mjs`) et surveillance de quotas (`limit-watch.mjs`), sans LLM. |
-| `piecemaker-plugin/` | Plugin Claude Code : `skills/`, `agents/`, `hooks/hooks.json`, `mcp/` (Legifrance), `scripts/` (logique des hooks) + `scripts/lib/` (mapping, protection, commits, facturation…). |
+| `piecemaker-plugin/` | Composants Claude Code/Codex : `skills/`, `agents/`, `hooks/hooks.json`, `scripts/` (logique des hooks) + `scripts/lib/` (mapping, protection, commits, facturation…). |
 | `litellm-proxy/` | Proxy LiteLLM officiel entouré du middleware PII PieceMaker ; pass-through des authentifications Claude Code/Codex, sans stockage de leurs jetons. |
 
 ### Limite de responsabilité du proxy

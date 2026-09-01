@@ -1,6 +1,0 @@
-# Dépendances du serveur MCP Légifrance autonome (stdio et HTTP local).
-# Pas de spaCy / Presidio / parsing de documents : ces dépendances
-# appartiennent à un éventuel client et non à ce serveur autonome.
-requests>=2.31.0
-python-dotenv>=1.0.0
-Flask>=3.0.0

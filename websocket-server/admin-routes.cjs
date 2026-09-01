@@ -766,15 +766,17 @@ async function configurationOverview({ repoRoot, homeDir, userHome, getRuntimeSt
   const claudeAssetsReady = claudeAssets.length > 0 && claudeAssets.every((asset) =>
     ['linked', 'copied'].includes(claudeAssetStatus(repoRoot, userHome, asset)?.state));
   const hooksRegistered = claudeHooksStatus(repoRoot, userHome).ok;
+  const claudeSettings = readJson(path.join(userHome, '.claude', 'settings.json'), {});
+  const legifrancePluginEnabled = claudeSettings.enabledPlugins?.['piecemaker@mcp-legifrance'] === true;
   let nodePtyReady = false;
   try { nodePtyReady = Boolean(require.resolve('node-pty')); } catch { /* dépendance optionnelle */ }
 
   const mcpItems = [
     {
       name: 'Légifrance',
-      installed: fs.existsSync(path.join(repoRoot, 'piecemaker-plugin', 'mcp', 'legifrance', 'mcp_stdio_server.py')),
+      installed: legifrancePluginEnabled,
       configured: Boolean(env.LEGIFRANCE_CLIENT_ID && env.LEGIFRANCE_CLIENT_SECRET),
-      detail: 'Recherche juridique locale via les API officielles PISTE.',
+      detail: 'Plugin autonome PieceMaker-Legal/mcp-legifrance via les API officielles PISTE.',
     },
   ];
   const models = await ollamaState(fetchImpl);

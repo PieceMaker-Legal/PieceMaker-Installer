@@ -121,7 +121,7 @@ environnement virtuel Python et modèles GLiNER2.5 multilingue + spaCy.
 | 04-conversion-md | Conversion de documents en Markdown | vérifie markitdown/pypdf et propose MinerU pour les PDF scannés |
 | 05-certificats | Certificats HTTPS | génère le certificat local requis pour servir l’administration et l’API en HTTPS |
 | 06-hooks | Hooks Claude Code (protection, commits & facturation) | configure les garde-fous, les commits PostToolUse et le suivi de facturation ; le mapping relève du proxy PII |
-| 07-legifrance | Serveur MCP Légifrance (clés PISTE) | configure et valide l’accès à l’API Légifrance via PISTE |
+| 07-legifrance | Serveur MCP Légifrance (clés PISTE) | installe le plugin autonome `PieceMaker-Legal/mcp-legifrance`, prépare son venv et valide l’accès PISTE |
 | 08-telegram | Telegram — Assistant Bot et daemon | configure le bot conversationnel PieceMaker et son daemon de surveillance séparé |
 | 09-claude-assets | Composants Claude Code PieceMaker | enregistre les skills, agents et hooks PieceMaker lorsque Claude Code est présent |
 | 09-codex-plugin | Skills Codex PieceMaker | enregistre les skills PieceMaker lorsque la CLI Codex est présente |
@@ -245,8 +245,10 @@ indépendant, actuellement **suspendu**.
 
 ## Intégration avec Claude Code et Codex CLI
 
-PieceMaker n'installe aucun manifest ni marketplace pour ses propres
-composants. Lorsque la CLI correspondante est présente, l'installateur lie les
+Les composants propres à PieceMaker n'utilisent aucun manifest ni marketplace.
+Le MCP Légifrance, désormais autonome, est l'exception : l'étape 07 installe le
+marketplace public `PieceMaker-Legal/mcp-legifrance`. Pour les autres
+composants, lorsque la CLI correspondante est présente, l'installateur lie les
 skills dans `~/.claude/skills` et `~/.codex/skills`, ainsi que les agents dans
 `~/.claude/agents`. Les hooks Claude sont fusionnés directement dans
 `~/.claude/settings.json`. Les fichiers personnels homonymes sont conservés.
@@ -259,7 +261,7 @@ garde-fou PII. Voir
 ## Structure
 
 - `installer/` — installateur terminal (aucune dépendance)
-- `piecemaker-plugin/` — composants partagés : skills, agents, hooks, MCP
+- `piecemaker-plugin/` — composants partagés : skills, agents et hooks
 - `orchestrator/` — Assistant Bot Telegram et daemon de surveillance sans LLM
 - `websocket-server/` — serveur HTTPS/WebSocket, API REST et scripts Python
 - `admin/` — interface web locale : Telegram, paramètres, éditeur visuel des skills/agents et aperçus de facturation

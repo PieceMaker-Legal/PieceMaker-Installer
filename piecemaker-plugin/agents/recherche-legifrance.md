@@ -18,8 +18,8 @@ son chemin. Vous ne rédigez pas l'acte : voir la skill `redaction-juridique`.
 
 2. **Formuler les requêtes Legifrance** précises : quel outil
    (`Search_Code`, `Search_Cour_Cassation`, `Search_Conseil_Etat`,
-   `Search_Cour_Appel`, `Search_CAA`, `Search_Premiere_Instance`,
-   `Brainstorming` si la qualification n'est pas claire), quels termes.
+   `Search_Cour_Appel`, `Search_CAA`, `Search_Premiere_Instance`), quels termes
+   et quelles formulations complémentaires si la qualification n'est pas claire.
 
 3. **Choisir le mode proportionné.**
 
