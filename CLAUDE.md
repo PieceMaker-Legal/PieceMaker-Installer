@@ -103,7 +103,27 @@ niveau OS (Seatbelt / `mxc-sandbox.cjs`).
 nom. Chaque étape exporte `{ meta, install(ctx), check(ctx) }` et renvoie
 `{ status, note }` avec `status` ∈ `done | partial | failed | skipped`.
 `check()` alimente `piecemaker doctor` sans rien modifier. `--dry-run`
-n'écrit rien ; `--yes` accepte les défauts (non interactif).
+n'écrit rien (y compris dans `state.json`) ; `--yes` accepte les défauts (non
+interactif).
+
+Ouverture interactive (`piecemaker` ou `piecemaker install`, devant un TTY) :
+si une mise à jour est disponible — ou si le clone est localement modifié —
+elle est appliquée **automatiquement** avant l'affichage du menu, donc avant
+`ensureServerRunning()` puisque `update` coupe et relance lui-même le serveur
+et le proxy. Aucune commande explicite, ni `--step`, `--all`, `--check`,
+`--dry-run`, `--yes` ou mode non interactif ne déclenche cette MAJ implicite.
+**Aucun test ne doit donc lancer le binaire autrement que sur `--help`** : le
+label launchd `com.piecemaker.litellm` et `os.homedir()` ne sont redirigés ni
+par `PIECEMAKER_HOME` ni par `npm_config_prefix`, si bien qu'un test qui
+ouvre le menu ou joue `update`/`stop` coupe les services réels de la machine.
+
+En fin d'`update`, `installer/lib/resume-steps.mjs` relance en **processus
+détaché** (`--resume-steps <ids> --yes`, journal
+`~/.piecemaker/install-resume.log`, verrou `install-resume.pid`) les étapes
+dont `check()` n'est pas concluant. Deux règles : une étape marquée `skipped`
+dans `state.json` n'est jamais ressuscitée (l'état ne distingue pas un refus
+de l'utilisateur d'une étape sans objet), et `03-python-gliner` est exclue —
+son `install()` exécute `warmup.py`, donc un chargement GLiNER.
 
 Piège plugin : `claude plugin update` sort 0 même sans recopier — le cache est
 clé par la version de `piecemaker-plugin/.claude-plugin/plugin.json`. Une

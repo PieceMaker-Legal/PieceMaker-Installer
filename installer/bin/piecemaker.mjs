@@ -36,6 +36,7 @@ import { banner, title, log, write, blank, summary, spinner, badge, c } from '..
 import { select, confirm, multiSelect, pause, nonInteractive } from '../lib/prompt.mjs';
 import { HOME_DIR, REPO_ROOT, commandExists, findPython, venvPaths } from '../lib/platform.mjs';
 import { loadConfig, readEnv, markStep, loadState, CONFIG_FILE } from '../lib/state.mjs';
+import { scheduleStepResume, selectStepsToResume } from '../lib/resume-steps.mjs';
 import {
   bypassLlmClients,
   bypassLlmClientsIfProxyGone,
@@ -147,6 +148,47 @@ async function refreshDesktopApplicationAfterUpdate() {
   }
 }
 
+/**
+ * Reprend en tâche de fond les étapes d'installation restées incomplètes.
+ *
+ * Le diagnostic est fait ici — `check()` ne modifie rien et coûte quelques
+ * secondes — pour pouvoir nommer précisément ce qui repart ; l'installation
+ * elle-même, qui peut durer plusieurs minutes (npm, pip, Homebrew), part dans
+ * un processus détaché. Les étapes sont rechargées depuis le disque avec
+ * `fresh: true` : la reprise doit jouer le code qui vient d'être téléchargé,
+ * pas celui chargé avant le reset Git.
+ */
+async function resumePendingStepsAfterUpdate() {
+  try {
+    const steps = await loadSteps({ fresh: true });
+    const pending = await selectStepsToResume({
+      steps,
+      state: loadState(),
+      ctx: buildContext({ dryRun: false }),
+    });
+    if (!pending.length) return false;
+
+    const scheduled = scheduleStepResume({
+      cli: fileURLToPath(import.meta.url),
+      ids: pending.map((step) => step.id),
+      cwd: REPO_ROOT,
+    });
+    if (!scheduled.started) {
+      if (scheduled.reason === 'deja-en-cours') {
+        log.info(`Reprise d’installation déjà en cours (PID ${scheduled.pid}) — journal : ${scheduled.logFile}`);
+      }
+      return false;
+    }
+    log.info(
+      `Reprise en tâche de fond de ${pending.length} étape(s) — ${pending.map((step) => step.id).join(', ')} — journal : ${scheduled.logFile}`
+    );
+    return true;
+  } catch (error) {
+    log.warn(`Reprise automatique des étapes impossible (${error.message}).`);
+    return false;
+  }
+}
+
 const STEPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'steps');
 const COMMANDS = new Set(['open', 'start', 'stop', 'restart', 'status', 'logs', 'chronology', 'conversion', 'graph', 'proxy', 'install', 'doctor', 'check', 'update']);
 const GRAPH_ACTIONS = new Set(['build', 'query', 'status']);
@@ -185,6 +227,7 @@ function parseArgs(argv) {
     json: false,
     model: null,
     proxyAction: null,
+    resumeSteps: null,
     step: null,
     yes: false,
     unknown: [],
@@ -208,6 +251,9 @@ function parseArgs(argv) {
     else if (arg === '--model') flags.model = argv[++i];
     else if (arg === '--yes' || arg === '-y') flags.yes = true;
     else if (arg === '--step') flags.step = argv[++i];
+    else if (arg === '--resume-steps') {
+      flags.resumeSteps = String(argv[++i] || '').split(',').map((id) => id.trim()).filter(Boolean);
+    }
     else if (arg === '--help' || arg === '-h') flags.help = true;
     else flags.unknown.push(arg);
   }
@@ -218,18 +264,21 @@ function parseArgs(argv) {
  * Load every step module. A step that fails to import is surfaced as a broken
  * entry rather than taking the whole installer down.
  */
-async function loadSteps() {
+async function loadSteps({ fresh = false } = {}) {
   if (!fs.existsSync(STEPS_DIR)) return [];
   const files = fs
     .readdirSync(STEPS_DIR)
     .filter((f) => f.endsWith('.mjs'))
     .sort();
 
+  // Après un « git reset --hard », les modules déjà importés sont ceux d'avant
+  // la mise à jour : le suffixe force le chargement du code fraîchement posé.
+  const bust = fresh ? `?update=${Date.now()}` : '';
   const steps = [];
   for (const file of files) {
     const full = path.join(STEPS_DIR, file);
     try {
-      const mod = await import(pathToFileURL(full).href);
+      const mod = await import(`${pathToFileURL(full).href}${bust}`);
       if (!mod.meta?.id || typeof mod.install !== 'function') {
         steps.push({ broken: `${file} : export meta/install manquant`, file });
         continue;
@@ -259,7 +308,10 @@ async function runStep(step, ctx, index, total) {
   try {
     const result = (await step.install(ctx)) || {};
     const status = result.status || 'done';
-    markStep(step.id, status, result.note || '');
+    // « --dry-run n'écrit rien » : une simulation ne doit pas laisser une trace
+    // « skipped » dans state.json, que la reprise automatique interpréterait
+    // ensuite comme un refus délibéré de l'utilisateur.
+    if (!ctx.dryRun) markStep(step.id, status, result.note || '');
     blank();
     if (status === 'done') log.ok(`${step.label} — terminé`);
     else if (status === 'partial') log.warn(`${step.label} — partiel${result.note ? ` : ${result.note}` : ''}`);
@@ -267,7 +319,7 @@ async function runStep(step, ctx, index, total) {
     else log.error(`${step.label} — échec${result.note ? ` : ${result.note}` : ''}`);
     return { ...result, status };
   } catch (error) {
-    markStep(step.id, 'failed', error.message);
+    if (!ctx.dryRun) markStep(step.id, 'failed', error.message);
     blank();
     log.error(`${step.label} — échec : ${error.message}`);
     if (process.env.PIECEMAKER_DEBUG) log.detail(error.stack);
@@ -381,6 +433,7 @@ function printHelp() {
   write('  --json          produit une sortie JSON sans décor (chronology/conversion/graph)');
   write('  --check         diagnostic seul, n\'installe rien');
   write('  --step <id>     rejoue une seule étape');
+  write('  --resume-steps <ids> rejoue les étapes indiquées sans interaction (usage interne)');
   write('  --dry-run       montre les actions sans les exécuter');
   write('  --yes, -y       accepte les valeurs par défaut (non interactif)');
   write('  --help, -h      cette aide');
@@ -739,6 +792,9 @@ async function runOperationalCommand(command, knownUpdate = null, flags = {}) {
       if (reconcileCentralMapping()) {
         log.info('Rouvrez les sessions Claude Code actives pour oublier les anciens hooks de mapping.');
       }
+      // « update » reste le geste de remise à niveau : même sans nouveau commit,
+      // une étape d'installation restée incomplète repart en tâche de fond.
+      await resumePendingStepsAfterUpdate();
       return 0;
     }
     if (pending.remoteAvailable) {
@@ -815,6 +871,9 @@ async function runOperationalCommand(command, knownUpdate = null, flags = {}) {
         log.warn(`Le moniteur Telegram n’a pas redémarré : ${daemon.reason}`);
       }
     }
+    // Après le `finally` : une mise à jour qui a échoué ne doit pas enchaîner
+    // sur une réinstallation en fond, l'exception traverse d'abord.
+    await resumePendingStepsAfterUpdate();
     return 0;
   }
   return null;
@@ -830,7 +889,7 @@ function checkForUpdateOnOpen() {
     const pending = checkForUpdate();
     spin.stop();
     if (pending.remoteAvailable) {
-      log.warn(`MAJ disponible (${pending.changed.length} fichier(s) modifié(s)) — choisissez « Mettre à jour PieceMaker ».`);
+      log.warn(`MAJ disponible (${pending.changed.length} fichier(s) modifié(s)) — application automatique.`);
     } else {
       log.ok('PieceMaker est à jour.');
     }
@@ -952,19 +1011,44 @@ async function main() {
 
   banner();
 
+  // La mise à jour automatique n'a lieu qu'à l'ouverture interactive, devant un
+  // utilisateur. Une commande explicite, une étape ciblée, un diagnostic, une
+  // simulation ou un mode non interactif ne doivent jamais couper puis relancer
+  // les services de la machine par surprise.
   const opensInteractiveInstaller =
     (!flags.command || flags.command === 'install') &&
     !flags.all &&
     !flags.check &&
     !flags.step &&
+    !flags.resumeSteps &&
+    !flags.dryRun &&
+    !flags.yes &&
     !nonInteractive;
-  const knownUpdate = opensInteractiveInstaller ? checkForUpdateOnOpen() : null;
+  let knownUpdate = opensInteractiveInstaller ? checkForUpdateOnOpen() : null;
 
   if (flags.command && !['install', 'doctor', 'check'].includes(flags.command)) {
     return runOperationalCommand(flags.command, null, flags);
   }
 
-  const steps = await loadSteps();
+  // `update` arrête puis relance lui-même le serveur et le proxy : il passe
+  // avant ensureServerRunning() plus bas, pour ne pas démarrer un serveur juste
+  // avant de le couper. Il enchaîne aussi sur la reprise des étapes.
+  let autoUpdated = false;
+  if (opensInteractiveInstaller && knownUpdate?.available) {
+    try {
+      await runOperationalCommand('update', knownUpdate);
+      autoUpdated = true;
+    } catch (error) {
+      log.error(`Mise à jour automatique interrompue : ${error.message}`);
+      log.detail('L’installateur reste disponible ; relancez « Mettre à jour PieceMaker » depuis le menu.');
+    }
+    knownUpdate = null;
+    blank();
+  }
+
+  // Après une mise à jour, les modules d'étapes sur le disque ne sont plus ceux
+  // que ce processus a pu charger : on les relit.
+  const steps = await loadSteps({ fresh: autoUpdated });
   const broken = steps.filter((s) => s.broken);
   if (broken.length) {
     for (const b of broken) log.error(b.broken);
@@ -984,6 +1068,19 @@ async function main() {
   if (flags.check || flags.command === 'doctor' || flags.command === 'check') {
     await runCheck(steps, ctx);
     return 0;
+  }
+
+  // Reprise détachée lancée par `update` : uniquement les étapes nommées, sans
+  // interaction, sans menu et sans toucher aux services.
+  if (flags.resumeSteps) {
+    const wanted = steps.filter((s) => !s.broken && flags.resumeSteps.includes(s.id));
+    if (!wanted.length) {
+      log.error(`Aucune étape à reprendre parmi : ${flags.resumeSteps.join(', ')}`);
+      return 1;
+    }
+    const results = await runAll(steps, ctx, wanted.map((s) => s.id));
+    printSummary(results);
+    return results.some(([, r]) => r.status === 'failed') ? 1 : 0;
   }
 
   if (flags.step) {
