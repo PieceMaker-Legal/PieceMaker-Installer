@@ -46,11 +46,11 @@ function managedImportBlock(rule) {
   return `${IMPORT_START}
 ## PieceMaker — instructions gérées
 
-Pour une chronologie factuelle, exécuter d'abord
-\`piecemaker chronology --json\`. Pour une question sur les personnes ou leurs
-liens de droit, exécuter \`piecemaker graph query "<question>"\` depuis ce
-dossier. Le graphe riche se construit sans dépendre du MCP. Consulter aussi la
-règle complète suivante :
+Pour une chronologie factuelle, appeler d'abord l'outil \`chronologie\` du
+serveur MCP \`piecemaker\`. Pour une question sur les personnes ou leurs liens de
+droit, appeler \`graphe_question\` ; si l'outil signale que le graphe doit être
+actualisé, lancer \`graphe_construire\` puis reposer la question. Consulter aussi
+la règle complète suivante :
 
 @${rule}
 ${IMPORT_END}`;

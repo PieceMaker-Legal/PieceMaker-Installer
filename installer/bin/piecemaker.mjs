@@ -35,6 +35,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { banner, title, log, write, blank, summary, spinner, badge, c } from '../lib/ui.mjs';
 import { select, confirm, multiSelect, pause, nonInteractive } from '../lib/prompt.mjs';
 import { HOME_DIR, REPO_ROOT, commandExists, findPython, venvPaths } from '../lib/platform.mjs';
+import { COMMANDS, GRAPH_ACTIONS, PROXY_ACTIONS } from '../lib/commandes.mjs';
 import { loadConfig, readEnv, markStep, loadState, CONFIG_FILE } from '../lib/state.mjs';
 import { scheduleStepResume, selectStepsToResume } from '../lib/resume-steps.mjs';
 import {
@@ -190,9 +191,6 @@ async function resumePendingStepsAfterUpdate() {
 }
 
 const STEPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'steps');
-const COMMANDS = new Set(['open', 'start', 'stop', 'restart', 'status', 'logs', 'chronology', 'conversion', 'graph', 'proxy', 'install', 'doctor', 'check', 'update']);
-const GRAPH_ACTIONS = new Set(['build', 'query', 'status']);
-const PROXY_ACTIONS = new Set(['bypass']);
 const GRAPHIFY_ENV_KEYS = new Set([
   'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL',
   'AWS_ACCESS_KEY_ID', 'AWS_DEFAULT_REGION', 'AWS_PROFILE', 'AWS_REGION',

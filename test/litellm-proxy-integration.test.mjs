@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import test from 'node:test';
 
 import {
@@ -16,11 +18,28 @@ import {
   litellmUrls,
   llmClientProxyStatus,
 } from '../installer/lib/litellm-proxy.mjs';
+import {
+  codexSessionHookStatus,
+  installCodexSessionHook,
+} from '../installer/lib/codex-skills.mjs';
 
 function temporaryHome(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-litellm-config-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return root;
+}
+
+function runHook(script, payload, env) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [script], { env: { ...process.env, ...env } });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ code, stdout, stderr }));
+    child.stdin.end(JSON.stringify(payload));
+  });
 }
 
 test('Claude Code reçoit ANTHROPIC_BASE_URL sans perdre ses hooks ni ses réglages', (t) => {
@@ -128,6 +147,80 @@ test('Codex utilise le pass-through ChatGPT avec WebSocket et préserve le TOML'
   assert.match(content, /supports_websockets = true/);
   assert.match(content, /model = "gpt-test"/);
   assert.match(content, /\[mcp_servers\.tiers\]\ncommand = "serveur-tiers"/);
+});
+
+test('Codex reçoit le badge SessionStart sans perdre ses hooks personnels', (t) => {
+  const userHome = temporaryHome(t);
+  const codexHome = path.join(userHome, '.codex');
+  const hooksFile = path.join(codexHome, 'hooks.json');
+  fs.mkdirSync(codexHome, { recursive: true });
+  fs.writeFileSync(hooksFile, `${JSON.stringify({
+    description: 'personnel',
+    hooks: {
+      SessionStart: [{
+        matcher: 'resume',
+        hooks: [{ type: 'command', command: 'node personnel.mjs' }],
+      }],
+      Stop: [{ hooks: [{ type: 'command', command: 'node stop.mjs' }] }],
+    },
+  }, null, 2)}\n`);
+
+  const first = installCodexSessionHook(path.resolve('.'), userHome);
+  const second = installCodexSessionHook(path.resolve('.'), userHome);
+  const installed = fs.readFileSync(hooksFile, 'utf8');
+
+  assert.equal(first.ok, true);
+  assert.equal(first.changed, true);
+  assert.equal(second.changed, false);
+  assert.equal(codexSessionHookStatus(path.resolve('.'), userHome).ok, true);
+  assert.match(installed, /PIECEMAKER_HOOK_CLIENT=codex/);
+  assert.match(installed, /proxy-guard\.mjs/);
+  assert.match(installed, /personnel\.mjs/);
+  assert.match(installed, /stop\.mjs/);
+});
+
+test('un hooks.json Codex invalide n’est jamais écrasé', (t) => {
+  const userHome = temporaryHome(t);
+  const hooksFile = path.join(userHome, '.codex', 'hooks.json');
+  fs.mkdirSync(path.dirname(hooksFile), { recursive: true });
+  fs.writeFileSync(hooksFile, '{ invalide');
+
+  const result = installCodexSessionHook(path.resolve('.'), userHome);
+
+  assert.equal(result.ok, false);
+  assert.equal(fs.readFileSync(hooksFile, 'utf8'), '{ invalide');
+});
+
+test('la sentinelle Codex affiche le badge actif seulement si routage et proxy répondent', async (t) => {
+  const userHome = temporaryHome(t);
+  const codexHome = path.join(userHome, '.codex');
+  const pieceMakerHome = path.join(userHome, '.piecemaker');
+  const server = http.createServer((request, response) => {
+    response.writeHead(request.url === '/health/liveliness' ? 200 : 404);
+    response.end();
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const port = server.address().port;
+  fs.mkdirSync(pieceMakerHome, { recursive: true });
+  fs.writeFileSync(path.join(pieceMakerHome, 'config.json'), `${JSON.stringify({ litellmPort: port })}\n`);
+  configureCodexProxy({ baseUrl: `http://127.0.0.1:${port}/chatgpt`, codexHome });
+
+  const result = await runHook(
+    path.resolve('piecemaker-plugin/scripts/proxy-guard.mjs'),
+    { hook_event_name: 'SessionStart', source: 'startup', session_id: 'codex-test' },
+    {
+      HOME: userHome,
+      CODEX_HOME: codexHome,
+      PIECEMAKER_HOME: pieceMakerHome,
+      PIECEMAKER_HOOK_CLIENT: 'codex',
+    },
+  );
+  const output = JSON.parse(result.stdout);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(output.systemMessage, '🔒 Anonymisation PieceMaker active ✓');
+  assert.match(output.hookSpecificOutput.additionalContext, /Codex y est routé/);
 });
 
 test('le bypass Codex restaure OpenAI et retire seulement le bloc PieceMaker', (t) => {

@@ -379,9 +379,15 @@ dialog::backdrop { background: rgba(18, 35, 32, .5); }
 .manual-commit-field textarea { min-height: 66px; padding: 8px 9px; resize: vertical; background: #fff; font-size: .72rem; line-height: 1.4; }
 .manual-commit .button { width: 100%; min-height: 38px; font-size: .73rem; }
 .history-date { border-bottom: 1px solid #eaeef2; background: #f6f8fa; padding: 6px 12px; color: #6e7781; font-size: .65rem; font-weight: 700; text-transform: capitalize; }
-.commit-row, .change-row { display: grid; width: 100%; min-width: 0; align-items: center; border: 0; border-bottom: 1px solid #eaeef2; background: #fff; color: #24292f; cursor: pointer; text-align: left; }
+.commit-row { display: grid; width: 100%; min-width: 0; align-items: center; border: 0; border-bottom: 1px solid #eaeef2; background: #fff; color: #24292f; cursor: pointer; text-align: left; }
 .commit-row { grid-template-columns: 22px minmax(0, 1fr) auto; gap: 3px; padding: 11px 10px; }
-.change-row { grid-template-columns: 26px minmax(0, 1fr); gap: 5px; padding: 10px 12px; }
+/* Une case à cocher ne peut pas être imbriquée dans un bouton : la ligne est
+   désormais un conteneur portant la case et le bouton de diff (`.change-toggle`)
+   côte à côte ; `.change-row` conserve son nom pour garder telles quelles les
+   règles de survol/actif/thème sombre partagées avec `.commit-row`. */
+.change-row { display: grid; width: 100%; min-width: 0; align-items: center; grid-template-columns: 20px minmax(0, 1fr); gap: 6px; border: 0; border-bottom: 1px solid #eaeef2; background: #fff; padding: 10px 12px; }
+.change-select { margin: 0; cursor: pointer; }
+.change-toggle { display: grid; width: 100%; min-width: 0; align-items: center; grid-template-columns: 26px minmax(0, 1fr); gap: 5px; border: 0; padding: 0; background: transparent; color: #24292f; cursor: pointer; text-align: left; font: inherit; }
 .commit-row:hover, .change-row:hover { background: #f6f8fa; }
 .commit-row.active, .change-row.active { background: #ddf4ff; box-shadow: inset 3px 0 #0969da; }
 .commit-marker { color: #57606a; font-size: .65rem; text-align: center; }

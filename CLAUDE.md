@@ -40,6 +40,7 @@ Markdown, rédaction et tamponnage de pièces. Node ≥ 18, Python ≥ 3.10.
 | `admin/` | Interface web locale servie sur `/admin/` (`app.js`, `index.html`, éditeur Markdown des skills/agents, aperçus facturation). |
 | `orchestrator/` | Assistant Bot Telegram (`piecemaker-daemon.mjs`) et surveillance de quotas (`limit-watch.mjs`), sans LLM. |
 | `piecemaker-plugin/` | Composants Claude Code/Codex : `skills/`, `agents/`, `hooks/hooks.json`, `scripts/` (logique des hooks) + `scripts/lib/` (mapping, protection, commits, facturation…). |
+| `mcp/piecemaker/` | Serveur MCP stdio exposant chronologie, graphe et conversion comme outils typés. Chaque outil lance `installer/bin/piecemaker.mjs` en sous-processus — jamais d'import de module — pour qu'il n'existe qu'une implémentation. Enregistré par l'étape `12-mcp-piecemaker` (`claude mcp add -s user`). |
 | `litellm-proxy/` | Proxy LiteLLM officiel entouré du middleware PII PieceMaker ; pass-through des authentifications Claude Code/Codex, sans stockage de leurs jetons. |
 
 ### Limite de responsabilité du proxy
@@ -126,10 +127,16 @@ dans `state.json` n'est jamais ressuscitée (l'état ne distingue pas un refus
 de l'utilisateur d'une étape sans objet), et `03-python-gliner` est exclue —
 son `install()` exécute `warmup.py`, donc un chargement GLiNER.
 
-Piège plugin : `claude plugin update` sort 0 même sans recopier — le cache est
-clé par la version de `piecemaker-plugin/.claude-plugin/plugin.json`. Une
-modif sans bump de version laisse le cache périmé (hooks inertes). L'étape 09
-vérifie l'empreinte via `plugin-refresh.mjs`, jamais le seul code de sortie.
+Pas de manifeste ni de marketplace de plugin : `websocket-server/claude-hooks.cjs`
+fusionne directement `piecemaker-plugin/hooks/hooks.json` dans
+`~/.claude/settings.json`, en substituant `${CLAUDE_PLUGIN_ROOT}` par le
+chemin absolu de `piecemaker-plugin` dans ce dépôt. C'est l'étape
+`09-claude-assets` qui joue cette fusion (`installClaudeHooks`) et la vérifie
+(`claudeHooksStatus`, qui compare commande/matcher/timeout attendus à
+`settings.json`, pas un simple code de sortie). Piège à retenir : Claude Code
+ne relit les hooks qu'à l'ouverture d'une session — une modification de
+`piecemaker-plugin/hooks/hooks.json` reste inerte tant que l'étape 09 n'a pas
+tourné et qu'une nouvelle session n'a pas démarré.
 
 ## Commandes de développement
 

@@ -124,7 +124,7 @@ environnement virtuel Python et modèles GLiNER2.5 multilingue + spaCy.
 | 07-legifrance | Serveur MCP Légifrance (clés PISTE) | installe le plugin autonome `PieceMaker-Legal/mcp-legifrance`, prépare son venv et valide l’accès PISTE |
 | 08-telegram | Telegram — Assistant Bot et daemon | configure le bot conversationnel PieceMaker et son daemon de surveillance séparé |
 | 09-claude-assets | Composants Claude Code PieceMaker | enregistre les skills, agents et hooks PieceMaker lorsque Claude Code est présent |
-| 09-codex-plugin | Skills Codex PieceMaker | enregistre les skills PieceMaker lorsque la CLI Codex est présente |
+| 09-codex-plugin | Composants Codex PieceMaker | enregistre les skills et le badge dynamique d’anonymisation lorsque la CLI Codex est présente |
 | 10-libreoffice | Conversion des pièces en PDF (LibreOffice) | installe LibreOffice, requis pour tamponner les pièces Excel et Word |
 | 10-pandoc | Génération PDF/DOCX (pandoc + typst) | installe pandoc et typst, utilisés pour l’export de la chronologie et de l’historique |
 | 11-docx-cli | Outil docx-cli (documents Word) | installe et active le plugin docx-cli, qui pilote les `.docx` via le binaire « docx » |
@@ -213,7 +213,9 @@ scan manque sont traitées.
 
 La première requête `graph` construit le graphe riche avec le
 backend LLM configuré pour Graphify ; les suivantes réutilisent le cache tant
-que les pièces, leur index ou le prompt juridique n'ont pas changé. Chaque
+que les pièces, leur index ou le prompt juridique n'ont pas changé. Lorsque le
+cache est périmé, `graph query` ne reconstruit pas de lui-même : il demande de
+lancer `graph build`. Chaque
 pièce est reliée aux personnes physiques ou morales détectées, puis aux
 contrats, obligations, inexécutions, demandes, moyens, normes et décisions
 qu'elle matérialise ou rapporte. La sortie conserve les distinctions
@@ -222,8 +224,26 @@ qu'elle matérialise ou rapporte. La sortie conserve les distinctions
 Ce graphe juridique est distinct du graphe léger de la frise : la frise ne
 contient que les mentions GLiNER et n'appelle aucun LLM. Dans les deux cas, les
 noms de fichiers persistants sont remplacés par des empreintes et les personnes
-par leurs codes pseudonymisés. `piecemaker graph query` fonctionne sans MCP et
-sans serveur PieceMaker démarré.
+par leurs codes pseudonymisés. `piecemaker graph query` fonctionne sans serveur
+PieceMaker démarré.
+
+### Les mêmes opérations comme outils MCP
+
+Ces commandes sont aussi exposées à l'assistant comme outils typés par le
+serveur MCP `piecemaker` (`mcp/piecemaker/server.mjs`), enregistré à
+l'installation par l'étape `12-mcp-piecemaker` :
+
+| Outil | Équivalent CLI |
+| --- | --- |
+| `chronologie` | `piecemaker chronology --json` |
+| `graphe_question` | `piecemaker graph query "<question>"` |
+| `graphe_construire` | `piecemaker graph build` |
+| `graphe_etat` | `piecemaker graph status` |
+| `conversion` | `piecemaker conversion` |
+
+Le serveur lance le binaire en sous-processus : une seule implémentation, donc
+aucune dérive possible entre la commande et l'outil. Il ne constitue pas une
+garde : le durcissement reste au niveau du système d'exploitation.
 
 Le tableau de bord est servi uniquement en local sur
 `https://localhost:43098/admin/`. Il peut être installé comme PWA. L’icône
@@ -251,7 +271,9 @@ marketplace public `PieceMaker-Legal/mcp-legifrance`. Pour les autres
 composants, lorsque la CLI correspondante est présente, l'installateur lie les
 skills dans `~/.claude/skills` et `~/.codex/skills`, ainsi que les agents dans
 `~/.claude/agents`. Les hooks Claude sont fusionnés directement dans
-`~/.claude/settings.json`. Les fichiers personnels homonymes sont conservés.
+`~/.claude/settings.json`. Pour Codex, une sentinelle `SessionStart` fusionnée
+dans `~/.codex/hooks.json` affiche l’état réel de l’anonymisation au début de
+chaque session. Les fichiers et hooks personnels sont conservés.
 
 Les composants comprennent les skills de conversion, de rédaction juridique
 et de tamponnage des pièces, les agents Claude dédiés et les hooks de

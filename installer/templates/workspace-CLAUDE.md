@@ -26,13 +26,8 @@ l'administration.
 ### Règle prioritaire
 
 Pour toute demande portant sur la chronologie, une date, les acteurs ou les
-liens entre pièces, commencer obligatoirement par :
-
-```bash
-piecemaker chronology --json
-```
-
-La commande fonctionne sans Word, sans MCP et sans serveur. Elle renvoie :
+liens entre pièces, commencer obligatoirement par l'outil `chronologie` du
+serveur MCP `piecemaker`. Il renvoie :
 
 - les pièces déjà triées chronologiquement ;
 - leurs dates, natures et juridictions indexées ;
@@ -47,9 +42,9 @@ incertain ou compléter une date absente.
 ### Rôle de Graphify
 
 Le graphe léger Graphify utilisé par la frise est un cache interne construit
-automatiquement, sans LLM. L'assistant n'a pas à connaître son chemin :
-`piecemaker chronology` fournit l'interface stable vers la chronologie et les
-liens pièces↔entités.
+automatiquement, sans LLM. L'assistant n'a pas à connaître son chemin : l'outil
+`chronologie` fournit l'interface stable vers la chronologie et les liens
+pièces↔entités.
 
 Le graphe sémantique riche est une analyse distincte destinée aux questions
 juridiques. Ne pas le construire pour une simple demande de chronologie sans
@@ -61,26 +56,21 @@ enjeu juridique.
 
 Pour toute question sur la chronologie juridique, la qualité des acteurs, leurs
 liens de droit, un contrat, une obligation, une inexécution, une demande, une
-contestation, une norme ou une décision, lancer **avant de parcourir le
-dossier** :
+contestation, une norme ou une décision, appeler **avant de parcourir le
+dossier** l'outil `graphe_question`, avec la question précise de l'utilisateur.
 
-```bash
-piecemaker graph query "<question précise de l'utilisateur>"
-```
+Exemples de questions :
 
-Exemples :
+- « Montre-moi la chronologie du dossier et les personnes concernées »
+- « Quels liens juridiques unissent SOCIETE_01 et PERSONNE_02, et quelles pièces
+  les établissent ? »
+- « Relie le contrat, les obligations, l'inexécution alléguée, les demandes, le
+  moyen de nullité et les normes invoquées »
 
-```bash
-piecemaker graph query "Montre-moi la chronologie du dossier et les personnes concernées"
-piecemaker graph query "Quels liens juridiques unissent SOCIETE_01 et PERSONNE_02, et quelles pièces les établissent ?"
-piecemaker graph query "Relie le contrat, les obligations, l'inexécution alléguée, les demandes, le moyen de nullité et les normes invoquées"
-```
-
-La commande fonctionne directement depuis le dossier enregistré, sans MCP,
-sans serveur PieceMaker et sans Word ouvert. Si le graphe riche est absent ou
-périmé, elle le construit automatiquement depuis les pièces converties,
-scannées et pseudonymisées. `piecemaker graph build` force une préparation
-explicite ; `piecemaker graph status` indique si une reconstruction est requise.
+Le graphe riche est construit s'il est **absent**, mais il n'est jamais
+reconstruit tout seul lorsqu'il est **périmé** : l'outil renvoie alors une
+erreur d'actualisation. Lancer dans ce cas `graphe_construire`, puis reposer la
+question. `graphe_etat` indique si une reconstruction est requise.
 
 ### Ce que le graphe représente
 
@@ -104,8 +94,8 @@ y serait reproduite depuis une pièce.
 
 Le graphe léger de l'administration sert uniquement à afficher la frise et les
 mentions GLiNER, sans LLM. Pour une analyse juridique, utiliser exclusivement
-`piecemaker graph query`. Les artefacts persistants ne contiennent que des codes
-pseudonymisés et des noms de fichiers remplacés par leurs empreintes.
+l'outil `graphe_question`. Les artefacts persistants ne contiennent que des
+codes pseudonymisés et des noms de fichiers remplacés par leurs empreintes.
 
 ## Repères
 
@@ -114,7 +104,7 @@ pseudonymisés et des noms de fichiers remplacés par leurs empreintes.
 | Racine des dossiers | ce répertoire (`workspacePath` de `~/.piecemaker/config.json`) |
 | Administration | `https://localhost:43098/admin/` |
 | Serveur | `piecemaker start` / `stop` / `restart` / `status` / `logs` |
-| Chronologie assistant | `piecemaker chronology --json` depuis le dossier |
+| Outils de l'assistant | serveur MCP `piecemaker` : `chronologie`, `graphe_question`, `graphe_construire`, `graphe_etat`, `conversion` |
 | Graphe juridique riche | `<dossier>/.piecemaker/graphify/legal/graphify-out/graph.json` |
 | Historique des dossiers | `~/.piecemaker/case-history/` |
 | Facturation | `~/.piecemaker/billing/` |

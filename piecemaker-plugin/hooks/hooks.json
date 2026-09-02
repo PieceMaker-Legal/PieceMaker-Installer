@@ -70,6 +70,15 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/billing-track.mjs\""
           }
         ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/session-commit.mjs\""
+          }
+        ]
       }
     ],
     "TaskCompleted": [

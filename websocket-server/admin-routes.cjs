@@ -3110,6 +3110,15 @@ function createAdminRouter({
       const legalCase = selectedCase(req.body?.case);
       const label = String(req.body?.label || 'Commit manuel').trim().slice(0, 140);
       const description = String(req.body?.description || '').trim().slice(0, 4000);
+      // Sélection de fichiers optionnelle : `paths` absent, vide ou non-tableau
+      // laisse `createCommit` sans cette clé, donc le comportement inchangé
+      // (commit du dossier entier). Quand une sélection est fournie, chaque
+      // chemin est validé par `validateRelativeSafePath` (déjà appelée en
+      // interne par `createCommit`/`buildSelectedTree`, commits.cjs) : toute
+      // évasion du dossier ou fichier protégé y lève une erreur explicite,
+      // remontée en 400 par le catch ci-dessous — pas de revalidation ici.
+      const rawPaths = req.body?.paths;
+      const paths = Array.isArray(rawPaths) && rawPaths.length ? rawPaths : null;
       const result = await createCommit({
         casesRoot: legalCase.casesRoot,
         caseName: legalCase.caseName,
@@ -3118,6 +3127,7 @@ function createAdminRouter({
         description,
         event: 'manual',
         waitForLockMs: 10_000,
+        ...(paths ? { paths } : {}),
       });
       if (result.skipped === 'busy') throw new Error('L’historique est occupé. Réessayez dans quelques secondes.');
       res.status(result.created ? 201 : 200).json({ ok: true, ...result });

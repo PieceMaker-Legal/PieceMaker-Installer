@@ -191,6 +191,10 @@ let tamponImage = null;
 let dossiers = [];
 let selectedPieces = [];
 let selectedOriginals = new Set();
+// Chemins (relatifs à la racine du dossier) cochés dans la vue « Modifications »
+// pour un commit ciblé. Vide ⇒ le prochain commit manuel porte sur tout le
+// dossier, comme avant l'ajout de la sélection.
+let selectedChangePaths = new Set();
 // « pending » ne montre que ce qui reste à convertir ou à scanner ; « all »
 // montre tout le dossier, sous-dossiers compris, ce qui est indispensable pour
 // décider de la protection d'une pièce déjà traitée.
@@ -3085,6 +3089,12 @@ function renderHistoryItems() {
   const changes = currentCase()?.workingChanges || [];
   byId('changesView').textContent = `Modifications (${changes.length})`;
   list.textContent = '';
+  // La sélection ne survit pas à la disparition d'un fichier de la liste
+  // (commit, restauration, changement de dossier déjà vidé par ailleurs).
+  const changePaths = new Set(changes.map((change) => change.path));
+  for (const changePath of selectedChangePaths) {
+    if (!changePaths.has(changePath)) selectedChangePaths.delete(changePath);
+  }
   updateManualCommitForm();
   const protectedMode = historyView === 'protected';
   document.querySelector('.history-column')?.classList.toggle('protected-mode', protectedMode);
@@ -3113,9 +3123,26 @@ function renderHistoryItems() {
       return;
     }
     for (const change of changes) {
+      const row = document.createElement('div');
+      row.className = `change-row${selectedRevision?.hash === 'WORKTREE' && selectedRevision.path === change.path ? ' active' : ''}`;
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'change-select';
+      checkbox.checked = selectedChangePaths.has(change.path);
+      checkbox.setAttribute('aria-label', `Inclure « ${change.path} » dans le prochain commit`);
+      // La case vit à côté du bouton de diff (une case ne peut pas être
+      // imbriquée dans un bouton) : elle ne doit jamais déclencher son clic.
+      checkbox.addEventListener('click', (event) => event.stopPropagation());
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) selectedChangePaths.add(change.path);
+        else selectedChangePaths.delete(change.path);
+        updateManualCommitForm();
+      });
+
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = `change-row${selectedRevision?.hash === 'WORKTREE' && selectedRevision.path === change.path ? ' active' : ''}`;
+      button.className = 'change-toggle';
       const badge = document.createElement('span');
       badge.className = `file-status ${change.kind}`;
       badge.textContent = statusLetter(change);
@@ -3124,7 +3151,9 @@ function renderHistoryItems() {
       file.textContent = change.path;
       button.append(badge, file);
       button.addEventListener('click', () => loadRevision('WORKTREE', change.path));
-      list.append(button);
+
+      row.append(checkbox, button);
+      list.append(row);
     }
     // Le diff est volontairement paresseux : aucun calcul au rendu ou au
     // rafraîchissement, seulement après un clic explicite sur une modification.
@@ -3517,6 +3546,7 @@ async function selectHistoryFolder(folder) {
   selectedFolder = folder;
   selectedRevision = null;
   selectedOriginals = new Set();
+  selectedChangePaths = new Set();
   caseTelegram = null;
   caseTelegramFolder = '';
   if ((originalsJob?.reference || originalsJob?.case) !== folder) showOriginalsProgress('');
@@ -4542,10 +4572,16 @@ function updateManualCommitForm() {
   form.hidden = !visible;
   const title = byId('commitTitle').value.trim();
   const button = byId('createCommit');
+  const selectedCount = changes.reduce((count, change) => count + (selectedChangePaths.has(change.path) ? 1 : 0), 0);
   button.disabled = !visible || !changes.length || !title;
-  button.textContent = changes.length
-    ? `Enregistrer ${changes.length} fichier${changes.length > 1 ? 's' : ''}`
-    : 'Aucune modification à enregistrer';
+  // Sélection vide : même comportement qu'avant l'ajout de la case à cocher
+  // (commit du dossier entier). Sélection non vide : le bouton bascule sur le
+  // commit ciblé, en gardant le même rôle et la même position.
+  button.textContent = selectedCount
+    ? `Commiter la sélection (${selectedCount})`
+    : (changes.length
+      ? `Enregistrer ${changes.length} fichier${changes.length > 1 ? 's' : ''}`
+      : 'Aucune modification à enregistrer');
 }
 
 async function createManualCommit(event) {
@@ -4557,17 +4593,20 @@ async function createManualCommit(event) {
     byId('commitTitle').focus();
     return;
   }
+  const changes = currentCase()?.workingChanges || [];
+  const paths = changes.map((change) => change.path).filter((path) => selectedChangePaths.has(path));
   const button = byId('createCommit');
   button.disabled = true;
   try {
     const result = await api('/api/admin/commits', {
       method: 'POST',
-      body: JSON.stringify({ label, description, case: selectedFolder }),
+      body: JSON.stringify({ label, description, case: selectedFolder, paths }),
     });
     toast(result.created ? 'Commit enregistré' : 'Aucune nouvelle modification à enregistrer');
     if (result.created) {
       byId('commitTitle').value = '';
       byId('commitDescription').value = '';
+      selectedChangePaths.clear();
     }
     await loadSelectedCase({ quiet: true });
   } catch (error) {

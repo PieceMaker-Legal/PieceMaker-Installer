@@ -17,25 +17,21 @@ Langage professionnel, en français.
 ## Chronologie du dossier
 
 Pour une demande limitée aux dates, aux acteurs ou à l'ordre des pièces,
-exécuter **avant toute lecture de pièce** :
+appeler **avant toute lecture de pièce** l'outil `chronologie` du serveur MCP
+`piecemaker`.
 
-```bash
-piecemaker chronology --json
-```
-
-Cette commande locale renvoie l'index chronologique pseudonymisé et la
-topologie pièces↔entités du dossier courant. Ne commencer à lire les Markdown
-convertis que pour vérifier ou compléter les dates signalées comme absentes ou
-incertaines. Ne jamais commencer par parcourir l'ensemble du dossier.
+Il renvoie l'index chronologique pseudonymisé et la topologie pièces↔entités du
+dossier courant. Ne commencer à lire les Markdown convertis que pour vérifier ou
+compléter les dates signalées comme absentes ou incertaines. Ne jamais commencer
+par parcourir l'ensemble du dossier.
 
 ## Graphe juridique Graphify
 
 Pour toute question portant sur les liens de droit, contrats, obligations,
 inexécutions, demandes, arguments, normes ou décisions entre les parties :
-**interroger d'abord le graphe** avec `piecemaker graph query "<question>"`,
-avant de lire les pièces. La commande construit ou actualise automatiquement le
-graphe riche si les pièces ont changé ; elle ne dépend ni du MCP, ni du
-serveur PieceMaker, ni de Word.
+**interroger d'abord le graphe** avec l'outil `graphe_question`, avant de lire
+les pièces. Si le graphe doit être actualisé, l'outil le signale : lancer alors
+`graphe_construire`, puis reposer la question.
 
 Le graphe est recentré exclusivement sur les parties sélectionnées par le
 cabinet dans l'administration : un témoin, un signataire accessoire ou un code

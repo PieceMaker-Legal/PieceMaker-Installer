@@ -2,9 +2,9 @@
 /**
  * SessionStart hook — sentinelle du proxy PII LiteLLM.
  *
- * Claude Code n'est protégé (anonymisation avant envoi au fournisseur) que si
- * deux conditions tiennent ensemble : `~/.claude/settings.json` route
- * `ANTHROPIC_BASE_URL` vers le proxy local, et ce proxy répond.
+ * Claude Code et Codex ne sont protégés (anonymisation avant envoi au
+ * fournisseur) que si deux conditions tiennent ensemble : leur configuration
+ * route la session vers le proxy local et ce proxy répond.
  *
  * Deux états d'arrêt existent, et ils ne se ressemblent pas :
  *  - `piecemaker stop` (et `piecemaker proxy bypass`) retirent volontairement
@@ -18,7 +18,7 @@
  * et dit la vérité sur ce que la session en cours peut réellement attendre.
  *
  * Limite structurelle assumée : un hook est un processus enfant. Il ne peut pas
- * modifier l'environnement de Claude Code déjà lancé. Rétablir le routage
+ * modifier le routage déjà chargé par le client. Le rétablir
  * profite donc aux sessions suivantes, jamais à celle qui démarre — le message
  * le dit explicitement au lieu de laisser croire à une protection acquise.
  *
@@ -55,6 +55,8 @@ const AUTOSTART_BUDGET_MS = 10000;
 const HOOK_TIMEOUT_MS = 25000;
 
 const SETTINGS_FILE = path.join(os.homedir(), '.claude', 'settings.json');
+const CODEX_CONFIG_FILE = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'config.toml');
+const CODEX_PROVIDER_ID = 'piecemaker_litellm';
 
 function validPort(value) {
   const port = Number(value);
@@ -87,7 +89,7 @@ function logLine(entry) {
  * settings.json, sans dépendre de installer/lib — cette partie doit rester
  * lisible même sur une installation cassée.
  */
-function readRouting() {
+function readClaudeRouting() {
   try {
     const raw = fs.readFileSync(SETTINGS_FILE, 'utf8');
     const settings = JSON.parse(raw);
@@ -100,6 +102,33 @@ function readRouting() {
   } catch {
     return { routed: false, value: null };
   }
+}
+
+/** Codex est routé lorsque le fournisseur PieceMaker géré est sélectionné. */
+function readCodexRouting() {
+  try {
+    const raw = fs.readFileSync(CODEX_CONFIG_FILE, 'utf8').replace(/^﻿/, '');
+    const beforeFirstTable = raw.split(/^\s*\[/m, 1)[0];
+    const provider = beforeFirstTable.match(/^\s*model_provider\s*=\s*["']([^"']+)["']/m)?.[1] || 'openai';
+    const table = raw.match(new RegExp(`\\[model_providers\\.${CODEX_PROVIDER_ID}\\]([\\s\\S]*?)(?=^\\s*\\[|(?![\\s\\S]))`, 'm'))?.[1] || '';
+    const value = table.match(/^\s*base_url\s*=\s*["']([^"']+)["']/m)?.[1] || null;
+    if (!value) return { routed: false, value };
+    const url = new URL(value);
+    const routed = provider === CODEX_PROVIDER_ID
+      && ['127.0.0.1', 'localhost'].includes(url.hostname)
+      && url.pathname.replace(/\/$/, '') === '/chatgpt';
+    return { routed, value };
+  } catch {
+    return { routed: false, value: null };
+  }
+}
+
+function hookClient() {
+  return process.env.PIECEMAKER_HOOK_CLIENT === 'codex' ? 'codex' : 'claude';
+}
+
+function readRouting(client) {
+  return client === 'codex' ? readCodexRouting() : readClaudeRouting();
 }
 
 /** Sonde /health/liveliness sur le port du proxy. Jamais de throw, jamais de rejet. */
@@ -190,11 +219,11 @@ async function attemptAutostart() {
 }
 
 /** Rétablit le routage Claude Code + Codex, comme le fait `piecemaker start`. */
-async function restoreRouting() {
+async function restoreRouting(client) {
   try {
     const { configureLlmClients } = await loadProxyLib();
     const clients = configureLlmClients({ userHome: os.homedir() });
-    return { ok: Boolean(clients?.claude?.configured), reason: clients?.claude?.reason || null };
+    return { ok: Boolean(clients?.[client]?.configured), reason: clients?.[client]?.reason || null };
   } catch (error) {
     return { ok: false, reason: error?.message || String(error) };
   }
@@ -229,8 +258,10 @@ async function main() {
 
   try {
     const config = loadPieceMakerConfig();
+    const client = hookClient();
+    const clientLabel = client === 'codex' ? 'Codex' : 'Claude Code';
     const port = validPort(config.litellmPort);
-    const routing = readRouting();
+    const routing = readRouting(client);
     const installe = venvPresent(config);
 
     const before = await probe(port);
@@ -253,18 +284,18 @@ async function main() {
       verdict = 'actif';
       const relance = autostart.status === 'réussi' ? ' — proxy PII redémarré automatiquement.' : '';
       systemMessage = `🔒 Anonymisation PieceMaker active ✓${relance}`;
-      additionalContext = `Le proxy PII LiteLLM répond sur le port ${port} et Claude Code y est routé (ANTHROPIC_BASE_URL). Les échanges avec le fournisseur sont anonymisés puis ré-identifiés localement.`;
+      additionalContext = `Le proxy PII LiteLLM répond sur le port ${port} et ${clientLabel} y est routé. Les échanges avec le fournisseur sont anonymisés puis ré-identifiés localement.`;
     } else if (after.ok && !routing.routed) {
       // Proxy debout mais routage absent : c'est l'état laissé par
       // « piecemaker stop ». On le rétablit pour la suite, sans prétendre
       // protéger la session en cours, dont l'environnement est déjà figé.
-      const restored = await restoreRouting();
+      const restored = await restoreRouting(client);
       routageRetabli = restored.ok;
       verdict = restored.ok ? 'restaure' : 'restauration-echouee';
       systemMessage = restored.ok
         ? "⚠️ [PieceMaker] Cette session a démarré en accès direct : elle n'est pas anonymisée. Le proxy PII tourne et le routage vient d'être rétabli — fermez cette session et rouvrez-en une pour activer la protection."
-        : `⚠️ [PieceMaker] Le proxy PII tourne mais le routage de Claude Code n'a pas pu être rétabli (${restored.reason || 'raison inconnue'}). Accès direct au fournisseur, sans anonymisation. Rejouez « piecemaker --step 16-litellm-proxy ».`;
-      additionalContext = `Le proxy PII répond sur le port ${port} mais ANTHROPIC_BASE_URL était absent au démarrage de cette session : les échanges de la session en cours ne sont pas anonymisés.${restored.ok ? ' Le routage a été rétabli pour les sessions suivantes.' : ''}`;
+        : `⚠️ [PieceMaker] Le proxy PII tourne mais le routage de ${clientLabel} n'a pas pu être rétabli (${restored.reason || 'raison inconnue'}). Accès direct au fournisseur, sans anonymisation. Rejouez « piecemaker --step 16-litellm-proxy ».`;
+      additionalContext = `Le proxy PII répond sur le port ${port} mais ${clientLabel} n'était pas routé au démarrage de cette session : les échanges de la session en cours ne sont pas anonymisés.${restored.ok ? ' Le routage a été rétabli pour les sessions suivantes.' : ''}`;
     } else if (!installe) {
       verdict = 'non-installe';
       systemMessage = "⚠️ [PieceMaker] Proxy PII LiteLLM non installé : accès direct au fournisseur, sans anonymisation. Rejouez « piecemaker --step 16-litellm-proxy ».";
@@ -284,6 +315,7 @@ async function main() {
       event: payload.hook_event_name || null,
       source: payload.source ?? null,
       sessionId: payload.session_id || null,
+      client,
       port,
       installe,
       route: { routed: routing.routed, value: routing.value },

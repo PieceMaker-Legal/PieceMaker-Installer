@@ -18,14 +18,13 @@ Vous analysez une pièce (document de cas) du dossier PieceMaker et produisez un
 
 ## Exploitation du graphe Graphify
 
-Avant l'analyse, lancez depuis le dossier juridique :
+Avant l'analyse, appelez depuis le dossier juridique l'outil `graphe_question`
+du serveur MCP `piecemaker`, avec la question : « Situe cette pièce dans la
+chronologie, identifie les personnes et les liens de droit qu'elle crée,
+établit, allègue ou conteste ».
 
-```bash
-piecemaker graph query "Situe cette pièce dans la chronologie, identifie les personnes et les liens de droit qu'elle crée, établit, allègue ou conteste"
-```
-
-La commande construit ou actualise automatiquement le graphe juridique riche.
-Elle fonctionne sans MCP, sans serveur et sans Word ouvert. Utilisez le
+Si l'outil signale que le graphe doit être actualisé, lancez
+`graphe_construire` puis reposez la question. Utilisez le
 sous-graphe retourné pour repérer contrats, obligations, inexécutions,
 prétentions, arguments et normes connexes, puis vérifiez chaque élément dans sa
 pièce source. Ne transformez jamais `ALLEGUE`, `CONTESTE`, `INFERRE` ou

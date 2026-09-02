@@ -1,10 +1,10 @@
 /**
- * Étape 09 — skills PieceMaker pour la CLI Codex.
+ * Étape 09 — composants PieceMaker pour la CLI Codex.
  *
  * Aucune entrée de marketplace ni aucun plugin d'application n'est créé :
- * les skills déjà présents dans `piecemaker-plugin/skills/` sont simplement
- * enregistrés dans `~/.codex/skills/`, emplacement local découvert par la
- * CLI Codex. Claude Code et son marketplace restent entièrement inchangés.
+ * les skills sont enregistrés dans `~/.codex/skills/` et la sentinelle du
+ * proxy dans `~/.codex/hooks.json`, deux emplacements locaux découverts par
+ * la CLI Codex. Claude Code et son marketplace restent entièrement inchangés.
  */
 
 import fs from 'node:fs';
@@ -13,7 +13,13 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { log } from '../lib/ui.mjs';
 import { REPO_ROOT, commandExists } from '../lib/platform.mjs';
-import { codexSkillStatus, repositoryCodexSkills, syncCodexSkills } from '../lib/codex-skills.mjs';
+import {
+  codexSessionHookStatus,
+  codexSkillStatus,
+  installCodexSessionHook,
+  repositoryCodexSkills,
+  syncCodexSkills,
+} from '../lib/codex-skills.mjs';
 import { loadConfig } from '../lib/state.mjs';
 
 const require = createRequire(import.meta.url);
@@ -21,8 +27,8 @@ const { refreshRegisteredCaseRules } = require('../../websocket-server/case-inst
 
 export const meta = {
   id: '09-codex-plugin',
-  label: 'Skills Codex PieceMaker',
-  description: 'Enregistre localement les skills PieceMaker lorsque la CLI Codex est présente',
+  label: 'Composants Codex PieceMaker',
+  description: 'Enregistre les skills et le badge d’anonymisation lorsque la CLI Codex est présente',
   required: false,
 };
 
@@ -35,6 +41,8 @@ function dependencies(overrides = {}) {
     userHome: os.homedir(),
     log,
     codexSkillStatus,
+    codexSessionHookStatus,
+    installCodexSessionHook,
     repositoryCodexSkills,
     syncCodexSkills,
     loadConfig,
@@ -58,6 +66,7 @@ export async function install(ctx, overrides = {}) {
   }
   if (ctx.dryRun) {
     ops.log.info(`[simulation] enregistrement de ${skills.length} skill(s) PieceMaker dans ~/.codex/skills`);
+    ops.log.info('[simulation] enregistrement du badge d’anonymisation au démarrage des sessions Codex');
     ops.log.info('[simulation] actualisation des instructions AGENTS.md des dossiers enregistrés');
     return { status: 'skipped', note: 'Mode simulation — aucune modification effectuée.' };
   }
@@ -67,18 +76,26 @@ export async function install(ctx, overrides = {}) {
   for (const conflict of result.conflicts) {
     ops.log.warn(`Le skill Codex personnel « ${conflict.slug} » existe déjà et n'a pas été remplacé.`);
   }
+  const sessionHook = ops.installCodexSessionHook(REPO_ROOT, ops.userHome);
+  if (!sessionHook.ok) {
+    ops.log.warn(`Badge d’anonymisation Codex non enregistré : ${sessionHook.reason}.`);
+  } else {
+    ops.log.detail(`Badge d’anonymisation Codex ${sessionHook.changed ? 'enregistré' : 'déjà à jour'} dans ~/.codex/hooks.json.`);
+  }
   const instructions = ops.refreshRegisteredCaseRules(REPO_ROOT, ops.loadConfig());
   ops.log.detail(`${instructions.refreshed} dossier(s) juridique(s) muni(s) des instructions Codex/Claude.`);
   for (const failure of instructions.failed) {
     ops.log.warn(`Instructions non actualisées pour ${failure.folder} : ${failure.error}`);
   }
-  if (result.conflicts.length) {
+  if (result.conflicts.length || !sessionHook.ok) {
     return {
       status: 'partial',
-      note: `${result.conflicts.length} skill(s) Codex personnel(s) homonyme(s) conservé(s).`,
+      note: !sessionHook.ok
+        ? `Badge d’anonymisation Codex non enregistré (${sessionHook.reason}).`
+        : `${result.conflicts.length} skill(s) Codex personnel(s) homonyme(s) conservé(s).`,
     };
   }
-  return { status: 'done', note: 'Skills PieceMaker disponibles à la prochaine session Codex CLI.' };
+  return { status: 'done', note: 'Skills et badge PieceMaker disponibles à la prochaine session Codex CLI.' };
 }
 
 export async function check(_ctx, overrides = {}) {
@@ -100,6 +117,10 @@ export async function check(_ctx, overrides = {}) {
       status: 'partial',
       note: `${missing.length} skill(s) PieceMaker non enregistré(s) dans ~/.codex/skills.`,
     };
+  }
+  const sessionHook = ops.codexSessionHookStatus(REPO_ROOT, ops.userHome);
+  if (!sessionHook.ok) {
+    return { status: 'partial', note: `Badge d’anonymisation Codex absent ou périmé (${sessionHook.reason}).` };
   }
   return { status: 'done', note: '' };
 }

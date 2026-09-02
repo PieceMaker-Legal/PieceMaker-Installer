@@ -33,41 +33,32 @@ pièces du dossier par des relations typées.
 - **Confidentialité** : le corpus transmis à Graphify est entièrement
   pseudonymisé ; aucun nom, adresse ou SIREN en clair ne sort du poste.
 
-## Commandes
+## Outils
 
-### Interroger le graphe
+Les trois opérations sont exposées par le serveur MCP `piecemaker`.
 
-```bash
-piecemaker graph query "<question juridique>"
-```
+### `graphe_question`
 
-Construit ou actualise le graphe si les pièces ont changé, puis retourne le
-sous-graphe pertinent. Ne dépend ni du MCP, ni du serveur PieceMaker, ni de
-Word. Exemples de questions :
+Interroge le graphe et retourne le sous-graphe pertinent. Le graphe est
+construit s'il est absent, mais **jamais reconstruit lorsqu'il est périmé** :
+l'outil renvoie alors une erreur d'actualisation, à résoudre par
+`graphe_construire`. Exemples de questions :
 
 - « Quelles sont les obligations contractuelles entre les parties ? »
 - « Sur quels fondements le demandeur réclame réparation ? »
 - « Quels documents mentionnent l'inexécution alléguée ? »
 - « Quelle est la position du défendeur sur la nullité ? »
 
-### Vérifier l'état du graphe
-
-```bash
-piecemaker graph status
-```
+### `graphe_etat`
 
 Retourne : existence du graphe, fraîcheur (stale ou non), registre des parties
 et statistiques (pièces incluses/exclues, parties mentionnées/absentes, nœuds
 élagués).
 
-### Reconstruire le graphe
+### `graphe_construire`
 
-```bash
-piecemaker graph build [--force]
-```
-
-Force la reconstruction complète, même si le cache est valide. Utile après une
-modification du mapping ou des parties.
+Reconstruit le graphe. Nécessaire après une modification du mapping ou des
+parties, et chaque fois que `graphe_question` signale un graphe périmé.
 
 ## Prérequis
 

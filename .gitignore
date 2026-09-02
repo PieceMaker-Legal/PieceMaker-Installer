@@ -122,6 +122,9 @@ test/*
 !test/litellm-proxy-integration.test.mjs
 !test/classify-ai-documents.test.mjs
 !test/legifrance-installer.test.mjs
+!test/mcp-piecemaker.test.mjs
+!test/mcp-piecemaker-step.test.mjs
+!test/commandes-templates.test.mjs
 
 # output/ contient les mappings d'anonymisation : des données client réelles.
 # Rien n'y est versionné hormis les modèles de documents.

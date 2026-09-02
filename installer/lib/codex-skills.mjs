@@ -26,6 +26,110 @@ function receiptFile(userHome) {
   return path.join(userHome, '.codex', '.piecemaker-skills.json');
 }
 
+export function codexHooksFile(userHome = os.homedir()) {
+  return path.join(userHome, '.codex', 'hooks.json');
+}
+
+function codexProxyGuardScript(repoRoot) {
+  return path.join(pluginRoot(repoRoot), 'scripts', 'proxy-guard.mjs');
+}
+
+function isPieceMakerProxyGuard(handler) {
+  const command = typeof handler?.command === 'string' ? handler.command : '';
+  const commandWindows = typeof handler?.commandWindows === 'string' ? handler.commandWindows : '';
+  return (command.includes('proxy-guard.mjs') || commandWindows.includes('proxy-guard.mjs'))
+    && (command.includes('PIECEMAKER_HOOK_CLIENT=codex')
+      || commandWindows.includes('PIECEMAKER_HOOK_CLIENT=codex')
+      || /piecemaker-plugin[\\/]scripts[\\/]proxy-guard\.mjs/.test(command + commandWindows));
+}
+
+function codexProxyGuardGroup(repoRoot) {
+  const script = codexProxyGuardScript(repoRoot);
+  return {
+    matcher: 'startup|resume|clear',
+    hooks: [{
+      type: 'command',
+      command: `PIECEMAKER_HOOK_CLIENT=codex node ${JSON.stringify(script)}`,
+      commandWindows: `set "PIECEMAKER_HOOK_CLIENT=codex" && node ${JSON.stringify(script)}`,
+      timeout: 45,
+      statusMessage: 'Vérification de l’anonymisation PieceMaker',
+    }],
+  };
+}
+
+function readCodexHooks(userHome) {
+  const file = codexHooksFile(userHome);
+  if (!fs.existsSync(file)) return { file, document: { hooks: {} } };
+  try {
+    const document = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!document || typeof document !== 'object' || Array.isArray(document)) {
+      return { file, error: 'hooks-invalides' };
+    }
+    if (document.hooks === undefined) document.hooks = {};
+    if (!document.hooks || typeof document.hooks !== 'object' || Array.isArray(document.hooks)
+      || (document.hooks.SessionStart !== undefined && !Array.isArray(document.hooks.SessionStart))) {
+      return { file, error: 'hooks-invalides' };
+    }
+    return { file, document };
+  } catch {
+    return { file, error: 'hooks-json-invalide' };
+  }
+}
+
+export function codexSessionHookStatus(repoRoot, userHome = os.homedir()) {
+  const loaded = readCodexHooks(userHome);
+  if (loaded.error) return { ok: false, changed: false, file: loaded.file, reason: loaded.error };
+  const expected = codexProxyGuardGroup(repoRoot);
+  const groups = Array.isArray(loaded.document.hooks.SessionStart)
+    ? loaded.document.hooks.SessionStart
+    : [];
+  const managed = groups.flatMap((group) => Array.isArray(group?.hooks) ? group.hooks : [])
+    .filter(isPieceMakerProxyGuard);
+  const exact = groups.some((group) => group?.matcher === expected.matcher
+    && Array.isArray(group.hooks)
+    && group.hooks.some((handler) => JSON.stringify(handler) === JSON.stringify(expected.hooks[0])));
+  return {
+    ok: exact && managed.length === 1,
+    changed: false,
+    file: loaded.file,
+    reason: exact && managed.length === 1 ? null : 'hook-absent-ou-perime',
+  };
+}
+
+/** Fusionne uniquement la sentinelle SessionStart ; tous les hooks personnels sont conservés. */
+export function installCodexSessionHook(repoRoot, userHome = os.homedir()) {
+  const loaded = readCodexHooks(userHome);
+  if (loaded.error) return { ok: false, changed: false, file: loaded.file, reason: loaded.error };
+  const document = loaded.document;
+  const groups = Array.isArray(document.hooks.SessionStart)
+    ? document.hooks.SessionStart
+    : [];
+  const preserved = [];
+  for (const group of groups) {
+    if (!group || typeof group !== 'object' || Array.isArray(group)) {
+      preserved.push(group);
+      continue;
+    }
+    const hooks = Array.isArray(group.hooks) ? group.hooks.filter((handler) => !isPieceMakerProxyGuard(handler)) : [];
+    if (hooks.length || !Array.isArray(group.hooks)) preserved.push({ ...group, hooks });
+  }
+  document.description ||= 'Hooks locaux Codex, dont la sentinelle d’anonymisation PieceMaker.';
+  document.hooks.SessionStart = [...preserved, codexProxyGuardGroup(repoRoot)];
+  const output = `${JSON.stringify(document, null, 2)}\n`;
+  let current = null;
+  try { current = fs.readFileSync(loaded.file, 'utf8'); } catch { /* fichier absent */ }
+  if (current === output) return { ok: true, changed: false, file: loaded.file, registered: 1 };
+  try {
+    fs.mkdirSync(path.dirname(loaded.file), { recursive: true });
+    const temporary = `${loaded.file}.tmp-${process.pid}`;
+    fs.writeFileSync(temporary, output, 'utf8');
+    fs.renameSync(temporary, loaded.file);
+    return { ok: true, changed: true, file: loaded.file, registered: 1 };
+  } catch (error) {
+    return { ok: false, changed: false, file: loaded.file, reason: error?.message || 'ecriture-impossible' };
+  }
+}
+
 function readReceipt(userHome) {
   try {
     const parsed = JSON.parse(fs.readFileSync(receiptFile(userHome), 'utf8'));

@@ -1,17 +1,25 @@
 #!/usr/bin/env node
 /**
- * PostToolUse hook — records every successful Write/Edit as a per-case commit.
+ * PostToolUse hook — marque le dossier de cas touché par un Write/Edit.
  *
- * Each explicitly registered folder (and each legacy workspace child) is an
- * independent legal case.
- * Its Markdown and mapping JSON history lives outside client data under
- * ~/.piecemaker/case-history/. Original pieces are never opened or indexed.
+ * Ne commite plus rien lui-même (aucun appel git) : il note juste, pour la
+ * session en cours, quel dossier de cas a bougé pendant CE tour, dans
+ * `~/.piecemaker/pending/<session_id>.json`. Le hook `Stop`
+ * (`session-commit.mjs`) déclenche à la fin du tour un worker détaché
+ * (`session-commit-worker.mjs`) qui consomme ce fichier et fait le commit
+ * réel — un seul commit par tour et par dossier, au lieu d'un commit par
+ * Write/Edit.
+ *
+ * Chaque dossier de cas explicitement enregistré (et chaque enfant de
+ * l'espace de travail historique) reste une affaire indépendante. Les pièces
+ * originales ne sont ni ouvertes ni indexées ici.
  */
 
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import {
   HOME_DIR,
+  appendJsonl,
   loadPieceMakerConfig,
   noop,
   readHookPayload,
@@ -19,11 +27,14 @@ import {
 } from './lib/hook-io.mjs';
 
 const require = createRequire(import.meta.url);
-const { createCommit, locateCaseFile } = require('./lib/commits.cjs');
+const { locateCaseFile } = require('./lib/commits.cjs');
 const { locateConfiguredCase } = require('./lib/case-folders.cjs');
-const { revertMapping } = require('./lib/mapping.cjs');
-const { readCentralMapping } = require('./lib/central-mapping.cjs');
-const { sessionElapsedMs } = require('./lib/session-timing.cjs');
+
+const PENDING_DIR = path.join(HOME_DIR, 'pending');
+
+function sanitizeSessionId(sessionId) {
+  return String(sessionId || 'unknown-session').replace(/[^a-zA-Z0-9_-]/g, '_');
+}
 
 async function main() {
   const payload = await readHookPayload(2000);
@@ -47,29 +58,11 @@ async function main() {
   }
   if (!located?.safe || located.protected) return null;
 
-  // Le nom d'un fichier porte souvent une entité
-  // (« 06_Email_..._par_CAITLYN_SA.md ») : l'historique du cabinet doit rester
-  // lisible, alors que l'IA n'a vu que des codes. On rétablit avec le mapping
-  // central (schéma de codes unique désormais appliqué par le hook central).
-  const central = readCentralMapping();
-  const relative = revertMapping(located.relative, central.reverse_mapping);
-
-  // Le transcript est la seule horloge de la session : son premier enregistrement
-  // date le début, d'où le temps écoulé au moment de ce commit. Le dernier commit
-  // d'une session porte donc ~sa durée totale, cohérente avec le ledger de
-  // facturation (billing-track), les deux partageant la clé session_id.
-  const durationMs = sessionElapsedMs(payload.transcript_path);
-
-  await createCommit({
+  const pendingFile = path.join(PENDING_DIR, `${sanitizeSessionId(payload.session_id)}.json`);
+  appendJsonl(pendingFile, {
     casesRoot: located.casesRoot,
     caseName: located.name,
-    homeDir: HOME_DIR,
-    label: `${payload.tool_name === 'Write' ? 'Création' : 'Modification'} de ${relative}`,
-    sessionId: payload.session_id || null,
-    durationMs,
-    event: 'PostToolUse',
-    paths: [located.relative],
-    waitForLockMs: 4000,
+    ts: new Date().toISOString(),
   });
   return null;
 }
