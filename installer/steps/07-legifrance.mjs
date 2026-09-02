@@ -15,6 +15,7 @@ import { log, spinner, blank, link } from '../lib/ui.mjs';
 import { ask, select, confirm, nonInteractive } from '../lib/prompt.mjs';
 import { commandExists, compareVersions, findPython, run, runCapture } from '../lib/platform.mjs';
 import { writeEnv } from '../lib/state.mjs';
+import { removeLegacyLegifranceService } from '../lib/legacy-legifrance.mjs';
 
 export const meta = {
   id: '07-legifrance',
@@ -203,6 +204,7 @@ export async function install(ctx, overrides = {}) {
     ops.log.info(`[simulation] configuration PISTE dans ${legifranceEnvFile(ops.userHome)}`);
     return { status: 'skipped', note: 'Mode simulation — aucune modification effectuée.' };
   }
+  removeLegacyLegifranceService({ userHome: ops.userHome, capture: ops.runCapture, logger: ops.log });
   const pluginSpin = spinner('Installation du plugin MCP Légifrance autonome...');
   const plugin = await ensurePlugin(ops);
   if (!plugin.ok) {

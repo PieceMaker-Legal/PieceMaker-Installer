@@ -10,6 +10,12 @@ import {
   legifranceEnvFile,
   writeLegifranceEnv,
 } from '../installer/steps/07-legifrance.mjs';
+import {
+  LEGACY_SERVICE_LABEL,
+  legacyRuntimeDir,
+  legacyServicePlist,
+  removeLegacyLegifranceService,
+} from '../installer/lib/legacy-legifrance.mjs';
 
 function temporaryHome(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'piecemaker-legifrance-'));
@@ -84,4 +90,48 @@ test('l’étape installe le plugin autonome puis configure PISTE', async (t) =>
     commandExists: () => true,
   });
   assert.equal(diagnosis.status, 'done');
+});
+
+test('la migration retire l’ancien service local, son .plist et son runtime', (t) => {
+  const home = temporaryHome(t);
+  const repositoryRoot = path.join(home, 'depot');
+  const runtime = legacyRuntimeDir(repositoryRoot);
+  fs.mkdirSync(path.join(runtime, 'legifrance', 'logs'), { recursive: true });
+  fs.writeFileSync(path.join(runtime, 'legifrance', 'logs', 'launchd.err.log'), 'boucle de plantage\n');
+  const plist = legacyServicePlist(home);
+  fs.mkdirSync(path.dirname(plist), { recursive: true });
+  fs.writeFileSync(plist, '<plist/>\n');
+
+  const calls = [];
+  const capture = (command, args) => {
+    calls.push([command, ...args]);
+    return { code: 0, stdout: '', stderr: '' };
+  };
+  const removed = removeLegacyLegifranceService({
+    userHome: home, repositoryRoot, capture, logger: silentLog(), platform: 'darwin',
+  });
+
+  assert.equal(removed.length, 3);
+  // Le service part en premier : sinon launchd recrée aussitôt ses journaux.
+  assert.equal(calls[0][1], 'print');
+  assert.equal(calls[1][1], 'bootout');
+  assert.match(calls[1][2], new RegExp(`${LEGACY_SERVICE_LABEL}$`));
+  assert.equal(fs.existsSync(plist), false);
+  assert.equal(fs.existsSync(runtime), false);
+});
+
+test('la migration ne fait rien sur une machine installée après l’extraction', (t) => {
+  const home = temporaryHome(t);
+  const calls = [];
+  const capture = (command, args) => {
+    calls.push([command, ...args]);
+    return { code: 1, stdout: '', stderr: 'Could not find service' };
+  };
+  const removed = removeLegacyLegifranceService({
+    userHome: home, repositoryRoot: path.join(home, 'depot'), capture, logger: silentLog(), platform: 'darwin',
+  });
+
+  assert.deepEqual(removed, []);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1], 'print');
 });

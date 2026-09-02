@@ -20,13 +20,28 @@ function fixture(t) {
   return { root, home, caseRoot };
 }
 
+// La suite tourne à quatre tests de front, dont des tests git de plusieurs
+// dizaines de secondes : sur une machine chargée, un simple `--help` peut
+// dépasser un budget serré. Le plafond est donc large — il n'existe que pour
+// éviter un blocage indéfini, pas pour mesurer une performance — et un
+// dépassement est signalé comme tel plutôt que par un obscur `null !== 0`.
+const CLI_TIMEOUT_MS = 120_000;
+
 function runCli(args, env = {}) {
-  return spawnSync(process.execPath, [cli, ...args], {
+  const result = spawnSync(process.execPath, [cli, ...args], {
     cwd: projectRoot,
     encoding: 'utf8',
     env: { ...process.env, ...env },
-    timeout: 30_000,
+    timeout: CLI_TIMEOUT_MS,
   });
+  if (result.status === null) {
+    assert.fail(
+      `Le CLI n'a pas rendu de code de sortie (signal ${result.signal || 'aucun'}, `
+      + `${result.error ? result.error.message : `plafond de ${CLI_TIMEOUT_MS} ms atteint`}) `
+      + `pour : ${args.join(' ')}`,
+    );
+  }
+  return result;
 }
 
 test('conversion est documentée dans l’aide du CLI', () => {
