@@ -2,9 +2,9 @@
 /**
  * PostToolUse hook (Write) — compile un rapport de recherche juridique.
  *
- * L'agent `recherche-legifrance` écrit un « payload » JSON dans
+ * L'orchestrateur de recherche écrit un « payload » JSON dans
  * `~/.piecemaker/recherche-pending/<id>.json` (question initiale, décisions
- * trouvées, citation, rapport de tri Haiku, liens Legifrance). Ce hook le
+ * trouvées, citations, rapport et liens Legifrance). Ce hook le
  * détecte, en tire un document Markdown au gabarit fixe puis un PDF — de façon
  * *déterministe*, jamais par un LLM — et les dépose dans
  * `<dossier>/recherche/`. Le PDF est délégué à un process détaché pour ne pas

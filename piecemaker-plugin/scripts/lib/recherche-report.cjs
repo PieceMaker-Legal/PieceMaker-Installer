@@ -3,8 +3,8 @@
 /**
  * Rendu déterministe d'un rapport de recherche juridique.
  *
- * Ce module est *pur* : il transforme un « payload » de recherche (produit par
- * l'agent `recherche-legifrance`) en un document Markdown au gabarit fixe. Aucun
+ * Ce module est *pur* : il transforme un « payload » produit par
+ * l'orchestrateur de recherche en un document Markdown au gabarit fixe. Aucun
  * LLM n'intervient — c'est exactement la partie que l'utilisateur veut sortir
  * de la main d'un agent. Il vit dans `scripts/lib/` parce que le hook
  * `compile-recherche.mjs` ne peut requérir que depuis là (le plugin est livré
